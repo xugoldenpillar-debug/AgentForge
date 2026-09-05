@@ -1,0 +1,30 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "incremental": false
+  },
+  "include": [
+    "src/shared/**/*.ts",
+    "src/lib/workflow/**/*.ts",
+    "src/lib/judge/**/*.ts",
+    "src/lib/scoring/**/*.ts",
+    "src/lib/crypto/**/*.ts",
+    "src/lib/ai/demo.ts",
+    "src/lib/ai/types.ts",
+    "src/lib/ai/tools-core.ts",
+    "src/server/service.ts",
+    "src/server/http.ts",
+    "src/server/memory-repository.ts",
+    "src/server/fixtures.ts",
+    "src/server/seed-core.ts",
+    "src/server/serializers.ts",
+    "src/server/url-policy.ts",
+    "portable/server.ts",
+    "tests/**/*.ts",
+    "scripts/smoke.ts"
+  ],
+  "exclude": []
+}

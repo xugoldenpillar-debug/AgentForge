@@ -1,0 +1,40 @@
+name: AgentForge checks
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: agentforge
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge_local
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agentforge -d agentforge"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm run setup
+      - run: pnpm db
+      - run: pnpm test
+      - run: pnpm typecheck
+      - run: pnpm build
+      - name: Full-stack smoke against Next.js and PostgreSQL
+        run: |
+          pnpm start > /tmp/agentforge-next.log 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" || true' EXIT
+          for i in $(seq 1 60); do
+            if curl --fail --silent http://localhost:3000/api/arena/boot > /dev/null; then break; fi
+            sleep 1
+          done
+          pnpm test:smoke

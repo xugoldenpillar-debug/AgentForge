@@ -1,0 +1,29 @@
+{
+  "transport": "virtual-route + Python HTTP bridge",
+  "passed": 14,
+  "checks": [
+    "Home, world boss, seeded community and complete desktop rendering",
+    "Seeded account signs in through the actual authentication backend",
+    "Prompt editor, privacy setting and quick-equipped skill update the workflow",
+    "Pointer dragging changes persisted workflow coordinates",
+    "Connections can be removed and re-created; nodes can be duplicated and deleted",
+    "Saved workflow runs all four public cases and produces actual node execution traces",
+    "Hidden submission returns only aggregate score/energy; no hidden inputs, answers or traces",
+    "Leaderboard opens the submitted version and Fork creates a new credential-free build",
+    "Provider form encrypts a test credential; only the mask returns; deletion works",
+    "Failure Hunter executes the top build and leaves unlabeled semantic claims pending",
+    "Community problem remains Pending and appears with builds on the owner profile",
+    "New user registration establishes an authenticated session",
+    "390px mobile home renders without horizontal page overflow",
+    "No uncaught browser JavaScript errors"
+  ],
+  "uncaughtErrors": [],
+  "limitations": [
+    "Bridge mode does not verify native browser cookies, history or incremental fetch streaming."
+  ],
+  "screenshots": [
+    "home-desktop.png",
+    "builder-scored.png",
+    "home-mobile.png"
+  ]
+}
