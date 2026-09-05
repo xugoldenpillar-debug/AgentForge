@@ -161,3 +161,13 @@ The checked-in fixtures and fixed Secret Keeper secret are for a **local, inspec
 Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox, agent marketplace payments or background worker. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. Execution is synchronous/streamed with limits; run the app on a host that supports the configured request duration. Not a multi-tenant production certification.
 
 See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Actual portable screenshots are under `docs/screenshots/`.
+
+## Development and contribution
+
+Before extending AgentForge, read:
+
+- `AGENTS.md` — repository-wide AI agent rules, architecture boundaries, security invariants and verification requirements.
+- `CONTRIBUTING.md` — local development, Git branches/commits/PRs, database changes and the test matrix.
+- `.github/pull_request_template.md` — change scope, evidence, compatibility and review checklist.
+
+The repository currently has no committed pnpm lockfile, lint/format scripts or versioned database migration runner. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
