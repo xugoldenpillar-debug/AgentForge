@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS "accounts" (
   "refresh_token_expires_at" TIMESTAMPTZ,
   "scope" TEXT,
   "password" TEXT,
+  "issuer" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
