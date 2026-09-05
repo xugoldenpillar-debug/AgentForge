@@ -1,5 +1,4 @@
 -- AgentForge initial schema. Idempotent, checked into source control.
-BEGIN;
 CREATE TABLE IF NOT EXISTS "users" (
   "id" TEXT PRIMARY KEY,
   "name" TEXT NOT NULL,
@@ -250,4 +249,3 @@ CREATE INDEX IF NOT EXISTS nodes_kind_idx ON workflow_nodes(kind);
 CREATE INDEX IF NOT EXISTS runs_user_idx ON runs(user_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, hits INTEGER NOT NULL, expires_at TIMESTAMPTZ NOT NULL);
 CREATE TABLE IF NOT EXISTS execution_locks (key TEXT PRIMARY KEY, token TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL);
-COMMIT;
