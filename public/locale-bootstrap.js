@@ -179,7 +179,7 @@
   function shouldSkipText(node) {
     var parent = node.parentElement;
     if (!parent) return true;
-    if (parent.closest('pre, textarea, code, input, [data-no-locale], .node-title')) return true;
+    if (parent.closest('pre, textarea, code, input, [data-no-locale], .node-title, .brand, .site-footer .muted')) return true;
     return false;
   }
 
@@ -196,7 +196,7 @@
     }
     var elements = root.querySelectorAll ? root.querySelectorAll('*') : [];
     Array.prototype.forEach.call(elements, function (element) {
-      if (element.closest && element.closest('[data-no-locale]')) return;
+      if (element.closest && element.closest('[data-no-locale], .brand')) return;
       ['placeholder', 'title', 'aria-label', 'aria-description'].forEach(function (attribute) {
         if (!element.hasAttribute(attribute)) return;
         if (!attributeOriginals.has(element)) attributeOriginals.set(element, {});

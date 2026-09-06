@@ -180,5 +180,5 @@ export function LeaderTable({ rows }: { rows: any[] }) {
 
 export function Footer() {
   const { t } = useLocale();
-  return <footer className="site-footer"><span>AGENTFORGE <span className="dim">/</span> {t('common.footerTagline')}</span><span>{t('common.footerCommunity')}</span></footer>;
+  return <footer className="site-footer"><span data-no-locale>AgentForge</span> <span><span className="dim">/</span> {t('common.footerTagline')}</span><span>{t('common.footerCommunity')}</span></footer>;
 }
