@@ -109,3 +109,59 @@ _Avoid_: Application log, activity feed
 **Consent Version**:
 The immutable identity of the disclosure a builder accepted for one kind of model execution. A changed disclosure creates a new Consent Version rather than rewriting prior acceptance.
 _Avoid_: Terms checkbox, current consent
+
+## Community component publishing
+
+**Component Library**:
+The collection through which builders discover reusable AgentForge capabilities and their examples. Platform-provided entries and community-published entries have distinct origins.
+_Avoid_: Model registry, leaderboard
+
+**Author Self-Test**:
+An author's evaluation of their own contribution using their own official model credential and allowance. It is not platform certification or evidence of improvement over a baseline.
+_Avoid_: Verified Run, platform evaluation
+
+**Publication Request**:
+An author's request for AgentForge to review a contribution for public listing in the Component Library. It is distinct from a competitive Submission.
+_Avoid_: Submission, benchmark entry
+
+**Publication Review**:
+The platform's assessment of whether a contribution may be publicly listed. Permission to list does not itself grant competitive verification.
+_Avoid_: Verified certification, model score
+
+
+**Community Experimental Release**:
+A community contribution approved for public listing without implying completed platform effectiveness evaluation. Its publication status and evaluation evidence are distinct.
+_Avoid_: Verified component, guaranteed improvement
+
+**Platform Component Evaluation**:
+A platform-selected assessment of a contribution's effects within a stated evaluation scope. It is separate from the author's self-test and competitive Verified certification.
+_Avoid_: Publication Review, Verified Run
+
+
+**Instruction Skill**:
+A reusable contribution consisting of instructions and reference material for a model, without permission to run contributed code or access external tools by itself.
+_Avoid_: Executable Skill, tool server
+
+**Execution Admission**:
+A platform decision permitting a particular executable extension to operate within an approved scope. It is independent of permission to list the contribution publicly and applies to private use as well.
+_Avoid_: Publication Review, author consent
+
+**Extension Application**:
+An author's request to have an executable Skill or MCP integration considered for support and execution admission. Receipt or review of the application does not make the extension runnable.
+_Avoid_: Installed component, active release
+
+## Future vendor-agent testing
+
+**Vendor Agent**:
+An agent service maintained by an external vendor that builders may participate in testing through AgentForge. It is a test subject, distinct from a reusable Skill, a tool integration or an official model offering.
+_Avoid_: Official Provider, MCP tool, Verified Agent
+
+## Execution runtimes
+
+**Execution Runtime**:
+The task-execution mechanism selected for a frozen AgentForge run, distinct from the selected model offering. Different runtimes may use different execution strategies and are not automatically competitively comparable.
+_Avoid_: Model provider, deployment environment
+
+**Runtime Adapter**:
+The AgentForge boundary that connects an execution runtime or a vendor's task service to the platform's authorized run lifecycle and evidence model.
+_Avoid_: Model API adapter, tool permission

@@ -1,0 +1,3 @@
+# Add Pi as an optional runtime adapter, not a DAG replacement
+
+AgentForge will evaluate Pi as an additional task runtime behind a platform-owned adapter while retaining the existing DAG engine. Identity, permission checks, budgets, model credentials, result provenance and scoring remain outside the runtime so that a future vendor Agent integration can use the same platform boundary without adopting Pi; Pi is not a sandbox and does not authorize executable Skill or MCP access. Exact package/version, model bridging and production enablement remain gated by an offline proof of concept and explicit validation; no cross-runtime leaderboard equivalence is implied.

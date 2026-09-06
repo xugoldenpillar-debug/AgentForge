@@ -1,0 +1,3 @@
+# Separate component publication from effectiveness evaluation
+
+Community contributions may be published as experimental releases after publication checks without requiring platform effectiveness evaluation. Publication status, author self-test evidence and platform evaluation evidence remain separate because an author's selected examples cannot establish general improvement, while mandatory platform-funded evaluation of every submission would make review capacity a prerequisite for all publication. Platform evaluation is reserved for manually selected contributions with separately approved budgets; neither publication nor component evaluation grants competitive Verified status.
