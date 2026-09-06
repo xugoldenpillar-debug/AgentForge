@@ -58,7 +58,7 @@
 | 官方 Flash 实际执行 | `src/lib/ai/sdk-provider.ts` | 已跑通 BYOK，但 Official/Custom 凭据权限分离尚未完成 |
 | NDJSON Run 与评分 | `src/server/http.ts`、`src/lib/scoring/` | 借用执行能力；不能把私有组件样例塞进竞技隐藏用例或产出榜单 Submission |
 | Skill 使用统计 | `ArenaService.skills()` | 现有成功率为关联提交准确率均值，不是组件对照收益 |
-| 两运行时 | Next + PostgreSQL；Portable | 共享定义校验／执行语义；社区账号、投稿、审核首版建议仅 Next 支持 |
+| 唯一应用 | Next.js + PostgreSQL | Portable 已退役；DAG/Pi 为执行适配器而非第二套应用 |
 
 目前 `SkillId`／`ToolId` 为内置闭集。用户组件 ID 不应直接塞入内置枚举；用单独的配方／定义层解析为受控工作流。指令型 Skill 需要新增受控的定义解析与配置入口，不能因为现有内置 Skill 可用就宣称动态导入已经支持。若决定支持子流程，必须另行定义端口、嵌套深度和展开后预算，不能假装现有引擎已经支持。
 
@@ -112,7 +112,7 @@
 | ExecutionAdmission | 扩展版本、执行范围、权限边界、决定者、状态 | 与公开发布分离；后续执行能力就绪后才可生效 |
 | UsageReference | BuildVersion 到已发布组件版本／展开摘要的绑定 | 不静默升级；支持风险影响追踪 |
 
-命名和字段为设计候选，不是已创建表。若复用现有 runs，应显式区分运行目的并检查全部查询／计分／声望路径；若新增 ComponentTestRun，仍复用核心执行与评分库，不能复制业务算法。
+命名和字段为设计候选，不是已创建表。Q19 已确认：ComponentTestRun（SelfTestRun）保留独立业务记录，关联唯一 EvaluationJob，不复用竞技 runs 存放作者自测。Attempt、Invocation、Outbox、配额和预算由 evaluation-foundation 管理；组件侧不复制执行、评分或调度算法。具体关联约束在联合契约冻结时确定。
 
 实现 schema 时同步 Drizzle、目标 SQL、版本迁移、仓储和测试。迁移以新增可空／独立表为起点；不把旧 Build 强制标记为用户组件，也不把旧均值回填成平台评测。
 
@@ -199,7 +199,7 @@
 
 HTTP 入口放 `src/app/`，业务规则放 `src/server/`，公共契约放 `src/shared/`，数据库实现放 `src/db/`；秘密与私有样例不进入公共目录。
 
-Portable 建议支持内置展示与受限配方本地导入／Demo 自测，不提供真实凭据自测、公共投稿和后台审核。界面与服务端都显式说明能力缺失，认证／持久化不共享。
+Portable 已退役，不再安排本地导入或 Demo 自测产品功能。唯一 Next.js 应用仅在显式隔离测试模式启用模拟模型；DAG/Pi 能力按服务端准入控制。
 
 ## 10. 分阶段实施与 Gate（阶段摘要）
 
@@ -210,7 +210,7 @@ Portable 建议支持内置展示与受限配方本地导入／Demo 自测，不
 | P0 | 确认访谈决策、契约与公开边界 | 第 12 节确认 | 没有以建议冒充已确认要求；关键架构决策再写 ADR |
 | P1 | 内置目录、源码与实例详情 | P0；公开许可安排明确 | 6 Skill／5 Tool 均有准确边界；模拟／真实示例分开；无自动付费 |
 | P2 | 个人草稿、冻结版本、配方／指令型 Skill 导入导出 | P0；版本契约 | 新库／旧库／重复迁移／保留数据；越权、非法上传、秘密投影测试 |
-| P3 | 官方 BYOK 组件自测 | P2；Official 凭据边界及预算前置 | 真实小样本另行授权；错误、取消、重复请求、无榜单副作用；默认 CI 离线 |
+| P3 | 官方 BYOK 组件自测 | P2；evaluation-foundation 执行与费用 Gate；Official 凭据边界 | 真实小样本另行授权；错误、取消、重复请求、无榜单副作用；默认 CI 离线 |
 | P4 | 投稿、Admin 审核、发布，以及不可执行扩展的材料申请 | P2；服务端角色／审计 | 不可自审、并发审批、固定版本、私有样例不公开 |
 | P5 | Fork 引用、弃用／撤销、反馈 | P4 | 历史版本可追踪；撤销不可绕过；反馈不影响原始证据 |
 | P6 | 平台效果评测与推荐 | Q2/Q3 确认；P3/P4 | 有对照证据与费用控制，不授予竞技 Verified |
@@ -362,7 +362,7 @@ ADR 0010 的“不依赖编码 CLI”与嵌入 Pi 核心 SDK 不冲突。确切�
 
 批准事务内验证：申请仍可审、版本／摘要未变、审核者合格且非作者、公开材料有效、无已存在 release；写入审核与 release 必须原子完成。重试应返回同一个结果而非发布两份。
 
-建议唯一约束：ComponentVersion(componentId, versionNumber)、Release(componentVersionId)、ComponentTestRun(userId, idempotencyKey)；同幂等键内容不同必须拒绝。实际字段名在 T2 冻结，不以 SQL IF NOT EXISTS 代替旧库升级。
+建议唯一约束：ComponentVersion(componentId, versionNumber)、Release(componentVersionId)、ComponentTestRun(evaluationJobId)；创建幂等统一按 (userId, operation, idempotencyKey) 记录并绑定请求摘要；同幂等键内容不同必须拒绝。实际字段名在 T2 冻结，不以 SQL IF NOT EXISTS 代替旧库升级。
 
 ### 16.4 发布可见性与执行资格
 
@@ -393,3 +393,16 @@ D4 已确认：商业保护针对复制整个平台并经营竞争服务，不�
 实施时建立可审查的公开导出清单，禁止包含私有核心、隐藏评测、凭据、生产配置及运行数据；检查发布文件和 Git 历史。公开组件和 SDK 必须能在不获取私有平台源码的情况下使用或接入。投稿的来源声明、许可证和不可变版本一起保存，下载／Fork 保留所需许可说明。
 
 具体 LICENSE、历史贡献权利和商业条款尚待核对；文档不是法律授权。本次未调整仓库可见性、拆仓或公开代码，也不承诺阻止独立实现的竞争产品。
+
+## 17. evaluation-foundation 联合交付契约（2026-09-06）
+
+已确认方向以 [Q1–Q25](../evaluation-foundation/README.md) 为准；分工见 [跨分支交付](../evaluation-foundation/integration.md)。本节不代表接口或数据库已经实现。
+
+- T5 经统一创建流程写入自测记录、EvaluationJob 和 Outbox，调用方不得先私自创建两份任务再事后关联；原子边界在联合接口设计中落实。
+- 一次自测固定组件/样例/依赖/运行时/策略/费用同意身份。Worker 执行前及受控步骤调用组件侧授权/撤销检查；凭据只使用作者本人符合官方准入的凭据。
+- 返回 202 和 testRunId/jobId；具体路由和类型名待冻结。查询/取消验证所有权；首版轮询，不将请求断开当取消。
+- 首版用户跨竞技与自测最多一个执行中作业；用途额度分开但共享用户总占用和上游实际额度。限额由配置和测试确定。
+- 部分用例判定不通过不等于任务执行失败：完整执行可以产出含失败样例的报告；基础设施中断则不伪造完整报告，不跨故障续跑拼成绩。
+- 自测明细默认 30 天，可提前删除；最小汇总和版本身份保留，清理后明确证据限制，不向公共详情泄露私有样例。清理任务及备份策略须独立实现验收，不执行现有数据删除。
+- 邮件验收和启用门槛后，新真实自测/投稿要求邮箱验证；不阻止登录/草稿，不追溯取消已接收任务。
+- 上架审核是 Publication Review；T9 为 Platform Component Evaluation，后续另行预算批准，不自动进入 Verified。

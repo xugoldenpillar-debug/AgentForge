@@ -1,5 +1,8 @@
 # DeepSeek Official BYOK 与 Verified Benchmark 实施计划
 
+> 2026-09-06 设计对齐：见 [全项目设计地图](../README.md) 与 [评测基础](../evaluation-foundation/README.md)。本文为分期目标，不宣称全量已实现。共享调度/容量/预算采用 Q1–Q25；领域特有授权、证据和原发布 Gate 保留。未来能力不因基础设施设计获批而自动启用。
+
+
 - 状态：实施中；首批基础代码已落地，Phase 0 实库 Gate 已验证，后续阶段待实施
 - 日期：2026-09-05
 - 需求：[requirements.md](./requirements.md)
@@ -23,7 +26,7 @@ flowchart TD
   P2 -->|2.1 角色与审计| AUTH
   P1 --> RANK[1.6 Official 排行启用]
   P2 -->|G2 Schema / Legacy / 排行隔离| RANK
-  AUTH --> G1[G1 Official / Custom / Portable 边界]
+  AUTH --> G1[G1 Official / Custom / 隔离测试边界]
   RANK --> G1
   P2 --> G2[G2 迁移 / 角色 / 历史隔离]
   G2 --> P3[Phase 3 配置与基准管理]
@@ -76,7 +79,7 @@ flowchart TD
 | R13 排行榜 | 1.6；2.3、2.5；7.5；8.1–8.2 | G2、G7、G8：精确身份、Build 最新/User 最高、完整 tie-breaker、三轮隔离 |
 | R14 Consent | 1.5；5.2、5.6；7.3 | G1、G5、G7：BYOK/Verified 分别版本化确认、参数透明、不公开 Actual Spend |
 | R15 Legacy | 0.2–0.3；1.1；2.3–2.5 | G0、G2：新库/升级/重跑/保留、所有权不变、旧结果不升级 |
-| R16 Portable | 1.1；Phase 1 Gate；横切质量门禁 | G1、G7：Node 原生路径、仅 Demo、拒绝真实凭据与端点 |
+| R16 单一应用/隔离测试 | 1.1；Phase 1 Gate；横切质量门禁 | G1、G7：核心独立可测，普通应用不回退 Demo |
 | R17 隐私与保留 | 1.3；3.1–3.3、3.5；4.1；5.3；6.1、6.4–6.5 | G3–G7 与横切门禁：关闭 Body Capture、受控输出、Receipt/错误/Audit/Ledger 保留期、退役 Token 不可用 |
 | R18 阶段发布 | 0.2；7.1–7.5；8.1–8.3 | G0–G8：Preview/Beta/正式分开、授权与真实证据、未验证项显式记录 |
 
@@ -116,7 +119,7 @@ flowchart TD
 - [ ] 1.1 重构共享类型
   - 将 `Tier` 演进为明确 Trust Lane/Provenance 类型。
   - 为 Run/Submission DTO 增加 Profile/Season/Suite/Scoring 字段。
-  - 保持 Portable 可解析的 `.ts` 相对导入。
+  - 保持核心测试可解析的 `.ts` 相对导入。
   - _Requirements: R3, R15, R16_
 
 - [x] 1.2 实现 Official Provider Registry
@@ -155,7 +158,7 @@ flowchart TD
 - [ ] 普通用户无法通过 API 或 UI提交任意 Base URL。
 - [ ] Developer Custom Endpoint 无法接触 Hidden。
 - [ ] Official BYOK 不被标记为 Verified。
-- [ ] Portable 仍只运行 Demo。
+- [ ] 模拟模型仅在显式隔离测试模式启用。
 
 ## Phase 2：Additive Schema、角色与 Legacy 迁移
 
@@ -273,9 +276,9 @@ flowchart TD
 
 ## Phase 5：持久化 Verified Worker
 
-- [ ] 5.1 添加 Verified Job Store
-  - Queue/Running/Completed/Failed/Paused 状态、lease、attempt、heartbeat。
-  - 使用 PostgreSQL 原子 Claim，不依赖浏览器请求。
+- [ ] 5.1 接入 evaluation-foundation 的公共 Job/Attempt 服务
+  - 共用状态、lease、attempt、heartbeat；Verified 特有 Receipt/Ticket/Season 校验独立实现。
+  - BullMQ 调度，PostgreSQL 权威状态及执行资格保护；复用 Outbox，不独立建设第二个 PostgreSQL 队列。
   - _Requirements: R8_
 
 - [ ] 5.2 添加 Verified Submission API
@@ -298,7 +301,7 @@ flowchart TD
   - _Requirements: R4, R7, R8_
 
 - [ ] 5.5 实现 Reconciler
-  - 恢复租约过期 Job。
+  - 核对租约过期 Job；未调用前可安全恢复，已调用中断不盲目重新执行。
   - 修复孤立 Ticket Reservation。
   - 查询同一 Gateway Idempotency Key 的状态；已完成但正文丢失时失败关闭为 `failed_chargeable`，不得重复上游调用。
   - 保证一个 Run 最多一个 Submission。
@@ -313,7 +316,7 @@ flowchart TD
 **Phase 5 Gate**
 
 - [ ] 浏览器断开不终止 Verified Job。
-- [ ] Worker 进程中断后可恢复。
+- [ ] Worker 中断后状态可收敛；已知结果可幂等收尾，未知付费调用不可自动重发。
 - [ ] Receipt 不匹配自动失败，连续三次暂停 Config。
 - [ ] 任何失败路径都没有部分 Submission。
 
@@ -432,7 +435,7 @@ flowchart TD
 - [ ] 权限不依赖前端按钮隐藏。
 - [ ] 错误路径不序列化上游响应、Stack、Prompt 或 Secret。
 - [ ] Core Workflow 不反向依赖 Next.js、数据库或 Gateway。
-- [ ] Portable 仍可用 Node 原生命令启动和测试。
+- [ ] 唯一 Next.js 应用与 Node 原生核心测试分别验收，无 Portable 启动门禁。
 - [ ] 数据结构变化同时更新 Drizzle、SQL、迁移、Repository、Seed 和测试。
 - [ ] 文档区分 Demo、Fake Gateway、Staging 和真实生产验证。
 - [ ] 没有自动提交、推送、部署或生产数据库操作。

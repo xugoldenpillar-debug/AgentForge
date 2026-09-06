@@ -1,9 +1,12 @@
 # DeepSeek Official BYOK 与 Verified Benchmark 需求
 
+> 2026-09-06 设计对齐：见 [全项目设计地图](../README.md) 与 [评测基础](../evaluation-foundation/README.md)。本文为分期目标，不宣称全量已实现。共享调度/容量/预算采用 Q1–Q25；领域特有授权、证据和原发布 Gate 保留。未来能力不因基础设施设计获批而自动启用。
+
+
 - 状态：已确认
 - 确认日期：2026-09-05
 - 范围：AgentForge 全栈 Next.js 运行时与独立 Platform Model Gateway
-- 不适用：Portable Runtime 的真实模型执行
+- 唯一应用：Next.js；Portable 已退役，不维护真实或模拟运行入口。
 
 ## 1. 问题
 
@@ -32,7 +35,7 @@ Official Provider Registry
 7. 网关、认证券、预算和管理员操作具备幂等、审计、熔断与失败关闭行为。
 8. 旧凭据和旧成绩保留历史，但不被静默升级为新的可信结果。
 9. 生产隐藏测试不存放在公开源码包中。
-10. Portable Runtime 继续只提供本地模拟，不获得真实 BYOK 或 Verified 能力。
+10. 测试模型仅在显式隔离测试模式启用，普通应用不回退 Demo。
 
 ## 3. 非目标
 
@@ -173,12 +176,12 @@ Official Provider Registry
 - 旧 Demo Submission 可继续作为明确标注的模拟历史展示。
 - 迁移不得删除、解密显示或改变 Credential 所有权。
 
-### R16：Portable Runtime
+### R16：单一应用与隔离测试（保留需求编号）
 
-- 当 Portable Runtime 启动时，应继续只提供 Demo Provider。
-- Portable 不得接受 DeepSeek Key、Platform Token 或 Custom Endpoint。
-- Portable 不得产生真正的 Official BYOK 或 Verified Submission。
-- Full Runtime 新增功能不得破坏 Portable 的 Node 原生类型剥离启动路径。
+- Portable 已退役，不再建设第二套运行时。
+- 唯一 Next.js 应用仅在 APP_ENV=test 且 DEMO_MODE=true 启用模拟模型。
+- 测试不得自动触发真实费用，也不得将测试结果升级为 Official/Verified 证据。
+- 领域核心保留 Node 原生可测试路径，不依赖 Next.js、数据库实例或真实 SDK。
 
 ### R17：隐私与保留
 

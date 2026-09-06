@@ -5,6 +5,7 @@
 ## 依赖图
 
 ```text
+EF 可靠执行 + 容量/费用 Gate ───────────────→ T5
 T0 契约和政策冻结
  ├─ T1 内置展示
  ├─ T2 数据与权限 → T3 草稿/导入/Skill → T5 自测 → T6 投稿审核
@@ -38,7 +39,7 @@ T5 可仅使用 DAG 完成；Pi 不必进入首版发布。T6 依赖角色和审
 - 追踪：R1、R7、R15。
 
 ### T2：数据、所有权与审核权限
-- [ ] Component／Version／Attachment／TestSuite／TestRun／PublicationRequest／Review／Release／UsageReference 迁移。
+- [ ] Component／Version／Attachment／TestSuite／TestRun／PublicationRequest／Review／Release／UsageReference 迁移；TestRun 的 evaluationJobId 关联迁移在 EF 相关表可用后集成，不复制作业/用量/预算表。
 - [ ] 扩展申请单独存储，不误创建有效执行准入。
 - [ ] schema.ts、schema.sql、迁移、仓储与序列化一致；旧 Build 无破坏升级。
 - [ ] Admin 服务端鉴权、禁止自审、审计及并发审批前置。
@@ -70,7 +71,9 @@ T5 可仅使用 DAG 完成；Pi 不必进入首版发布。T6 依赖角色和审
 - [ ] 官方模型选择、凭据 owner 校验、后端禁止 Custom、显式数据与费用确认。
 - [ ] 冻结 Skill／样例／运行时／策略身份，记录实际 usage，不接受作者伪造报告替代。
 - [ ] 幂等键绑定内容、状态查询、取消、中断／超时处理；未知上游状态不自动付费重跑。
-- [ ] 冻结任务调度方案；若未实现持久化恢复，明确限制与失败状态，不声称可恢复。
+- [ ] 接入 evaluation-foundation 的作业/Outbox/Worker/预算服务；不得另建请求内自测执行器。EF 执行与费用 Gate 未通过时不得开放真实自测。
+- [ ] 完成跨用途用户总占用、排队期间凭据/组件撤销、重复投递及中断费用处理的联合验收。
+- [ ] 自测明细 30 天生命周期与清理后报告标记；邮箱门槛启用与历史账户过渡按 Q21/Q22 验收。
 - [ ] 审核模型错误日志和回包，无秘密／他人私有内容。
 - Gate：离线全错误矩阵；另行授权小额真实自测；公开／私有／跨用户边界。
 - 追踪：R4、R5、R7、R15。

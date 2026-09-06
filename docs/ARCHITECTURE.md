@@ -54,3 +54,11 @@ Production TLS/origin configuration, email verification/recovery, account abuse 
 ## Official Flash adaptation within existing BYOK
 
 The existing BYOK SDK adapter now resolves official DeepSeek endpoints through the Registry, forces non-thinking Flash and requires real input/output usage. Other compatible BYOK endpoints retain their existing behavior. This does not introduce a new trust lane or implement Official/Custom credential authorization. Credentials still use the existing owner-bound AES-GCM store. Unknown pricing remains null, so token/call bounds do not imply a monetary hard cap. See `docs/verification/deepseek-app-live-2026-09-06.md`.
+
+## Accepted target architecture — not implemented (2026-09-06)
+
+See [project design map](../specs/README.md), [evaluation foundation](../specs/evaluation-foundation/README.md) and ADR-0012. The request-bound execution described above remains the current implementation; Redis/BullMQ, durable workers, Outbox, shared quotas, budget settlement and email flows are planned, not production-verified.
+
+The target keeps one Next.js application with independent Node workers. PostgreSQL owns business state and evidence; Redis/BullMQ coordinates delivery. Competitive Run and component SelfTestRun remain distinct records under common evaluation jobs/attempts. Verified execution reuses this foundation while retaining its separate private model gateway, Ticket/Profile/Season/Receipt gates. Pi is an optional execution adapter, not an alternative web application or a security sandbox.
+
+Public caching may be eventually consistent; permissions, credential revocation, execution eligibility and budget are authoritative checks. Queue waiting time is distinct from execution latency used for scoring. Component self-test detail retention does not override Gateway audit retention. See the design map for scope and cross-branch dependencies; no historical Portable data is deleted by this design.

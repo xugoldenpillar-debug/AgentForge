@@ -1,5 +1,8 @@
 # DeepSeek Official BYOK 与 Verified Benchmark 技术设计
 
+> 2026-09-06 设计对齐：见 [全项目设计地图](../README.md) 与 [评测基础](../evaluation-foundation/README.md)。本文为分期目标，不宣称全量已实现。共享调度/容量/预算采用 Q1–Q25；领域特有授权、证据和原发布 Gate 保留。未来能力不因基础设施设计获批而自动启用。
+
+
 - 状态：已确认
 - 日期：2026-09-05
 - 对应需求：[requirements.md](./requirements.md)
@@ -72,7 +75,7 @@ flowchart LR
 
 ### 3.1 Demo
 
-保持现有模拟 Provider。Demo 可在 Full/Portable 运行，但必须显示模拟标识。
+保持现有模拟 Provider。Demo 仅在 Next.js 的 APP_ENV=test 且 DEMO_MODE=true 时启用，必须显示模拟标识。
 
 ### 3.2 Official BYOK
 
@@ -281,7 +284,7 @@ GET /api/arena/runs/:runId
 → queued | running | completed | failed | paused
 ```
 
-Public Run 和 Official BYOK 可继续使用现有 NDJSON；Verified 使用创建 Job + 查询状态。后续可增加只读事件流，但浏览器断开不能取消 Job。
+当前代码仍使用请求绑定 NDJSON；目标由 evaluation-foundation 统一将 Public/Official BYOK/Verified 改为异步创建和状态查询，首版轮询。事件流可后补，不因浏览器断开取消作业；接口修改须同步前端与测试。
 
 ### 6.2 创建事务
 
@@ -308,7 +311,7 @@ src/server/verified/worker.ts
 src/server/verified/job-store.ts
 ```
 
-Worker 使用 PostgreSQL 原子 Claim/Lease，例如 `FOR UPDATE SKIP LOCKED` 或等价单语句更新。不要依赖通用 CRUD 在应用内模拟竞争锁。
+BullMQ 负责投递和调度；Worker 在 PostgreSQL 原子验证业务执行资格、租约代次和终态，防止旧执行者写回。不要独立再建 Verified 数据库消费队列，也不要用通用 CRUD 在应用内模拟竞争锁。Outbox 领取可使用数据库原子 Claim。
 
 部署约束：如果主站部署在不能运行长期进程的平台，必须为 Worker 提供独立 Node 容器/进程；不能声称纯 Serverless 请求可以保证浏览器断开后的执行。
 
@@ -383,7 +386,7 @@ aggregation_method
 | `benchmark_profiles` | Provider/Model/参数/能力/冻结价格的不可变版本 |
 | `evaluation_suites` | Challenge 的版本化测试集元数据和内容摘要 |
 | `benchmark_seasons` | Challenge + Profile + Suite + Scoring 的比赛周期 |
-| `verified_jobs` | 持久化队列、租约、尝试和终态 |
+| `evaluation_jobs`（共享基础） | Verified 关联竞技 Run，复用统一作业与 Attempt，不另建 verified_jobs 调度系统 |
 | `execution_receipts` | 每个模型调用的脱敏执行证据 |
 | `verification_ticket_grants` | 数量、来源、剩余量和到期时间 |
 | `verification_ticket_reservations` | Run 级预留、结算或退款 |
@@ -400,7 +403,7 @@ aggregation_method
 
 至少需要：
 
-- 一个 User 同时最多一个 Active Verified Job。
+- 首版一个 User 跨竞技和作者自测最多一个执行中 EvaluationJob，Verified 不另开可绕过总限额的名额。
 - 一个 Idempotency Key Hash 唯一。
 - 一个 Run 最多一个 Submission。
 - 一个 Run 最多一个 Ticket Reservation。
@@ -444,7 +447,7 @@ scripts/migrate.ts
 001_versioned_migration_ledger
 002_roles_gateway_profiles
 003_evaluation_suites_seasons
-004_verified_jobs_receipts
+004_shared_evaluation_link_receipts
 005_ticket_and_spend_ledgers
 006_add_run_submission_provenance
 007_backfill_legacy_credentials_and_submissions
@@ -666,11 +669,10 @@ Developer/Admin：
 
 UI 必须同步支持英文和简体中文 System Content，不改变 Canonical Value。
 
-## 16. Portable 兼容
+## 16. 单一应用与可测试领域边界
 
-- `ArenaService` 的 Verified 能力通过可选 Adapter/Service 注入，Portable 不配置。
-- 不让 Portable 初始化或执行 Platform Gateway。
-- 新表可在 Memory Repository 中为空，但 Portable 路由不得暴露 Admin/Official/Verified 操作。
+- Portable 已退役；唯一 Next.js 应用通过适配器接入 Verified 能力，独立 Worker 使用服务端组合根。
+- 测试用内存仓储和 Fake Gateway 仅用于隔离测试，不代表正式准入或执行证据。
 - Core Workflow Engine 继续不依赖 Next.js、数据库或 Gateway 实现。
 
 建议不要继续扩大单体 `ArenaService`；按领域拆分：
@@ -702,7 +704,7 @@ src/server/admin-service.ts
 - Build 最新 + User 最高算法。
 - Legacy Backfill。
 - Hidden DTO/错误路径不泄露。
-- Portable 仍拒绝真实 Provider。
+- 普通应用未配置 Provider 时拒绝运行，不回退模拟模型。
 
 ### PostgreSQL
 

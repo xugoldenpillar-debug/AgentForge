@@ -143,3 +143,11 @@ Before extending AgentForge, read:
 - `.github/pull_request_template.md` — change scope, evidence, compatibility and review checklist.
 
 The repository currently has no committed pnpm lockfile or lint/format scripts. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
+
+## Design and implementation roadmap
+
+See [the project design map](specs/README.md) for the aligned evaluation foundation,
+community component library, Verified Gateway, optional Pi and future vendor SDK plans.
+These are staged designs, not a claim that durable queues, budget settlement, email
+verification or community publishing are already implemented. Current runtime behavior
+and verified evidence remain documented separately above.
