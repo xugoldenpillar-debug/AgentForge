@@ -3,6 +3,9 @@ on: [push, pull_request]
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      DEMO_MODE: "true"
     services:
       postgres:
         image: postgres:17-alpine
@@ -33,13 +36,19 @@ jobs:
       - run: pnpm test:provider-sdk
       - run: pnpm typecheck
       - run: pnpm build
-      - name: Full-stack smoke against Next.js and PostgreSQL
+      - name: Normal and test-mode smoke against Next.js and PostgreSQL
         run: |
-          pnpm start > /tmp/agentforge-next.log 2>&1 &
-          APP_PID=$!
-          trap 'kill "$APP_PID" || true' EXIT
-          for i in $(seq 1 60); do
-            if curl --fail --silent http://localhost:3000/api/arena/boot > /dev/null; then break; fi
-            sleep 1
+          for MODE in development test; do
+            APP_ENV=$MODE DEMO_MODE=true node node_modules/next/dist/bin/next start > /tmp/agentforge-next.log 2>&1 &
+            APP_PID=$!
+            trap 'kill "$APP_PID" || true' EXIT
+            for i in $(seq 1 60); do
+              if curl --fail --silent http://localhost:3000/api/arena/boot > /dev/null; then break; fi
+              sleep 1
+            done
+            if [ "$MODE" = test ]; then EXPECT=true; else EXPECT=false; fi
+            SMOKE_EXPECT_TEST_MODE=$EXPECT pnpm test:smoke
+            kill "$APP_PID"
+            wait "$APP_PID" || true
+            trap - EXIT
           done
-          pnpm test:smoke

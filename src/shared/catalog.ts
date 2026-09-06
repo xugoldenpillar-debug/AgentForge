@@ -28,7 +28,7 @@ export function starterWorkflow(judge: JudgeId): Workflow {
   const nodes: Workflow['nodes'] = [
     {id:'input',kind:'input',label:'Challenge input',x:60,y:160,config:{}},
     {id:'prompt',kind:'prompt',label:'Mission instructions',x:320,y:160,config:{systemPrompt:prompt,userTemplate:'{{input}}'}},
-    {id:'model',kind:'model',label:'Agent engine',x:580,y:160,config:{modelId:'demo-forge',credentialId:'demo',maxTokens:512,temperature:0}},
+    {id:'model',kind:'model',label:'Agent engine',x:580,y:160,config:{modelId:'',credentialId:'',maxTokens:512,temperature:0}},
     {id:'output',kind:'output',label:'Final answer',x:840,y:160,config:{}}
   ];
   return {nodes,edges:nodes.slice(1).map((n,i)=>({id:`edge-${i}`,source:nodes[i].id,target:n.id}))};

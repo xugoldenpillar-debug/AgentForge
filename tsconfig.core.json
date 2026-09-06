@@ -17,12 +17,11 @@
     "src/lib/ai/tools-core.ts",
     "src/server/service.ts",
     "src/server/http.ts",
-    "src/server/memory-repository.ts",
+    "tests/helpers/memory-repository.ts",
     "src/server/fixtures.ts",
     "src/server/seed-core.ts",
     "src/server/serializers.ts",
     "src/server/url-policy.ts",
-    "portable/server.ts",
     "tests/**/*.ts",
     "scripts/smoke.ts"
   ],

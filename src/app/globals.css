@@ -1,2 +1,52 @@
 @import "tailwindcss";
-@import "../../public/arena.css";
+@import "./arena.css";
+
+/* Keep the single application usable without the retired desktop-only preview shell. */
+@media (max-width: 640px) {
+  .site-header {
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding-inline: 12px;
+  }
+  .site-header .brand {
+    gap: 5px;
+    font-size: 16px;
+  }
+  .site-header .brand > .chip {
+    display: none;
+  }
+  .builder-page .builder-toolbar {
+    min-width: 0;
+    height: auto;
+    flex-wrap: wrap;
+    padding-block: 16px;
+  }
+  .builder-toolbar .toolbar-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+  .builder-page .builder-grid {
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .builder-grid .palette {
+    max-height: 180px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .builder-grid .canvas-panel {
+    height: 380px;
+    flex: none;
+  }
+  .builder-grid .config-panel {
+    max-height: 500px;
+    border-left: 0;
+  }
+  .builder-grid .run-console {
+    min-height: 280px;
+    max-height: 550px;
+  }
+}

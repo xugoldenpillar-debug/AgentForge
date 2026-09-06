@@ -146,7 +146,7 @@ export function ChallengeCard({ problem }: { problem: any }) {
   </Link>;
 }
 
-export function LaneNote({ tier = 'demo' }: { tier?: string }) {
+export function LaneNote({ tier = 'byok' }: { tier?: string }) {
   const { t } = useLocale();
   const message = tier === 'demo'
     ? t('common.demoLaneNote')

@@ -1,19 +1,21 @@
 # Architecture and trust boundaries
 
-## One domain, two frontends
+## One application, separate environments
 
-The primary application is a Next.js modular monolith. A small Node-only runtime permits an install-free demo. Both instantiate `ArenaService` and execute the same workflow, judges, scores, catalog, fixtures, serializers and credential crypto. They do not share persistence or authentication state. There is no automatic portable-to-Postgres migration.
+Next.js is the only application runtime: React/React Flow/Zustand, Better Auth,
+PostgreSQL/Drizzle, and server-side AI adapters. Portable and its JSON authentication
+and storage are retired. Historical local data is not automatically migrated or deleted.
 
-| Layer | Full runtime | Portable runtime |
-| --- | --- | --- |
-| Web frontend | React / @xyflow/react / Zustand | Vanilla JS / SVG / pointer events |
-| Authentication | Better Auth + Drizzle | Local scrypt hashes + opaque cookie sessions |
-| Storage | PostgreSQL, normalized tables, JSONB configs | Normalized in-memory tables persisted atomically to JSON |
-| AI | Vercel AI SDK compatible / Gateway adapters; optional demo | Demo only; real provider request rejected |
-| Validation | Zod API + domain config validation | Same domain validation, bounded JSON reader |
-| Distributed controls | PostgreSQL rate-limit/upsert and execution leases | Single-process rate limits and execution leases |
+`APP_ENV=test` plus `DEMO_MODE=true` explicitly enables offline models on the same
+Next.js server for isolated testing. Development/production defaults do not enable
+Demo, even with a legacy Demo flag. Test memory repositories and simulated activity
+fixtures live under tests/helpers, not application persistence. Initial catalog seeding
+is idempotent by stable ID and never creates simulated users, runs or scores.
+Homepage and catalog statistics exclude seeded profiles and Demo scores in normal mode;
+challenge scores and skill success rates use BYOK rather than mixing trust lanes.
+New and forked workflows start unconfigured; drafts can be saved, but execution
+requires an explicit provider. The compatibility runtime field is always `next`.
 
-The native HTTP adapter serves only an explicit asset allowlist. It cannot serve the source tree, environment or data files. Portable data has restrictive file permissions; bind is loopback-only. Do not run multiple portable processes against the same data directory.
 
 ## Workflow semantics
 
@@ -43,11 +45,11 @@ Failure Hunter picks the best submitted version in the selected trust lane. A hu
 
 AES-256-GCM records contain version, random nonce, authentication tag and ciphertext. Additional authenticated data binds user ID + credential ID, preventing swapped ciphertext between users/records. Plain API keys appear only transiently in server memory for encryption/decryption/provider construction. Public serializers explicitly select metadata plus a last-four mask. The model adapter sanitizes upstream errors and disables SDK telemetry. Never add debug logging of provider requests.
 
-BYOK HTTP clients use exact-host HTTPS allowlists, no redirects, validated public DNS addresses, a connection-time DNS check, response-size cap and timeout. No literal IPs, user-info, URL query, fragments or private networks are accepted. Only the five registered tool implementations exist; no shell, arbitrary file reads, dynamic code evaluation or custom executable uploads. React escapes values, the portable renderer escapes interpolated text, and unsafe HTML output is never interpreted.
+BYOK HTTP clients use exact-host HTTPS allowlists, no redirects, validated public DNS addresses, a connection-time DNS check, response-size cap and timeout. No literal IPs, user-info, URL query, fragments or private networks are accepted. Only the five registered tool implementations exist; no shell, arbitrary file reads, dynamic code evaluation or custom executable uploads. React escapes values, and unsafe HTML output is never interpreted.
 
 ## Deployment boundaries
 
-Portable auth is local-only and is not Better Auth. Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. Long executions are request-bound; no durable job queue or reconnect-resume protocol is claimed.
+Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. Long executions are request-bound; no durable job queue or reconnect-resume protocol is claimed.
 
 ## Official Flash adaptation within existing BYOK
 

@@ -236,7 +236,7 @@ function Inspector({
               <label className="label">{t('builder.provider')}</label>
               <select
                 aria-label={t('builder.nodeProvider')}
-                value={config.credentialId || 'demo'}
+                value={config.credentialId || ''}
                 onChange={(event) => {
                   const id = event.target.value;
                   const provider = fields.find((item) => item.id === id);
@@ -246,10 +246,12 @@ function Inspector({
                   });
                 }}
               >
+                <option value="">{t('builder.selectProvider')}</option>
+                {config.credentialId === 'demo' && !providers?.demo && <option value="demo" disabled>{t('builder.demoSimulator')}</option>}
                 {providers?.demo && <option value="demo">{t('builder.demoSimulator')} / {t('builder.noApiCost')}</option>}
                 {providers?.platform && <option value="platform">{t('builder.platformGateway')}</option>}
                 {fields.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} / {provider.keyMask}</option>)}
-                {!providers && <option value="demo">{t('builder.demoSimulator')}</option>}
+
               </select>
             </div>
             <div className="field">
@@ -266,7 +268,7 @@ function Inspector({
                 <input type="number" min={0} max={2} step={0.1} value={config.temperature ?? 0} onChange={(event) => update({ temperature: Number(event.target.value) })} />
               </div>
             </div>
-            <div className="callout small">{t('builder.demoResultsHint')}</div>
+            {providers?.demo && <div className="callout small">{t('builder.demoResultsHint')}</div>}
             <Link href="/providers" className="section-link mt-3"><Icon name="Settings" size={12} /> {t('builder.manageCredentials')}</Link>
           </>
         )}
@@ -431,7 +433,8 @@ export function BuilderPage() {
     return () => window.removeEventListener('beforeunload', before);
   }, []);
 
-  const real = store.nodes.some((node) => node.data.kind === 'model' && node.data.config.credentialId !== 'demo');
+  const unconfigured = store.nodes.some((node) => node.data.kind === 'model' && !node.data.config.credentialId);
+  const real = store.nodes.some((node) => node.data.kind === 'model' && !!node.data.config.credentialId && node.data.config.credentialId !== 'demo');
 
   async function save() {
     if (!user) {
@@ -462,6 +465,10 @@ export function BuilderPage() {
 
   async function run(runKind: 'public' | 'hidden') {
     setError('');
+    if (unconfigured) {
+      setError(t('builder.providerRequired'));
+      return;
+    }
     if (real && !consent) {
       setError(t('errors.providerConsent'));
       return;
@@ -555,6 +562,7 @@ export function BuilderPage() {
         </div>
       </div>
 
+      {unconfigured && <div className="callout warning mb-2">{t('builder.providerRequired')} <Link href="/providers">{t('builder.manageCredentials')}</Link></div>}
       {error && <div className="builder-error"><ErrorNotice message={error} /></div>}
       {real && <label className="callout small mb-2 flex items-center gap-2"><input type="checkbox" style={{ width: 15 }} checked={consent} onChange={(event) => setConsent(event.target.checked)} />{t('builder.usageConsent')}</label>}
 

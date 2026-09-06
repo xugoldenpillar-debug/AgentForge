@@ -9,8 +9,8 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 **Problem → Build → Run → Submit → Score → Leaderboard → Fork**
 
 - 全栈版：Next.js / React / React Flow / Zustand、PostgreSQL / Drizzle、Better Auth、Vercel AI SDK。
-- 免安装版：`portable/server.ts` + `public/`，Node 原生运行、模拟模型、本地 JSON 持久化。
-- 两种运行时共用工作流、评测、评分和业务服务；认证和持久化不共享，没有自动数据迁移。
+- 唯一运行时为 Next.js；开发、测试和正式环境使用同一套应用。Portable 已退役，不再维护。
+- 仅 APP_ENV=test 且 DEMO_MODE=true 启用测试模型；普通初始化只补齐业务目录，不生成模拟活动。
 - Demo / BYOK / 平台可信模型是不同信任等级，排行榜不得混榜。
 - 本项目仍是 MVP。不要将模拟结果、历史截图、HTTP 测试或 CI 构建通过描述为真实模型、真实浏览器或生产安全验收。
 
@@ -37,12 +37,13 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 | `src/lib/crypto/` | 凭据加密；禁止向客户端或日志输出明文 |
 | `src/server/` | 业务服务、验证、序列化、仓储抽象使用及 HTTP 适配 |
 | `src/db/` | PostgreSQL / Drizzle schema 和仓储实现 |
-| `portable/`、`public/` | 免安装服务器及原生前端；不得引入必须安装才能运行的依赖 |
+| `public/` | 正式应用静态资源；共享主题位于 src/app/ |
+| `tests/helpers/` | 内存仓储和模拟活动 fixtures，仅测试使用 |
 | `scripts/` | 环境初始化、数据库和验证脚本 |
 | `tests/` | Node 原生核心、服务及 HTTP 回归测试 |
 | `docs/` | 架构、评分、验证证据；行为变化必须更新对应文档 |
 
-核心逻辑不得反向依赖 Next.js、React、数据库实例或真实 AI SDK。服务端通过适配器注入仓储和模型能力。涉及共用业务逻辑时同时考虑两个运行时；只支持其中一种的能力必须明确标注。
+核心逻辑不得反向依赖 Next.js、React、数据库实例或真实 AI SDK。服务端通过适配器注入仓储和模型能力。领域逻辑保持可独立测试，不再维护第二套运行时。
 
 ## 4. 编码约定
 
@@ -53,7 +54,7 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 - Node 原生执行路径保留可解析的 `.ts` 相对导入，不引入仅靠编译器转换的语法或仅 Next.js 可解析的路径别名。
 - 流式运行协议当前为 NDJSON（`application/x-ndjson`），不是 SSE；修改协议需同时修改服务端、客户端和测试。
 - React 组件区分服务端与客户端边界；用户文本默认转义，不直接注入未经净化的 HTML。
-- 新增依赖需说明用途、现有方案为何不够，以及是否影响免安装版；不要顺带升级整个依赖树。
+- 新增依赖需说明用途、现有方案为何不够，以及测试和部署影响；不要顺带升级整个依赖树。
 - 非显然的业务限制说明“为什么”；不要添加重复代码含义的注释。
 
 ## 5. 不得破坏的业务与安全约束
@@ -65,7 +66,7 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 - 保持资源所有权检查、私有 Prompt 保护、不可变 Build 历史、并发保存约束及 Fork 清除凭据引用。
 - BYOK 凭据继续使用认证加密和用户隔离；不记录 API Key、密码、Cookie、token、连接串中的密码。
 - 不放宽 Provider 域名/IP、重定向及 SSRF 防护，不增加任意 shell 或用户代码执行能力。
-- 免安装版仅限本地使用；不得擅自改成公网监听或多进程共享同一数据目录。
+- 不得删除历史 Portable 数据；数据清理需单独授权。
 - `.env.example` 只允许占位值或明确标记的本地演示值。不要提交 `.env*` 实际配置、`.data/`、数据库备份、私钥。
 - 真实模型费用、生产部署、生产数据库写入、删除数据及权限变更须取得对应明确授权。
 
@@ -84,7 +85,7 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 按 `CONTRIBUTING.md` 中的验证矩阵执行。常用命令：
 
 ```sh
-# 无依赖核心、服务与免安装 HTTP 回归
+# 核心与服务回归
 node --experimental-strip-types --test tests/*.test.ts
 
 # 全栈依赖安装后
@@ -100,7 +101,7 @@ pnpm test:smoke
 
 - Bug 修复尽量添加能复现原问题的回归测试；功能变更覆盖正常路径、错误路径和授权边界。
 - UI 变更验证实际目标前端，至少检查桌面和窄屏、关键交互、加载/空/错误状态。
-- `scripts/browser-smoke.py` 面向免安装 UI，不能作为 React Flow 前端的浏览器验证。
+- 浏览器验收必须针对实际 Next.js / React Flow 前端。
 - 遇到依赖、Docker、网络或凭据阻塞，精确记录未执行项目及原因；不得用 Demo 测试替代真实集成测试。
 - 交付说明应包含：变更摘要、文件/行为影响、执行命令与结果、未验证项、数据兼容风险、Git 提交/推送状态。
 - 不固定宣称历史测试数量；报告本次命令的实际结果。无实际运行，不写“验证通过”。

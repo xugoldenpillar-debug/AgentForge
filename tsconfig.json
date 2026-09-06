@@ -7,5 +7,5 @@
     "allowImportingTsExtensions": true, "plugins": [{"name":"next"}], "paths": {"@/*":["./src/*"]}
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
-  "exclude": ["node_modules", "portable", "tests"]
+  "exclude": ["node_modules", "tests"]
 }

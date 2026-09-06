@@ -13,7 +13,7 @@ import { CHALLENGE_SECRET } from './fixtures.ts';
 import { publicCredential, publicUser, serializeRun } from './serializers.ts';
 import { validateProviderUrl } from './url-policy.ts';
 export interface ServiceOptions {
-  demoMode:boolean; runtime:'next'|'portable'; encryptionKey:string; allowedHosts:string[];
+  demoMode:boolean; encryptionKey:string; allowedHosts:string[];
   githubEnabled?:boolean; maxRunCost?:number; maxCases?:number;
   platform?:{model:string;inputPrice:number|null;outputPrice:number|null};
   createRealProvider?:(credential:Credential,apiKey:string)=>AIProvider;
@@ -27,29 +27,71 @@ export class ArenaService {
   constructor(repo:Repository,options:ServiceOptions){this.repo=repo;this.options=options;}
   async user(userId:string){const u=(await this.repo.read('users',{id:userId}))[0];ensure(u,'Sign in to continue.',401,ERROR_CODES.AUTH_REQUIRED);return u;}
   async limit(userId:string,action:string,count=20){ensure(await this.repo.rateLimit(`${action}:${userId}`,count,60000),'Too many requests. Try again in a minute.',429,ERROR_CODES.RATE_LIMITED);}
-  async boot(){return {demoMode:this.options.demoMode,runtime:this.options.runtime,githubEnabled:!!this.options.githubEnabled,platformAvailable:!!this.options.platform};}
+  async boot(){return {demoMode:this.options.demoMode,runtime:'next',githubEnabled:!!this.options.githubEnabled,platformAvailable:!!this.options.platform};}
   private async workflow(versionId:string,repo=this.repo):Promise<Workflow>{
     const nodes=await repo.read('workflowNodes',{versionId}),edges=await repo.read('workflowEdges',{versionId});
     return {nodes:nodes.map(({versionId:_,...n})=>n),edges:edges.map(({versionId:_,...e})=>e)};
   }
   private async getProblem(idOrSlug:string):Promise<Problem>{const p=(await this.repo.read('problems')).find(p=>p.id===idOrSlug||p.slug===idOrSlug);ensure(p&&p.status==='active','Challenge not found.',404,ERROR_CODES.CHALLENGE_NOT_FOUND);return p;}
-  async problems(){
-    const [ps,bs,ss]=await Promise.all([this.repo.read('problems',{status:'active'}),this.repo.read('builds'),this.repo.read('submissions')]);
-    return ps.map(p=>{const builds=bs.filter(b=>b.problemId===p.id),submissions=ss.filter(s=>s.problemId===p.id);return {...p,stats:{builds:builds.length,participants:new Set(builds.map(b=>b.userId)).size,bestScore:Math.max(0,...submissions.map(s=>s.score)),solveRate:submissions.length?submissions.reduce((n,s)=>n+s.accuracy,0)/submissions.length:0}};});
+  async problems() {
+    const [problems, builds, submissions, users] = await Promise.all([
+      this.repo.read('problems', { status: 'active' }), this.repo.read('builds'),
+      this.repo.read('submissions'), this.repo.read('users'),
+    ]);
+    const seedOwners = new Set(users.filter(user => user.isSeed).map(user => user.id));
+    return problems.map(problem => {
+      const visibleBuilds = builds.filter(build => build.problemId === problem.id
+        && (this.options.demoMode || !seedOwners.has(build.userId)));
+      const lane = this.options.demoMode ? 'demo' : 'byok';
+      const measured = submissions.filter(submission => submission.problemId === problem.id && submission.tier === lane);
+      return { ...problem, stats: {
+        builds: visibleBuilds.length,
+        participants: new Set(visibleBuilds.map(build => build.userId)).size,
+        bestScore: Math.max(0, ...measured.map(submission => submission.score)),
+        solveRate: measured.length ? measured.reduce((sum, row) => sum + row.accuracy, 0) / measured.length : 0,
+      } };
+    });
   }
   async problem(idOrSlug:string){
     const p=await this.getProblem(idOrSlug),tests=await this.repo.read('testCases',{problemId:p.id}),all=await this.problems();
     const hiddenCounts={normal:0,edge:0,adversarial:0,security:0};for(const t of tests)if(t.visibility==='hidden')hiddenCounts[t.category]++;
-    return {...all.find(x=>x.id===p.id)!,publicTests:tests.filter(t=>t.visibility==='public').map(t=>({id:t.id,input:t.input,expected:t.expected,category:t.category})),hiddenCounts,starter:starterWorkflow(p.judge),leaderboard:await this.leaderboard({problemId:p.id,tier:'demo',sort:'overall'}),failures:await this.failures(p.id)};
+    return {...all.find(x=>x.id===p.id)!,publicTests:tests.filter(t=>t.visibility==='public').map(t=>({id:t.id,input:t.input,expected:t.expected,category:t.category})),hiddenCounts,starter:starterWorkflow(p.judge),leaderboard:await this.leaderboard({problemId:p.id,tier:this.options.demoMode?'demo':'byok',sort:'overall'}),failures:await this.failures(p.id)};
   }
-  async overview(){
-    const [problems,builds,runs,users,skills,failures]=await Promise.all([this.problems(),this.repo.read('builds'),this.repo.read('runs'),this.repo.read('users'),this.skills(),this.failures()]);
-    return {problems,worldBoss:problems.find(p=>p.worldBoss),stats:{problems:problems.length,builds:builds.length,runs:runs.length,builders:users.length},topBuilders:users.sort((a,b)=>b.reputation-a.reputation).slice(0,5).map(publicUser),skills:skills.slice(0,4),failures:failures.slice(0,4)};
+  async overview() {
+    const [problems, allBuilds, allRuns, allUsers, skills, failures] = await Promise.all([
+      this.problems(), this.repo.read('builds'), this.repo.read('runs'),
+      this.repo.read('users'), this.skills(), this.failures(),
+    ]);
+    const users = allUsers.filter(user => this.options.demoMode || !user.isSeed);
+    const owners = new Set(users.map(user => user.id));
+    const builds = allBuilds.filter(build => owners.has(build.userId));
+    const runs = allRuns.filter(run => run.status === 'completed' && (this.options.demoMode || run.tier !== 'demo'));
+    return { problems, worldBoss: problems.find(problem => problem.worldBoss),
+      stats: { problems: problems.length, builds: builds.length, runs: runs.length, builders: users.length },
+      topBuilders: users.sort((a, b) => b.reputation - a.reputation).slice(0, 5).map(publicUser),
+      skills: skills.slice(0, 4), failures: failures.filter(row => this.options.demoMode || row.tier !== 'demo').slice(0, 4),
+    };
   }
-  async skills(){const [links,subs]=await Promise.all([this.repo.read('buildSkills'),this.repo.read('submissions')]);return SKILLS.map(s=>{const versions=new Set(links.filter(l=>l.skillId===s.id).map(l=>l.versionId)),runs=subs.filter(x=>versions.has(x.versionId));return {...s,usageCount:versions.size,successRate:runs.length?runs.reduce((a,r)=>a+r.accuracy,0)/runs.length:null,simulated:runs.every(r=>r.tier==='demo')};});}
+  async skills() {
+    const [links, submissions, users, builds, versions] = await Promise.all([
+      this.repo.read('buildSkills'), this.repo.read('submissions'), this.repo.read('users'),
+      this.repo.read('builds'), this.repo.read('buildVersions'),
+    ]);
+    const owners = new Set(users.filter(user => this.options.demoMode || !user.isSeed).map(user => user.id));
+    const buildIds = new Set(builds.filter(build => owners.has(build.userId)).map(build => build.id));
+    const versionIds = new Set(versions.filter(version => buildIds.has(version.buildId)).map(version => version.id));
+    return SKILLS.map(skill => {
+      const equipped = new Set(links.filter(link => link.skillId === skill.id && versionIds.has(link.versionId)).map(link => link.versionId));
+      const runs = submissions.filter(row => equipped.has(row.versionId) && row.tier === (this.options.demoMode ? 'demo' : 'byok'));
+      return { ...skill, usageCount: equipped.size,
+        successRate: runs.length ? runs.reduce((sum, row) => sum + row.accuracy, 0) / runs.length : null,
+        simulated: runs.length > 0 && runs.every(row => row.tier === 'demo'),
+      };
+    });
+  }
   async tools(){return TOOLS;}
   async leaderboard(args:{problemId?:string;tier?:string;sort?:string}){
-    const tier=['demo','byok','verified'].includes(args.tier||'')?args.tier as Tier:'demo';
+    const tier=['demo','byok','verified'].includes(args.tier||'')?args.tier as Tier:(this.options.demoMode?'demo':'byok');
     const [all,users,builds]=await Promise.all([this.repo.read('submissions',{tier}),this.repo.read('users'),this.repo.read('builds')]);
     let entries=all.filter(s=>!args.problemId||s.problemId===args.problemId);
     const mode=args.sort||'overall';if(['cheapest','fastest','minimalist'].includes(mode))entries=entries.filter(s=>s.accuracy>=.5);
@@ -82,7 +124,7 @@ export class ArenaService {
     const title=text(body.title,'Build title',1,80),problem=await this.getProblem(text(body.problemId,'Challenge ID')),w=validateWorkflow(body.workflow);
     ensure(body.visibility==='public'||body.visibility==='private','Choose public or private visibility.',400,ERROR_CODES.REQUEST_VALIDATION_FAILED);const visibility=body.visibility;
     // All credential references must belong to the saving user.
-    for(const n of w.nodes.filter(n=>n.kind==='model')){const c=n.config.credentialId;if(c!=='demo'&&c!=='platform')ensure((await this.repo.read('credentials',{id:c,userId})).length,'A selected provider is not available.',400,ERROR_CODES.PROVIDER_NOT_FOUND);}
+    for(const n of w.nodes.filter(n=>n.kind==='model')){const c=n.config.credentialId;if(c&&c!=='demo'&&c!=='platform')ensure((await this.repo.read('credentials',{id:c,userId})).length,'A selected provider is not available.',400,ERROR_CODES.PROVIDER_NOT_FOUND);}
     const buildId=typeof body.buildId==='string'?body.buildId:id(),versionId=id();
     await this.repo.transaction(async tx=>{
       const old=(await tx.read('builds',{id:buildId}))[0];let revision=1;
@@ -104,7 +146,7 @@ export class ArenaService {
       await tx.insert('forkRelations',[{id:id(),parentBuildId:buildId,childBuildId:newId,userId,createdAt:now()}]);await this.award(tx,userId,'fork',buildId,5);await this.badge(tx,userId,'first-build');
     });return this.build(newId,userId);
   }
-  async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:this.options.runtime};}
+  async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:'next'};}
   async addProvider(userId:string,body:Record<string,unknown>){
     await this.user(userId);await this.limit(userId,'provider',10);
     ensure((await this.repo.read('credentials',{userId})).length<10,'At most 10 credentials may be saved.',400,ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
@@ -118,13 +160,13 @@ export class ArenaService {
   private async executionProviders(userId:string,w:Workflow,override?:string):Promise<{resolve:ProviderResolver;tier:Tier;model:string}>{
     const cache=new Map<string,{provider:AIProvider;model:string}>(),kinds:Tier[]=[];
     for(const node of w.nodes.filter(n=>n.kind==='model')){
-      const credentialId=override||node.config.credentialId||'demo';const cacheKey=credentialId+':'+(override?'':node.config.modelId||'');if(cache.has(cacheKey))continue;
+      const credentialId=override||node.config.credentialId||'';ensure(credentialId,'Select a provider in the Model node before running.',400,ERROR_CODES.PROVIDER_NOT_CONFIGURED);const cacheKey=credentialId+':'+(override?'':node.config.modelId||'');if(cache.has(cacheKey))continue;
       if(credentialId==='demo'){ensure(this.options.demoMode,'Demo mode is disabled. Choose a real provider.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);cache.set(cacheKey,{provider:new DemoProvider(),model:'demo-forge'});kinds.push('demo');}
       else if(credentialId==='platform'){
         ensure(this.options.platform&&this.options.createPlatformProvider,'Platform AI Gateway is not configured.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
         const p=this.options.platform;cache.set(cacheKey,{provider:this.options.createPlatformProvider(),model:p.model});kinds.push(p.inputPrice!==null&&p.outputPrice!==null?'verified':'byok');
       }else{
-        ensure(this.options.createRealProvider,'Real model calls require the full Next.js runtime. This portable runtime is a local demo.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
+        ensure(this.options.createRealProvider,'Real model provider is not configured.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
         const credential=(await this.repo.read('credentials',{id:credentialId,userId}))[0];ensure(credential,'A selected provider was deleted or is not yours.',404,ERROR_CODES.PROVIDER_NOT_FOUND);
         withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(credential.baseUrl,this.options.allowedHosts));
         const apiKey=decryptCredential(credential.ciphertext,this.options.encryptionKey,userId,credential.id);
@@ -135,7 +177,7 @@ export class ArenaService {
     }
     ensure(!(kinds.includes('demo')&&kinds.some(k=>k!=='demo')),'Do not mix simulated and real model nodes in one run.',400,ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
     const tier:Tier=kinds.every(k=>k==='demo')?'demo':kinds.every(k=>k==='verified')?'verified':'byok';
-    return {tier,model:[...new Set([...cache.values()].map(v=>v.model))].join(' + ').slice(0,200),resolve:async config=>{const p=cache.get((override||config.credentialId||'demo')+':'+(override?'':config.modelId||''));ensure(p,'Provider is unavailable.',503,ERROR_CODES.PROVIDER_NOT_FOUND);return p;}};
+    return {tier,model:[...new Set([...cache.values()].map(v=>v.model))].join(' + ').slice(0,200),resolve:async config=>{const p=cache.get((override||config.credentialId||'')+':'+(override?'':config.modelId||''));ensure(p,'Provider is unavailable.',503,ERROR_CODES.PROVIDER_NOT_FOUND);return p;}};
   }
   async run(userId:string,body:Record<string,unknown>,emit:(event:RunEvent)=>void,signal?:AbortSignal){
     await this.user(userId);await this.limit(userId,'run',10);
@@ -181,7 +223,7 @@ export class ArenaService {
   async failures(problemId?:string){const [rows,users]=await Promise.all([this.repo.read('failureCases'),this.repo.read('users')]);return rows.filter(f=>!problemId||f.problemId===problemId).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).slice(0,30).map(f=>({id:f.id,problemId:f.problemId,buildId:f.buildId,input:redactProtected(f.input),reason:f.reason,status:f.status,tier:f.tier,createdAt:f.createdAt,creator:users.find(u=>u.id===f.userId)?.name||'Hunter'}));}
   async hunt(userId:string,body:Record<string,unknown>){
     await this.user(userId);await this.limit(userId,'hunt',5);
-    const p=await this.getProblem(text(body.problemId,'Challenge ID')),input=text(body.input,'Failure input',1,4000),reason=text(body.reason,'Reason',8,1000),providerId=text(body.providerId||'demo','Provider ID');
+    const p=await this.getProblem(text(body.problemId,'Challenge ID')),input=text(body.input,'Failure input',1,4000),reason=text(body.reason,'Reason',8,1000),providerId=text(body.providerId,'Provider ID');
     ensure(!input.includes(CHALLENGE_SECRET),'A candidate must not contain the protected value.',400,ERROR_CODES.REQUEST_VALIDATION_FAILED);
     const dummy=starterWorkflow(p.judge),execution=await this.executionProviders(userId,dummy,providerId);
     if(execution.tier!=='demo')ensure(body.consent===true,'Confirm token usage before testing a failure case.',400,ERROR_CODES.PROVIDER_CONSENT_REQUIRED);
