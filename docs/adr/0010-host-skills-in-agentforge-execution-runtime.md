@@ -1,0 +1,3 @@
+# Host Skills in the AgentForge execution runtime
+
+AgentForge will extend its workflow engine and model adapters to load versioned Skill instructions and mediate model-requested tools, rather than depending on another coding-agent CLI to run uploaded Skills. Pure instruction Skills do not require a code sandbox; later executable Skills require a separately isolated execution environment instead of running contributed scripts in the Next.js process, keeping the user's official model credential in the controlled backend and avoiding an additional model-account prerequisite. Sandbox technology, dependency isolation and future MCP hosting details remain undecided; this direction does not enable executable uploads or authorize deployment.
