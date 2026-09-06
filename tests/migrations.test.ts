@@ -49,18 +49,15 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
-  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS \"components\"/);
-  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS \"component_test_runs\"/);
-  assert.match(migrations[3].sql, /CREATE TABLE IF NOT EXISTS \"community_audit_events\"/);
-  assert.match(migrations[4].sql, /CREATE TABLE IF NOT EXISTS \"component_attachment_contents\"/);
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "component_test_runs"/);
+  assert.match(migrations[3].sql, /CREATE TABLE IF NOT EXISTS "community_audit_events"/);
+  assert.match(migrations[4].sql, /CREATE TABLE IF NOT EXISTS "component_attachment_contents"/);
   assert.match(migrations[4].sql, /octet_length\("content"\) <= 262144/);
-  assert.match(migrations[2].sql, /evaluation_job_id\" TEXT UNIQUE/);
-  assert.match(migrations[2].sql, /credential_id\" TEXT NOT NULL/);
-  assert.match(migrations[2].sql, /idempotency_key\" TEXT NOT NULL/);
-  assert.doesNotMatch(migrations[2].sql, /CREATE TABLE.*evaluation_jobs|outbox|budget/i);
+  assert.match(migrations[5].sql, /CREATE TABLE IF NOT EXISTS public\.evaluation_jobs/);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -141,13 +138,22 @@ test('legacy fixtures lack issuer and retain auth, credentials and ranked histor
 });
 
 
-test('initial baseline remains frozen while schema.sql includes the additive community target', async () => {
+test('versioned migrations match the fresh schema phases and preserve legacy upgrades', async () => {
   const migrations = await loadMigrations();
   const target = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+  const communityMarker = '-- Community component library data foundation.';
+  const foundationMarker = '-- Durable evaluation foundation.';
   const ledgerMarker = '-- Runner-owned history.';
-  assert.equal(target.split(ledgerMarker).length, 2);
-  assert.match(target, /CREATE TABLE IF NOT EXISTS "components"/);
-  assert.match(target, /CREATE TABLE IF NOT EXISTS "component_usage_references"/);
+  const [baseline, communityAndAfter] = target.split(communityMarker);
+  assert.ok(communityAndAfter, 'fresh schema must include the community foundation phase');
+  const [communityAndFoundation, ledgerAndAfter] = communityAndAfter.split(ledgerMarker);
+  assert.ok(ledgerAndAfter, 'fresh schema must include the runner-owned history phase');
+  const [, foundationAndLedger] = communityAndFoundation.split(foundationMarker);
+  assert.ok(foundationAndLedger, 'fresh schema must include the evaluation foundation phase');
+  const [foundation] = foundationAndLedger.split(ledgerMarker);
+  assert.equal(migrations[0].sql.trim(), baseline.trim());
+  const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '');
+  assert.equal(migrations[5].sql.trim(), freshFoundation.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();

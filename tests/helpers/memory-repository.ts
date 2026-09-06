@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Repository, TableName, Tables } from '../../src/shared/types.ts';
 export type DatabaseState={ [K in TableName]: Tables[K][] };
-export const TABLE_NAMES:TableName[]=['users','problems','testCases','builds','buildVersions','workflowNodes','workflowEdges','skills','tools','buildSkills','buildTools','runs','runCases','submissions','credentials','failureCases','reputations','badges','userBadges','forkRelations','components','componentVersions','attachments','componentAttachmentContents','componentTestSuites','componentTestSuiteVersions','componentTestRuns','publicationRequests','publicationReviews','componentReleases','usageReferences','extensionApplications','communityAuditEvents'];
+export const TABLE_NAMES:TableName[]=['users','problems','testCases','builds','buildVersions','workflowNodes','workflowEdges','skills','tools','buildSkills','buildTools','runs','runCases','submissions','credentials','failureCases','reputations','badges','userBadges','forkRelations','components','componentVersions','attachments','componentAttachmentContents','componentTestSuites','componentTestSuiteVersions','componentTestRuns','publicationRequests','publicationReviews','componentReleases','usageReferences','extensionApplications','communityAuditEvents','evaluationJobs','evaluationAttempts','evaluationInvocations','evaluationUsageRecords','evaluationIdempotencyKeys','evaluationBudgetReservations','evaluationOutbox'];
 export const emptyState=():DatabaseState=>Object.fromEntries(TABLE_NAMES.map(k=>[k,[]])) as unknown as DatabaseState;
 const matches=<T,>(row:T,where:Partial<T>)=>Object.entries(where).every(([k,v])=>(row as Record<string,unknown>)[k]===v);
 export class MemoryRepository implements Repository {

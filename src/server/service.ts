@@ -13,19 +13,39 @@ import { DemoProvider } from '../lib/ai/demo.ts';
 import { CHALLENGE_SECRET } from './fixtures.ts';
 import { publicCredential, publicUser, serializeRun } from './serializers.ts';
 import { validateProviderUrl } from './url-policy.ts';
+import { CompetitiveRunAdapter } from './evaluation/adapters/competitive-run.ts';
+import type {
+  CompetitiveRunAccepted,
+  CompetitiveRunCompletionInput,
+  CompetitiveRunCompletionResult,
+  CompetitiveRunJobScheduler,
+} from './evaluation/adapters/competitive-run.ts';
 export interface ServiceOptions {
   demoMode:boolean; encryptionKey:string; allowedHosts:string[];
   githubEnabled?:boolean; maxRunCost?:number; maxCases?:number;
   platform?:{model:string;inputPrice:number|null;outputPrice:number|null};
   createRealProvider?:(credential:Credential,apiKey:string)=>AIProvider;
   createPlatformProvider?:()=>AIProvider;
+  /** Durable competitive scheduling is injected; legacy run() remains an explicit compatibility path. */
+  competitiveRunScheduler?: CompetitiveRunJobScheduler;
 }
 const id=()=>randomUUID();const now=()=>new Date().toISOString();
 const text=(v:unknown,label:string,min=1,max=200)=>{ensure(typeof v==='string'&&v.trim().length>=min&&v.length<=max,`${label} must be ${min} to ${max} characters.`,400,ERROR_CODES.REQUEST_VALIDATION_FAILED);return v.trim();};
 const redactProtected=(s:string)=>s.replaceAll(CHALLENGE_SECRET,'[protected value]');
 export class ArenaService {
   repo:Repository;options:ServiceOptions;
-  constructor(repo:Repository,options:ServiceOptions){this.repo=repo;this.options=options;}
+  private readonly competitiveRunAdapter: CompetitiveRunAdapter | null;
+  constructor(repo:Repository,options:ServiceOptions){
+    this.repo=repo;
+    this.options=options;
+    this.competitiveRunAdapter=options.competitiveRunScheduler
+      ? new CompetitiveRunAdapter({
+          repository:repo,
+          scheduler:options.competitiveRunScheduler,
+          onCompetitiveSubmission:(tx,context)=>this.persistCompetitiveSubmissionRewards(tx,context),
+        })
+      : null;
+  }
   async user(userId:string){const u=(await this.repo.read('users',{id:userId}))[0];ensure(u,'Sign in to continue.',401,ERROR_CODES.AUTH_REQUIRED);return u;}
   async limit(userId:string,action:string,count=20){ensure(await this.repo.rateLimit(`${action}:${userId}`,count,60000),'Too many requests. Try again in a minute.',429,ERROR_CODES.RATE_LIMITED);}
   async boot(){return {demoMode:this.options.demoMode,runtime:'next',githubEnabled:!!this.options.githubEnabled,platformAvailable:!!this.options.platform};}
@@ -170,6 +190,22 @@ export class ArenaService {
     await tx.insert('reputations',[{id:id(),userId,reason,referenceId,points,createdAt:now()}]);await tx.update('users',{id:userId},{reputation:u.reputation+points,updatedAt:now()});
   }
   private async badge(tx:Repository,userId:string,badgeId:string){if(!(await tx.read('userBadges',{userId,badgeId})).length)await tx.insert('userBadges',[{id:id(),userId,badgeId,createdAt:now()}]);}
+  private async persistCompetitiveSubmissionRewards(tx:Repository,context:import('./evaluation/adapters/competitive-run.ts').CompetitiveRunSubmissionContext){
+    const {run,summary,submission}=context;
+    const score=summary.score;
+    const metrics=summary.metrics;
+    await this.award(tx,run.userId,'submission',`${run.problemId}:${submission.tier}`,Math.round(score.accuracy*30));
+    const problem=(await tx.read('problems',{id:run.problemId}))[0];
+    if(problem?.worldBoss)await this.badge(tx,run.userId,'world-boss');
+    const count=Math.max(1,summary.total);
+    if(score.accuracy===1&&(metrics.inputTokens+metrics.outputTokens)/count<1000)await this.badge(tx,run.userId,'token-miser');
+    if(submission.tier==='verified'){
+      const best=Math.max(score.total,...(await tx.read('submissions',{userId:run.userId,tier:'verified'})).map(row=>row.score));
+      await tx.update('users',{id:run.userId},{elo:1000+best});
+      const leaders=(await tx.read('submissions',{tier:'verified'})).sort((a,b)=>b.score-a.score);
+      if(leaders.slice(0,100).some(row=>row.userId===run.userId))await this.badge(tx,run.userId,'top-100');
+    }
+  }
   private async persistVersion(tx:Repository,buildId:string,versionId:string,revision:number,title:string,visibility:'public'|'private',w:Workflow){
     await tx.insert('buildVersions',[{id:versionId,buildId,revision,title,visibility,createdAt:now()}]);
     await tx.insert('workflowNodes',w.nodes.map(n=>({...n,versionId})));await tx.insert('workflowEdges',w.edges.map(e=>({...e,versionId})));
@@ -236,6 +272,51 @@ export class ArenaService {
     const tier:Tier=kinds.every(k=>k==='demo')?'demo':kinds.every(k=>k==='verified')?'verified':'byok';
     return {tier,model:[...new Set([...cache.values()].map(v=>v.model))].join(' + ').slice(0,200),resolve:async config=>{const p=cache.get((override||config.credentialId||'')+':'+(override?'':config.modelId||''));ensure(p,'Provider is unavailable.',503,ERROR_CODES.PROVIDER_NOT_FOUND);return p;}};
   }
+  /**
+   * Accept a new competitive evaluation without executing model work in the
+   * request. The HTTP layer exposes this through 202/status/cancel routes;
+   * the legacy run() method remains an explicit NDJSON compatibility adapter.
+   */
+  async scheduleCompetitiveRun(userId:string,body:Record<string,unknown>):Promise<CompetitiveRunAccepted>{
+    await this.user(userId);
+    await this.limit(userId,'run',10);
+    ensure(this.competitiveRunAdapter,'Durable evaluation scheduling is unavailable. Configure the PostgreSQL outbox scheduler and run the dedicated evaluation worker before accepting asynchronous evaluations.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
+    ensure(body.kind==='public'||body.kind==='hidden','Run kind must be public or hidden.',400,ERROR_CODES.REQUEST_VALIDATION_FAILED);
+    const kind=body.kind;
+    const buildId=text(body.buildId,'Build ID');
+    const b=(await this.repo.read('builds',{id:buildId,userId}))[0];
+    ensure(b,'Save your own build before running tests.',404,ERROR_CODES.BUILD_NOT_FOUND);
+    const [p,w]=await Promise.all([this.getProblem(b.problemId),this.workflow(b.currentVersionId)]);
+    validateWorkflow(w);
+    const provider=await this.executionProviders(userId,w);
+    if(provider.tier!=='demo')ensure(body.consent===true,'Confirm that this run uses your token budget and sends test inputs to your chosen model provider.',400,ERROR_CODES.PROVIDER_CONSENT_REQUIRED);
+    const cases=await this.repo.read('testCases',{problemId:p.id,visibility:kind==='public'?'public':'hidden'});
+    ensure(cases.length>0&&cases.length<=(this.options.maxCases||50),'Test suite exceeds the configured run limit.',400,ERROR_CODES.BUDGET_EXCEEDED);
+    const idempotencyKey=typeof body.idempotencyKey==='string'&&body.idempotencyKey.trim()
+      ? text(body.idempotencyKey,'Idempotency key',1,200)
+      : id();
+    const credentialIds=[...new Set(w.nodes.filter(node=>node.kind==='model'&&node.config.credentialId&&node.config.credentialId!=='demo'&&node.config.credentialId!=='platform').map(node=>node.config.credentialId!))].sort();
+    const credentialAuthorizationId=credentialIds.length
+      ? createHash('sha256').update(credentialIds.join('\u0000')).digest('hex')
+      : null;
+    return this.competitiveRunAdapter.schedule({
+      userId,buildId:b.id,versionId:b.currentVersionId,problemId:p.id,kind,tier:provider.tier,model:provider.model,workflow:w,
+      testCaseIds:cases.map(test=>test.id),idempotencyKey,consentVersion:provider.tier==='demo'?null:'competitive-consent-v1',credentialAuthorizationId,
+    });
+  }
+
+  /** Worker/business-adapter completion hook. It is intentionally not called by run(). */
+  async completeCompetitiveRun(input:CompetitiveRunCompletionInput):Promise<CompetitiveRunCompletionResult>{
+    ensure(this.competitiveRunAdapter,'Durable evaluation scheduling is unavailable. Configure the PostgreSQL outbox scheduler and run the dedicated evaluation worker before accepting asynchronous evaluations.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
+    return this.competitiveRunAdapter.complete(input);
+  }
+
+  /** Persist a failed, cancelled, incomplete, or unknown run without producing evidence. */
+  async failCompetitiveRun(input:Parameters<CompetitiveRunAdapter['fail']>[0]):Promise<CompetitiveRunCompletionResult>{
+    ensure(this.competitiveRunAdapter,'Durable evaluation scheduling is unavailable. Configure the PostgreSQL outbox scheduler and run the dedicated evaluation worker before accepting asynchronous evaluations.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
+    return this.competitiveRunAdapter.fail(input);
+  }
+
   async run(userId:string,body:Record<string,unknown>,emit:(event:RunEvent)=>void,signal?:AbortSignal){
     await this.user(userId);await this.limit(userId,'run',10);
     ensure(body.kind==='public'||body.kind==='hidden','Run kind must be public or hidden.',400,ERROR_CODES.REQUEST_VALIDATION_FAILED);const kind=body.kind;

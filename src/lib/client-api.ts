@@ -116,3 +116,178 @@ export async function consumeRun(body: unknown, onEvent: (event: RunEvent) => vo
   }
   if (buffer.trim()) onEvent(parseRunEvent(buffer));
 }
+
+export type EvaluationJobState =
+  | 'accepted'
+  | 'queued'
+  | 'running'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'incomplete'
+  | 'unknown'
+  | 'reconciling'
+  | 'expired';
+
+export type EvaluationAttemptState =
+  | 'created'
+  | 'claimed'
+  | 'running'
+  | 'cancelling'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'incomplete'
+  | 'unknown'
+  | 'reconciling'
+  | 'expired';
+
+export interface EvaluationStatus {
+  job: {
+    id: string;
+    purpose: 'competitive' | 'author-self-test' | 'component-evaluation';
+    state: EvaluationJobState;
+    association: {
+      kind: 'competitive-run' | 'self-test-run' | 'component-evaluation';
+      runId?: string;
+      visibility?: 'public' | 'hidden';
+      businessRecordId?: string;
+    };
+    snapshot: {
+      schemaVersion: number;
+      buildVersionId: string;
+      testSuiteVersionId: string;
+      runtimeAdapter: string;
+      modelOfferingId: string | null;
+      policyVersion: string;
+      capturedAt: string;
+    };
+    snapshotDigest: string;
+    cancellationReason: string | null;
+    cancellationRequestedAt: string | null;
+    acceptedAt: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    completion: { evidence: 'complete' | 'partial' } | null;
+    failure: { code: string; retryable: boolean } | null;
+  };
+  attempts: Array<{
+    id: string;
+    number: number;
+    state: EvaluationAttemptState;
+    startedAt: string | null;
+    finishedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+  run: RecordValue | null;
+}
+
+export interface CreateEvaluationResponse extends EvaluationStatus {
+  created: boolean;
+}
+
+const TERMINAL_EVALUATION_STATES = new Set<EvaluationJobState>([
+  'completed',
+  'failed',
+  'cancelled',
+  'incomplete',
+  'unknown',
+  'expired',
+]);
+
+export function isEvaluationTerminal(state: EvaluationJobState): boolean {
+  return TERMINAL_EVALUATION_STATES.has(state);
+}
+
+export async function createEvaluation(
+  body: RecordValue,
+  options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+): Promise<CreateEvaluationResponse> {
+  const bodyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  const optionKey = options.idempotencyKey?.trim() || '';
+  if (optionKey && bodyKey && optionKey !== bodyKey) {
+    throw new ApiError('The idempotency key header does not match the request body.', 409, 'REQUEST_VALIDATION_FAILED');
+  }
+  const key = optionKey || bodyKey;
+  if (!key) throw new ApiError('An idempotency key is required for asynchronous evaluations.', 400, 'REQUEST_VALIDATION_FAILED');
+  const payload = { ...body, idempotencyKey: key };
+  return api<CreateEvaluationResponse>('evaluation-jobs', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    signal: options.signal,
+    headers: { 'Idempotency-Key': key },
+  });
+}
+
+export async function getEvaluation(jobId: string, signal?: AbortSignal): Promise<EvaluationStatus> {
+  if (!jobId.trim()) throw new ApiError('An evaluation job ID is required.', 400, 'REQUEST_VALIDATION_FAILED');
+  return api<EvaluationStatus>(`evaluation-jobs/${encodeURIComponent(jobId)}`, { signal });
+}
+
+/** Fetch the durable status again after a browser/request disconnect. */
+export async function recoverEvaluation(jobId: string, signal?: AbortSignal): Promise<EvaluationStatus> {
+  return getEvaluation(jobId, signal);
+}
+
+export async function cancelEvaluation(
+  jobId: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<EvaluationStatus & { cancellationRequested: boolean }> {
+  if (!jobId.trim()) throw new ApiError('An evaluation job ID is required.', 400, 'REQUEST_VALIDATION_FAILED');
+  return api<EvaluationStatus & { cancellationRequested: boolean }>(`evaluation-jobs/${encodeURIComponent(jobId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: 'user-requested' }),
+    signal: options.signal,
+  });
+}
+
+function waitForPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, delayMs);
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+function isRetryablePollError(error: unknown): boolean {
+  return !isApiError(error) || error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+}
+
+/**
+ * Polls the authoritative status endpoint. Transient network/server failures
+ * are retried so a dropped browser connection can resume from the stable job ID;
+ * auth, ownership, validation, and not-found errors are never hidden.
+ */
+export async function pollEvaluation(
+  jobId: string,
+  options: {
+    intervalMs?: number;
+    maxIntervalMs?: number;
+    signal?: AbortSignal;
+    onUpdate?: (status: EvaluationStatus) => void;
+  } = {},
+): Promise<EvaluationStatus> {
+  let delay = Math.max(100, options.intervalMs ?? 1000);
+  const maxDelay = Math.max(delay, options.maxIntervalMs ?? 5000);
+  for (;;) {
+    let status: EvaluationStatus;
+    try {
+      status = await getEvaluation(jobId, options.signal);
+    } catch (error) {
+      if (!isRetryablePollError(error)) throw error;
+      await waitForPoll(delay, options.signal);
+      delay = Math.min(maxDelay, delay * 2);
+      continue;
+    }
+    options.onUpdate?.(status);
+    if (isEvaluationTerminal(status.job.state)) return status;
+    await waitForPoll(delay, options.signal);
+    delay = Math.min(maxDelay, delay * 2);
+  }
+}

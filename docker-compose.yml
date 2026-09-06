@@ -28,5 +28,47 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+  # Opt-in local validation only. The default compose profile does not start
+  # Redis or the independent evaluation worker. Production should use managed
+  # PostgreSQL/Redis and an operator-managed worker environment file.
+  redis:
+    image: redis:7-alpine
+    profiles: ["evaluation-worker"]
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - evaluation_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  evaluation-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    profiles: ["evaluation-worker"]
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DEMO_MODE: ${DEMO_MODE:-false}
+      DATABASE_URL: postgres://agentforge:${POSTGRES_PASSWORD:-agentforge_local}@postgres:5432/agentforge
+      REDIS_URL: redis://redis:6379/0
+      EVALUATION_SCHEDULER_MODE: outbox
+      EVALUATION_QUEUE_NAME: ${EVALUATION_QUEUE_NAME:-agentforge-evaluations}
+      EVALUATION_QUEUE_PREFIX: ${EVALUATION_QUEUE_PREFIX:-agentforge}
+      EVALUATION_WORKER_ID: ${EVALUATION_WORKER_ID:-compose-evaluation-worker}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 90s
+    restart: unless-stopped
 volumes:
   postgres_data:
+  evaluation_redis_data:

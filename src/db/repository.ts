@@ -3,7 +3,12 @@ import { randomUUID } from 'node:crypto';
 import type { Repository, TableName, Tables } from '../shared/types.ts';
 import { tableRegistry } from './schema.ts';
 import { database } from './index.ts';
-const dates=new Set(['createdAt','updatedAt','expiresAt','accessTokenExpiresAt','refreshTokenExpiresAt','frozenAt','startedAt','completedAt','decidedAt','releasedAt','occurredAt']);
+const dates=new Set([
+  'createdAt','updatedAt','expiresAt','accessTokenExpiresAt','refreshTokenExpiresAt',
+  'frozenAt','startedAt','completedAt','decidedAt','releasedAt','occurredAt',
+  'acceptedAt','cancellationRequestedAt','leaseExpiresAt','heartbeatAt','finishedAt',
+  'recordedAt','availableAt','lastErrorAt','publishedAt',
+]);
 function toDatabase(value:Record<string,unknown>){return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).map(([k,v])=>[k,dates.has(k)&&typeof v==='string'?new Date(v):v]));}
 function fromDatabase<T>(value:unknown):T {return JSON.parse(JSON.stringify(value)) as T;}
 // The only intentionally dynamic query builder: domain services stay strongly typed.

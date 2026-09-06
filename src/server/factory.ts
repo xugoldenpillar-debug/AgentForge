@@ -5,6 +5,7 @@ import { CommunityService } from './community-service.ts';
 import { resolveCommunityRoles } from './community-roles.ts';
 import { DrizzleRepository } from '../db/repository.ts';
 import { byokProvider, gatewayProvider } from '../lib/ai/sdk-provider.ts';
+import { createDurableOutboxCompetitiveRunScheduler } from './evaluation/runtime.ts';
 
 let service: ArenaService | undefined;
 let communityService: CommunityService | undefined;
@@ -24,7 +25,13 @@ export function getService(): ArenaService {
         outputPrice: price(process.env.PLATFORM_OUTPUT_PRICE_PER_MILLION),
       }
     : undefined;
-  return service = new ArenaService(new DrizzleRepository(), {
+  const repository = new DrizzleRepository();
+  // Durable scheduling is opt-in so a web process cannot silently accept jobs
+  // without an outbox publisher and independent worker being configured.
+  const competitiveRunScheduler = process.env.EVALUATION_SCHEDULER_MODE === 'outbox'
+    ? createDurableOutboxCompetitiveRunScheduler(repository)
+    : undefined;
+  return service = new ArenaService(repository, {
     demoMode: testModelsEnabled(process.env),
     encryptionKey: process.env.CREDENTIAL_ENCRYPTION_KEY || '',
     allowedHosts: (process.env.PROVIDER_ALLOWED_HOSTS || 'api.openai.com,openrouter.ai').split(',').map((s) => s.trim()).filter(Boolean),
@@ -34,6 +41,7 @@ export function getService(): ArenaService {
     createPlatformProvider: platform ? () => gatewayProvider(process.env.AI_GATEWAY_API_KEY!, platform) : undefined,
     maxRunCost: Number(process.env.RUN_MAX_TOTAL_COST || 2.5),
     maxCases: Number(process.env.RUN_MAX_CASES || 50),
+    competitiveRunScheduler,
   });
 }
 
