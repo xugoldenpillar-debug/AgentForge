@@ -11,6 +11,7 @@ import { Avatar,ChallengeCard,Empty,ErrorNotice,Footer,GradeList,Icon,LanguageSw
 import { BuilderPage } from '@/features/builder/builder-page';
 import { useLocale } from '@/lib/i18n';
 import { localizeSystemContent, systemLabel } from '@/shared/i18n/system-content';
+import type { CatalogDetail, CatalogExample, CatalogParameter } from '@/shared/catalog-details';
 const WorkflowPreview=dynamic(()=>import('@/features/builder/canvas').then(m=>m.WorkflowPreview),{ssr:false,loading:()=> <Loading/>});
 function Header(){
  const {t}=useLocale();
@@ -269,13 +270,83 @@ function FailureLab({ problem, onSubmitted }: { problem: any; onSubmitted: () =>
     <div><SectionHeading title={t('failure.title')} />{problem.failures.length ? problem.failures.map((failure: any) => <div className="card card-pad mb-2" key={failure.id}><div className="flex justify-between mb-2"><span className={cn('chip', failure.status === 'verified' ? 'green' : 'purple')}>{systemLabel('failure-status', failure.status, failure.status.replaceAll('_', ' ').toUpperCase(), language)}</span><span className="mono small dim">{systemLabel('tier', failure.tier, failure.tier.toUpperCase(), language)}</span></div><p className="small">{failure.reason}</p><p className="small muted mt-1">{t('failure.by', { creator: failure.creator })}</p></div>) : <Empty title={t('failure.noCracks')} description={t('failure.noCracksDescription')} />}</div>
   </div><aside className="stack"><div className="callout purple"><Icon name="ShieldCheck" />{t('failure.privateKeyNotice')}</div><div className="card card-pad"><h3>{t('failure.hunterRules')}</h3><p className="small muted mt-2">{t('failure.hunterRulesDescription')}</p></div></aside></div>;
 }
+function CatalogDetailPage({ detail }: { detail: CatalogDetail }) {
+  const { t, language, formatNumber } = useLocale();
+  const localized = localizeSystemContent(detail.kind, { id: detail.id, name: detail.name, description: detail.description, effect: detail.effect }, language);
+  const evidence = detail.evidence;
+  const competitiveStats = evidence.competitiveStats;
+  return (
+    <main className="container page catalog-detail-page">
+      <div className="catalog-detail-back"><Link href="/workshop" className="button small ghost"><Icon name="ArrowRight" className="back-icon" /> Workshop</Link></div>
+      <PageHeading
+        eyebrow={`${detail.kind.toUpperCase()} / ${detail.id.toUpperCase()}`}
+        title={localized.name ?? detail.name}
+        description={localized.description ?? detail.description}
+        action={<span className="chip subtle">VERSION {detail.version.version}</span>}
+      />
+      <div className="catalog-detail-grid">
+        <div className="stack">
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">SAFE SOURCE PROJECTION</div>
+            <pre className="catalog-instruction">{detail.sourceProjection.instruction}</pre>
+            <p className="small muted mt-2">{detail.sourceProjection.note}</p>
+            <div className="catalog-meta-row mt-3">
+              <span><strong>Source</strong> {detail.version.source}</span>
+              <span><strong>Author</strong> {detail.author}</span>
+              <span><strong>Origin</strong> {detail.contentOrigin}</span>
+            </div>
+          </section>
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">PARAMETERS</div>
+            {detail.parameters.length ? <div className="catalog-parameters">{detail.parameters.map((parameter: CatalogParameter) => <div className="catalog-parameter" key={parameter.name}><div className="flex items-center justify-between gap-2"><strong>{parameter.name}</strong><span className="chip subtle">{parameter.type}{parameter.required ? ' / required' : ' / optional'}</span></div><p className="small muted mt-1">{parameter.description}</p>{parameter.example !== undefined && <code className="catalog-example-value">{JSON.stringify(parameter.example)}</code>}</div>)}</div> : <p className="small muted">No parameters.</p>}
+            <pre className="catalog-schema mt-3">{JSON.stringify(detail.parameterSchema, null, 2)}</pre>
+          </section>
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">STATIC EXAMPLES / NO MODEL CALL</div>
+            <p className="small muted mb-3">Examples are maintained metadata. Viewing this page performs no model invocation and does not create a run.</p>
+            <div className="catalog-examples">{detail.examples.map((example: CatalogExample) => <article className="catalog-example" key={example.id}><div className="flex items-center justify-between gap-2"><strong>{example.title}</strong><span className={`chip ${example.outcome === 'success' ? 'green' : 'purple'}`}>{example.outcome.toUpperCase()}</span></div><div className="catalog-example-block"><span>INPUT</span><pre>{example.input}</pre></div><div className="catalog-example-block"><span>OUTPUT</span><pre>{example.output}</pre></div><p className="small muted">{example.explanation}</p><div className="catalog-example-footer"><span>{example.visibility} / {example.provenance}</span><span>{example.version} / {example.modelBinding.modelId}</span><span>{example.source.ref} / {example.capturedAt}</span></div></article>)}</div>
+          </section>
+        </div>
+        <aside className="stack">
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">EXECUTION BOUNDARY</div>
+            <div className="catalog-boundary-grid"><div><span className="catalog-boundary-label">{t('common.tokens')}</span><strong>{formatNumber(detail.boundary.cost.tokenBudget.min)}–{formatNumber(detail.boundary.cost.tokenBudget.max)}</strong></div><div><span className="catalog-boundary-label">{t('common.tools')}</span><strong>{detail.boundary.cost.toolCalls.min}–{detail.boundary.cost.toolCalls.max}</strong></div><div><span className="catalog-boundary-label">MODEL CALLS</span><strong>{detail.boundary.cost.modelCalls.min}–{detail.boundary.cost.modelCalls.max}</strong></div><div><span className="catalog-boundary-label">{t('common.executionTime')}</span><strong>{formatNumber(detail.boundary.latency.expectedMs.min)}–{formatNumber(detail.boundary.latency.expectedMs.max)} ms</strong></div></div>
+            <p className="small muted mt-3">{detail.boundary.cost.note}</p><p className="small muted mt-2">{detail.boundary.latency.note}</p><div className="catalog-capabilities mt-3">{Object.entries(detail.boundary.capabilities).filter(([key]) => key !== 'note').map(([key, value]) => <span className={`chip ${value ? 'warning' : 'green'}`} key={key}>{key}: {value ? 'allowed' : 'blocked'}</span>)}</div>
+          </section>
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">VERSION / MODEL BINDING</div>
+            <dl className="catalog-dl"><div><dt>Version</dt><dd>{detail.version.version}</dd></div><div><dt>Source ref</dt><dd className="mono">{detail.version.sourceRef}</dd></div><div><dt>Published</dt><dd>{detail.version.publishedAt}</dd></div><div><dt>Strategy</dt><dd>{detail.modelBinding.strategy}</dd></div><div><dt>Model</dt><dd>{detail.modelBinding.modelId}</dd></div></dl>
+            <p className="small muted mt-3">{detail.modelBinding.note}</p>
+          </section>
+          <section className="card card-pad catalog-section">
+            <div className="eyebrow">EVIDENCE SOURCES</div>
+            <div className="catalog-evidence"><div><strong>Competitive statistics</strong><p className="small muted">{competitiveStats?.label}</p>{competitiveStats && competitiveStats.usageCount !== null && <span className="chip subtle">{formatNumber(competitiveStats.usageCount)} associated versions</span>}</div><div><strong>Author self-test</strong><p className="small muted">{evidence.authorSelfTest.label}</p><span className="chip subtle">{evidence.authorSelfTest.status}</span></div><div><strong>Platform evaluation</strong><p className="small muted">{evidence.platformEvaluation.label}</p><span className="chip subtle">{evidence.platformEvaluation.status}</span></div></div>
+          </section>
+        </aside>
+      </div>
+      <Footer />
+    </main>
+  );
+}
 function Workshop() {
   const { t, language, formatNumber, formatPercent } = useLocale();
+  const searchParams = useSearchParams();
+  const selectedSkill = searchParams.get('skill');
+  const selectedTool = searchParams.get('tool');
+  const selectedKind = selectedSkill ? 'skill' : selectedTool ? 'tool' : null;
+  const selectedId = selectedSkill || selectedTool;
   const skills = useData<any[]>('skills');
   const tools = useData<any[]>('tools');
-  return <main className="container page"><PageHeading eyebrow={t('workshop.eyebrow')} title={t('workshop.title')} description={t('workshop.description')} /><SectionHeading title={t('workshop.skillCards')} count={skills.data?.length ?? 0} />{skills.loading ? <Loading /> : skills.error ? <ErrorNotice message={skills.error} /> : <div className="grid-3">{skills.data?.map((skill) => { const localized = localizeSystemContent('skill', skill, language); return <div className="card skill-card" key={skill.id} id={skill.id}><div className="flex justify-between"><div className="icon-box purple"><Icon name={skill.icon} /></div><span className="chip subtle">SKILL / {skill.id.toUpperCase()}</span></div><h3>{localized.name ?? skill.name}</h3><p>{localized.description ?? skill.description}</p><div className="skill-effect"><Icon name="Zap" size={11} /> {localized.effect ?? skill.effect}</div><footer><span>{formatNumber(skill.usageCount)} {t('workshop.builds')} <span className="dim">/</span> {skill.successRate === null ? t('workshop.noData') : `${formatPercent(skill.successRate)} ${t('workshop.pass')}`}{skill.simulated ? ` (${t('workshop.demo')})` : ''}</span><Link className="button small ghost" href={`/builder?problem=messy-json&skill=${skill.id}`}>{t('workshop.equip')} <Icon name="Plus" /></Link></footer></div>; })}</div>}
-    <div className="mt-4"><SectionHeading title={t('workshop.toolRack')} count={tools.data?.length ?? 0} />{tools.loading ? <Loading /> : tools.error ? <ErrorNotice message={tools.error} /> : <div className="grid-3">{tools.data?.map((tool) => { const localized = localizeSystemContent('tool', tool, language); return <div className="card card-pad" key={tool.id}><div className="flex items-center gap-2 mb-2"><Icon name={tool.icon} className="accent" /><h3 style={{ fontSize: 15 }}>{localized.name ?? tool.name}</h3></div><p className="small muted">{localized.description ?? tool.description}</p><span className="chip subtle mt-2">{t('workshop.registeredTool')}</span></div>; })}</div>}</div><Footer /></main>;
+  const detail = useData<CatalogDetail>(selectedKind && selectedId ? `${selectedKind}s/${selectedId}` : null);
+  if (selectedKind) {
+    if (detail.loading) return <main className="container page"><Loading /></main>;
+    if (detail.error) return <main className="container page"><ErrorNotice message={detail.error} retry={detail.reload} /></main>;
+    return detail.data ? <CatalogDetailPage detail={detail.data} /> : null;
+  }
+  return <main className="container page"><PageHeading eyebrow={t('workshop.eyebrow')} title={t('workshop.title')} description={t('workshop.description')} /><SectionHeading title={t('workshop.skillCards')} count={skills.data?.length ?? 0} />{skills.loading ? <Loading /> : skills.error ? <ErrorNotice message={skills.error} /> : <div className="grid-3">{skills.data?.map((skill) => { const localized = localizeSystemContent('skill', skill, language); return <div className="card skill-card" key={skill.id} id={skill.id}><div className="flex justify-between"><div className="icon-box purple"><Icon name={skill.icon} /></div><span className="chip subtle">SKILL / {skill.id.toUpperCase()}</span></div><h3>{localized.name ?? skill.name}</h3><p>{localized.description ?? skill.description}</p><div className="skill-effect"><Icon name="Zap" size={11} /> {localized.effect ?? skill.effect}</div><footer><span><span className="catalog-stat-label">ARENA / </span>{formatNumber(skill.usageCount)} {t('workshop.builds')} <span className="dim">/</span> {skill.successRate === null ? t('workshop.noData') : `${formatPercent(skill.successRate)} ${t('workshop.pass')}`}{skill.simulated ? ` (${t('workshop.demo')})` : ''}</span><div className="flex gap-2"><Link className="button small ghost" href={`/workshop?skill=${skill.id}`}>Inspect <Icon name="Eye" /></Link><Link className="button small ghost" href={`/builder?problem=messy-json&skill=${skill.id}`}>{t('workshop.equip')} <Icon name="Plus" /></Link></div></footer></div>; })}</div>}
+    <div className="mt-4"><SectionHeading title={t('workshop.toolRack')} count={tools.data?.length ?? 0} />{tools.loading ? <Loading /> : tools.error ? <ErrorNotice message={tools.error} /> : <div className="grid-3">{tools.data?.map((tool) => { const localized = localizeSystemContent('tool', tool, language); return <div className="card card-pad catalog-list-card" key={tool.id}><div className="flex items-center gap-2 mb-2"><Icon name={tool.icon} className="accent" /><h3 style={{ fontSize: 15 }}>{localized.name ?? tool.name}</h3></div><p className="small muted">{localized.description ?? tool.description}</p><span className="chip subtle mt-2">{t('workshop.registeredTool')}</span><div className="mt-3"><Link className="button small ghost" href={`/workshop?tool=${tool.id}`}>Inspect <Icon name="Eye" /></Link></div></div>; })}</div>}</div><Footer /></main>;
 }
+
 function Providers() {
   const { t, formatMoney } = useLocale();
   const { user, loading: sessionLoading } = useSession();

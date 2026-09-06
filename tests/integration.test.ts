@@ -8,6 +8,8 @@ import { handleArena } from '../src/server/http.ts';
 import { testWorkflow as starterWorkflow } from './helpers/workflow.ts';
 import { TEST_CASES,CHALLENGE_SECRET } from '../src/server/fixtures.ts';
 import { AppError, ERROR_CODES } from '../src/shared/errors.ts';
+import { DrizzleRepository } from '../src/db/repository.ts';
+import type { CatalogDetail } from '../src/shared/catalog-details.ts';
 import type { RunEvent,User } from '../src/shared/types.ts';
 async function fixture(){const repo=new MemoryRepository();const user:User={id:'test-user',name:'Tester',email:'tester@example.invalid',emailVerified:false,image:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),elo:1000,reputation:0,isSeed:false};await seedCore(repo,user);const service=new ArenaService(repo,{demoMode:true,encryptionKey:randomBytes(32).toString('base64'),allowedHosts:['api.example.com']});return {repo,service,user};}
 async function save(service:ArenaService,userId:string){return service.saveBuild(userId,{problemId:'messy-json',title:'My first agent',visibility:'public',workflow:starterWorkflow('json')});}
@@ -40,4 +42,101 @@ test('Real provider routing honors multiple model IDs and never invents override
  const c=await service.addProvider(user.id,{name:'Two models',baseUrl:'https://api.example.com/v1',apiKey:'sk-test-local-only-5678',modelId:'model-one',inputPrice:1,outputPrice:2}),workflow=starterWorkflow('json');workflow.nodes[2].config={...workflow.nodes[2].config,credentialId:c.id,modelId:'model-one'};workflow.nodes.splice(3,0,{id:'second-model',kind:'model',label:'Second model',x:700,y:0,config:{...workflow.nodes[2].config,modelId:'model-two'}});workflow.edges=workflow.nodes.slice(1).map((n,i)=>({id:`edge-${i}`,source:workflow.nodes[i].id,target:n.id}));
  const build=await service.saveBuild(user.id,{problemId:'messy-json',title:'Two-model routing',visibility:'public',workflow});await assert.rejects(()=>service.run(user.id,{buildId:build.id,kind:'public'},()=>{}),/Confirm/);seen.length=0;prices.length=0;
  const result=await service.run(user.id,{buildId:build.id,kind:'public',consent:true},()=>{});assert.equal(result.summary.tier,'byok');assert.deepEqual(prices,[1,null]);assert.deepEqual([...new Set(seen)],['model-one','model-two']);assert.equal(result.summary.metrics.cost,null);
+});
+
+test('Read-only catalog detail routes cover every built-in Skill and Tool', async () => {
+  const { service } = await fixture();
+  const skills = await service.skills();
+  const tools = await service.tools();
+  assert.equal(skills.length, 6);
+  assert.equal(tools.length, 5);
+  for (const item of [...skills.map((skill) => ['skills', skill.id] as const), ...tools.map((tool) => ['tools', tool.id] as const)]) {
+    const response = await handleArena(new Request(`http://arena.test/api/arena/${item[0]}/${item[1]}`), { service, origin: 'http://arena.test' });
+    assert.equal(response.status, 200);
+    const detail = await response.json() as CatalogDetail;
+    assert.equal(detail.id, item[1]);
+    assert.equal(detail.examples.length, 2);
+    assert.equal(detail.examples[0].modelBinding.invoked, false);
+    assert.equal(detail.evidence.authorSelfTest.status, 'not_available');
+    assert.equal(detail.evidence.platformEvaluation.status, 'not_available');
+  }
+});
+
+test('Catalog detail projection contains no credential, score, or private runtime fields', async () => {
+  const { service } = await fixture();
+  const detail = await service.skillDetail('structured');
+  const serialized = JSON.stringify(detail);
+  assert.doesNotMatch(serialized, /apiKey|ciphertext|credentialId|platformVerified|hiddenFixtures|privatePrompt/);
+  assert.match(serialized, /Arena association statistics only/);
+  assert.match(serialized, /not component uplift/);
+});
+
+test('Viewing static catalog examples never invokes a model provider', async () => {
+  const { service } = await fixture();
+  let invocations = 0;
+  service.options.createPlatformProvider = () => {
+    invocations += 1;
+    throw new Error('catalog details must not create a provider');
+  };
+  await service.skillDetail('reflection');
+  await service.toolDetail('calculator');
+  assert.equal(invocations, 0);
+});
+
+test('Unknown catalog detail IDs return the stable resource-not-found error', async () => {
+  const { service } = await fixture();
+  const response = await handleArena(new Request('http://arena.test/api/arena/skills/not-a-skill'), { service, origin: 'http://arena.test' });
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: { code: ERROR_CODES.RESOURCE_NOT_FOUND, message: 'Catalog component not found.' } });
+});
+
+test('Community data tables preserve owner-scoped records and transactional cloning', async () => {
+  const repo = new MemoryRepository();
+  const now = new Date().toISOString();
+  const draftDefinition = { formatVersion: 1, kind: 'instruction-skill', instruction: 'private draft' };
+  await repo.insert('components', [{
+    id: 'component-a', ownerId: 'owner-a', name: 'Private component', description: 'Draft',
+    kind: 'instruction-skill', visibility: 'private', draftRevision: 1,
+    draftDefinition, currentVersionId: null, createdAt: now, updatedAt: now,
+  }]);
+  await repo.insert('componentVersions', [{
+    id: 'component-version-a', ownerId: 'owner-a', componentId: 'component-a', versionNumber: 1,
+    contractVersion: 1, definition: { ...draftDefinition }, definitionDigest: 'digest-a',
+    dependencies: [], publicMaterial: {}, licenseSpdx: null, provenance: {}, frozenAt: now, createdAt: now,
+  }]);
+
+  const ownerRows = await repo.read('components', { ownerId: 'owner-a' });
+  assert.equal(ownerRows.length, 1);
+  assert.equal((await repo.read('components', { ownerId: 'owner-b' })).length, 0);
+  ownerRows[0].draftDefinition = { changed: true };
+  assert.deepEqual((await repo.read('components', { id: 'component-a' }))[0].draftDefinition, draftDefinition);
+
+  await assert.rejects(() => repo.transaction(async (tx) => {
+    await tx.update('components', { id: 'component-a' }, { currentVersionId: 'component-version-a' });
+    throw new Error('rollback community transaction');
+  }));
+  assert.equal((await repo.read('components', { id: 'component-a' }))[0].currentVersionId, null);
+  assert.equal((await repo.read('componentVersions', { id: 'component-version-a' }))[0].frozenAt, now);
+});
+
+
+test('Drizzle repository maps community timestamp strings before PostgreSQL writes', async () => {
+  const inserted: Record<string, unknown>[] = [];
+  const orm = {
+    insert: () => ({
+      values: async (rows: Record<string, unknown>[]) => { inserted.push(...rows); },
+    }),
+  };
+  const repository = new DrizzleRepository(orm, null as never);
+  const now = '2026-09-06T00:00:00.000Z';
+  await repository.insert('componentTestRuns', [{
+    id: 'run-1', ownerId: 'owner-1', componentVersionId: 'version-1', testSuiteVersionId: 'suite-version-1',
+    evaluationJobId: null, credentialId: 'credential-1', modelId: null, runtimeKind: 'none', executionSource: null,
+    idempotencyKey: 'idempotency-1', constraints: {}, usage: null, resultSummary: null, status: 'queued',
+    consentVersion: null, requestDigest: 'request', failureReason: null, createdAt: now, startedAt: now, completedAt: now,
+  }]);
+  assert.equal(inserted.length, 1);
+  assert(inserted[0].createdAt instanceof Date);
+  assert(inserted[0].startedAt instanceof Date);
+  assert(inserted[0].completedAt instanceof Date);
 });

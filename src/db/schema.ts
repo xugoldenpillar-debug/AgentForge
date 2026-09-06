@@ -261,7 +261,168 @@ export const forkRelations = pgTable("fork_relations", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
 
-export const tableRegistry = {users: user, problems, testCases, builds, buildVersions, workflowNodes, workflowEdges, skills, tools, buildSkills, buildTools, runs, runCases, submissions, credentials, failureCases, reputations, badges, userBadges, forkRelations};
+export const components = pgTable("components", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  kind: text("kind").notNull(),
+  visibility: text("visibility").notNull(),
+  draftRevision: integer("draft_revision").notNull().default(0),
+  draftDefinition: jsonb("draft_definition").notNull(),
+  currentVersionId: text("current_version_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const componentVersions = pgTable("component_versions", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  componentId: text("component_id").notNull().references(() => components.id, { onDelete: "cascade" }),
+  versionNumber: integer("version_number").notNull(),
+  contractVersion: integer("contract_version").notNull(),
+  definition: jsonb("definition").notNull(),
+  definitionDigest: text("definition_digest").notNull(),
+  dependencies: jsonb("dependencies").notNull(),
+  publicMaterial: jsonb("public_material").notNull(),
+  licenseSpdx: text("license_spdx"),
+  provenance: jsonb("provenance").notNull(),
+  frozenAt: timestamp("frozen_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("component_versions_unique_0").on(t.componentId, t.versionNumber)]);
+
+export const attachments = pgTable("component_attachments", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  componentVersionId: text("component_version_id").notNull().references(() => componentVersions.id, { onDelete: "cascade" }),
+  path: text("path").notNull(),
+  mediaType: text("media_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  sha256: text("sha256").notNull(),
+  storageKey: text("storage_key").notNull(),
+  visibility: text("visibility").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("component_attachments_unique_0").on(t.componentVersionId, t.path)]);
+
+export const componentAttachmentContents = pgTable("component_attachment_contents", {
+  attachmentId: text("attachment_id").primaryKey().references(() => attachments.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+}, (t) => [check("component_attachment_contents_content_size_check", sql`octet_length(${t.content}) <= 262144`)]);
+
+export const componentTestSuites = pgTable("component_test_suites", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  componentId: text("component_id").notNull().references(() => components.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull(),
+  visibility: text("visibility").notNull(),
+  currentVersionId: text("current_version_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const componentTestSuiteVersions = pgTable("component_test_suite_versions", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  testSuiteId: text("test_suite_id").notNull().references(() => componentTestSuites.id, { onDelete: "cascade" }),
+  versionNumber: integer("version_number").notNull(),
+  cases: jsonb("cases").notNull(),
+  casesDigest: text("cases_digest").notNull(),
+  visibility: text("visibility").notNull(),
+  frozenAt: timestamp("frozen_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("component_test_suite_versions_unique_0").on(t.testSuiteId, t.versionNumber)]);
+
+export const componentTestRuns = pgTable("component_test_runs", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  componentVersionId: text("component_version_id").notNull().references(() => componentVersions.id, { onDelete: "cascade" }),
+  testSuiteVersionId: text("test_suite_version_id").notNull().references(() => componentTestSuiteVersions.id, { onDelete: "cascade" }),
+  evaluationJobId: text("evaluation_job_id").unique(),
+  credentialId: text("credential_id").notNull(),
+  modelId: text("model_id"),
+  runtimeKind: text("runtime_kind").notNull(),
+  executionSource: text("execution_source"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  constraints: jsonb("constraints").notNull(),
+  usage: jsonb("usage"),
+  resultSummary: jsonb("result_summary"),
+  status: text("status").notNull(),
+  consentVersion: text("consent_version"),
+  requestDigest: text("request_digest").notNull(),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+}, (t) => [uniqueIndex("component_test_runs_idempotency_unique_0").on(t.ownerId, t.idempotencyKey)]);
+
+export const publicationRequests = pgTable("publication_requests", {
+  id: text("id").primaryKey(),
+  componentVersionId: text("component_version_id").notNull().references(() => componentVersions.id, { onDelete: "cascade" }),
+  requesterId: text("requester_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  requestRevision: integer("request_revision").notNull().default(1),
+  publicMaterialSnapshot: jsonb("public_material_snapshot").notNull(),
+  declaration: text("declaration").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
+});
+
+export const publicationReviews = pgTable("publication_reviews", {
+  id: text("id").primaryKey(),
+  publicationRequestId: text("publication_request_id").notNull().references(() => publicationRequests.id, { onDelete: "cascade" }),
+  reviewerId: text("reviewer_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  decision: text("decision").notNull(),
+  reason: text("reason").notNull(),
+  evidence: jsonb("evidence").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const componentReleases = pgTable("component_releases", {
+  id: text("id").primaryKey(),
+  componentVersionId: text("component_version_id").notNull().unique().references(() => componentVersions.id, { onDelete: "cascade" }),
+  publicationRequestId: text("publication_request_id").notNull().unique().references(() => publicationRequests.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  releasedAt: timestamp("released_at", { withTimezone: true, mode: "date" }).notNull(),
+  disabledReason: text("disabled_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+});
+
+export const usageReferences = pgTable("component_usage_references", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  buildVersionId: text("build_version_id").notNull().references(() => buildVersions.id, { onDelete: "cascade" }),
+  componentVersionId: text("component_version_id").notNull().references(() => componentVersions.id, { onDelete: "cascade" }),
+  expansionDigest: text("expansion_digest").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("component_usage_references_unique_0").on(t.buildVersionId, t.componentVersionId)]);
+
+export const extensionApplications = pgTable("extension_applications", {
+  id: text("id").primaryKey(),
+  ownerId: text("owner_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  extensionType: text("extension_type").notNull(),
+  source: text("source").notNull(),
+  permissionDeclaration: text("permission_declaration").notNull(),
+  materials: jsonb("materials").notNull(),
+  status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  decidedAt: timestamp("decided_at", { withTimezone: true, mode: "date" }),
+});
+
+export const communityAuditEvents = pgTable("community_audit_events", {
+  id: text("id").primaryKey(),
+  action: text("action").notNull(),
+  actorId: text("actor_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  componentId: text("component_id").notNull().references(() => components.id, { onDelete: "cascade" }),
+  componentVersionId: text("component_version_id").references(() => componentVersions.id, { onDelete: "set null" }),
+  publicationRequestId: text("publication_request_id").references(() => publicationRequests.id, { onDelete: "set null" }),
+  occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull(),
+  metadata: jsonb("metadata").notNull(),
+}, (t) => [index("community_audit_events_component_idx").on(t.componentId, t.occurredAt)]);
+
+export const tableRegistry = {users: user, problems, testCases, builds, buildVersions, workflowNodes, workflowEdges, skills, tools, buildSkills, buildTools, runs, runCases, submissions, credentials, failureCases, reputations, badges, userBadges, forkRelations, components, componentVersions, attachments, componentAttachmentContents, componentTestSuites, componentTestSuiteVersions, componentTestRuns, publicationRequests, publicationReviews, componentReleases, usageReferences, extensionApplications, communityAuditEvents};
 
 // Managed by the versioned runner, not by application repositories or seed data.
 export const schemaMigrations = pgTable("schema_migrations", {

@@ -1,7 +1,7 @@
 import { tool, type ToolSet } from 'ai';
 import { z } from 'zod';
-import type { ToolId } from '../../shared/types';
-import { executeSafeTool } from './tools-core';
+import type { ToolId } from '../../shared/types.ts';
+import { executeSafeTool } from './tools-core.ts';
 export function sdkTools(ids:ToolId[],consume:()=>void):ToolSet {
   const registry={
     calculator:tool({description:'Evaluate bounded arithmetic. No code execution.',inputSchema:z.object({expression:z.string().max(256)}),execute:async({expression})=>{consume();return executeSafeTool('calculator',expression);}}),

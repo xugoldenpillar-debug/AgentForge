@@ -1,10 +1,10 @@
 # 社区组件库：开源展示、个人创作、自测与审核上架
 
 - 日期：2026-09-06
-- 状态：设计草案／首版范围与运行架构已确认；详细契约待定，尚未开始实施
-- 分支：`codex/component-library-design`
+- 状态：T0 技术契约已在本文冻结；仓库内解析／公开投影／契约测试切片、T1 内置目录详情与真实浏览器验收、T2 schema／迁移／仓储注册与不可变版本／附件元数据切片，以及 T2 HTTP/API 与服务端权限子项、repository-backed durable 审计表／默认事务写入路径已完成；整体 T0、T2 完整服务／数据 Gate、公共 SDK 发布和产品／法务 Gate 尚未完成
+- 分支：`codex/communitycomponentlibrary`
 - 基线：`8025d03497f516a91896eb4d1e1fe61454404b74`
-- 范围：只记录实现设计，不修改业务代码、数据库、权限或部署配置。
+- 范围：记录实现设计、T0 证据边界及 T1/T2 部分实现状态；本文和现有技术切片不授权公开导出、仓库可见性变更、生产数据库／权限／部署操作。
 - 相关领域术语：根目录 `CONTEXT.md`
 - 相关前置计划：`specs/deepseek-verified-gateway/tasks.md`
 
@@ -25,12 +25,12 @@
 10. 声明式配方可直接私有自测；带脚本 Skill／MCP 即使私用也必须先取得执行准入，且执行基础设施已就绪。
 11. 后续第一批 MCP 执行仅限经过审核的只读能力，仍限制敏感读取和数据外发；不开放发送、删除、支付等写操作。
 
-### 尚未确认，不可视为实施授权
+### 仍未完成或不可视为实施授权
 
-- 首版已确认 SKILL.md 加受限纯文本附件；字段子集和上下文加载细节待定。
+- T0 已冻结首版 recipe／instruction-skill envelope、SKILL.md 元信息子集、`references/` 附件规则、确定性上下文加载和稳定错误码；当前契约解析、公开投影和回归测试切片已完成，整体 T0 Gate 仍未完成。
+- D1 allowlist 已确认仅接受 MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC；服务端投稿发布检查与公共投影边界均强制执行这组冻结标识；实际许可证文本、NOTICE／署名要求、作者权利链、历史授权和依赖冲突处理仍待产品／法务与发布审查，不能据此视为 T0 法律／权利链审查已闭合。
+- D2 已确认 invite-only + fail-closed，当前不开放任何自测额度或真实自测入口；样例／调用／token／时长／队列／并发数值和预算运营安排仍未批准，不得写成产品承诺。
 - 后续 MCP／可执行 Skill 的托管、隔离与凭据方案；不作为首版运行功能实施。
-- 作者身份、公开授权与具体许可；已确认普通撤回保留旧引用、严重问题撤销执行及首版仅 Admin 审核。
-- 作者身份、审核证据、容量与预算参数；剩余产品决策集中到 `decisions.md`。
 
 “安全审核”不等于允许无限执行权限。扩展类型需分别定义审核对象、运行时权限、版本身份及撤销方式。首版声明式实现需同时覆盖配方与指令型 Skill，不排除未来 Skill／MCP 扩展；尚未定案的契约细节在后续访谈中确认。
 
@@ -66,6 +66,8 @@
 
 ### 4.1 公共目录与详情
 
+T1 已实现内置目录详情的只读代码切片：全部 6 个 Skill／5 个 Tool 均有安全源码投影、参数／Schema、边界、成本信息和一成功一失败静态示例；详情页明确示例不会调用模型或创建 Run，并分开展示竞技关联统计、作者自测与平台效果评测。真实 Next.js 浏览器验收已完成：桌面 `1280x577`、窄屏 `390x844` 均通过，覆盖 `/workshop?skill=structured`、`/workshop?tool=calculator`、错误态、关键交互和无横向溢出；期间发现的 hydration mismatch 已修复。
+
 - 目录：平台内置／社区作品、适用任务、发布检查／效果证据状态。
 - 详情：功能、局限、执行步骤、参数、权限、额外调用、源码与版本。
 - 示例：输入、配置、输出；成功和失败示例；明确模拟或真实执行、模型及时间。
@@ -93,8 +95,8 @@
 
 - 显示不可变提交版本、前次审核差异、自测证据来源、权限与风险。
 - 明确通过／驳回原因；修改后重新提交，不覆盖旧审核。
-- 推荐首版仅 Admin 可审核，作者不可审核自己的作品；是否扩展 Reviewer 角色另议。
-- 敏感管理操作必须服务端鉴权、CSRF／来源控制、审计，不能依赖隐藏菜单。
+- 首版审核角色由服务端认证角色 allowlist 控制，覆盖 owner／reviewer／admin；作者不可审核自己的作品，客户端不能自行声明或提升角色。
+- 敏感管理操作必须服务端鉴权、CSRF／来源控制、审计，不能依赖隐藏菜单；默认审计路径将事件写入 repository-backed durable 表并随服务事务持久化，注入式 audit writer 仅作为测试／扩展 seam。
 - 并发审核以版本／状态条件更新，重复请求不能造成重复发布。
 
 ## 5. 领域对象与数据设计（建议）
@@ -112,13 +114,19 @@
 | ExecutionAdmission | 扩展版本、执行范围、权限边界、决定者、状态 | 与公开发布分离；后续执行能力就绪后才可生效 |
 | UsageReference | BuildVersion 到已发布组件版本／展开摘要的绑定 | 不静默升级；支持风险影响追踪 |
 
-命名和字段为设计候选，不是已创建表。Q19 已确认：ComponentTestRun（SelfTestRun）保留独立业务记录，关联唯一 EvaluationJob，不复用竞技 runs 存放作者自测。Attempt、Invocation、Outbox、配额和预算由 evaluation-foundation 管理；组件侧不复制执行、评分或调度算法。具体关联约束在联合契约冻结时确定。
+T2 已创建上述 Component、ComponentVersion、Attachment、TestSuite、TestRun、PublicationRequest、PublicationReview、ComponentRelease、ExtensionApplication 和 UsageReference 的 Drizzle schema、目标 SQL、版本迁移与 MemoryRepository 注册。ComponentVersion 保存冻结快照与 definition digest，冻结后不覆盖；Attachment 保存版本绑定的路径、媒体类型、大小、SHA-256 和存储键元数据。HTTP/API 与服务端权限子项已完成：角色从认证上下文解析并受 allowlist 约束，覆盖 owner／reviewer／admin 权限边界、作者自审拒绝、CSRF／来源控制、CAS／期望版本并发保护；审计事件已具备 repository-backed durable 持久化表和默认服务事务写入路径，注入式 audit writer 仅作为测试／扩展 seam；不接受客户端提交角色。完整序列化一致性、旧 Build 无破坏升级的完整服务验证、持久化附件读写、真实数据库 Gate 和完整审核产品流程尚未完成。Q19 已确认：ComponentTestRun（SelfTestRun）保留独立业务记录，关联唯一 EvaluationJob，不复用竞技 runs 存放作者自测。Attempt、Invocation、Outbox、配额和预算由 evaluation-foundation 管理；组件侧不复制执行、评分或调度算法。具体关联约束在联合契约冻结时确定。
 
-实现 schema 时同步 Drizzle、目标 SQL、版本迁移、仓储和测试。迁移以新增可空／独立表为起点；不把旧 Build 强制标记为用户组件，也不把旧均值回填成平台评测。
+数据迁移不把旧 Build 强制标记为用户组件，也不把旧均值回填成平台评测；迁移与旧数据保留的完整真实数据库验证仍待完成。
 
-## 6. 上传、导出与执行契约（类型与入口已确认，字段子集待 T0 冻结）
+## 6. 上传、导出与执行契约（T0 已冻结技术形状；仓库内契约解析／投影实现与测试切片已完成）
 
-首版支持完整配方与纯指令／参考资料型 Skill；不支持任意代码执行。以下为配方封装示意：
+这里的“已完成”仅指当前仓库的技术实现切片：解析器、公开投影和契约测试已存在并复用既有 DAG 校验语义；它不表示 community surface 已独立、可导出或可发布，也不表示 T0 Gate 已通过。公开发布仍必须经过选定 export manifest、精确 release commit、许可／权利和 source-export audit Gate。
+
+首版只接受 `formatVersion: 1` 的两种定义：`workflow-recipe` 和 `instruction-skill`。导入、预览、保存和导出都使用同一份严格契约；未知字段或未支持能力一律拒绝，不通过“忽略未知字段”获得兼容性。
+
+### 6.1 `workflow-recipe` envelope
+
+允许的顶层字段只有：
 
 ```json
 {
@@ -127,44 +135,111 @@
   "name": "客服分类配方",
   "description": "对输入进行有限标签分类",
   "workflow": { "nodes": [], "edges": [] },
+  "dependencies": [],
   "examples": [],
-  "license": "待作者明确选择"
+  "license": null,
+  "provenance": { "sourceType": "original", "declaration": "作者声明" }
 }
 ```
 
-以上仅展示封装字段，不是可运行实例；空 DAG 必须被拒绝。
+上例中的空 `workflow` 仅用于展示 envelope，不能保存或执行；可运行版本必须在服务端补齐自测所需的 Provider 身份后，通过现有 `validateWorkflow()` 的节点、边、连通性、环、工具、Schema 和预算边界。recipe 的 `workflow` 使用现有 `Workflow` 形状（`nodes`／`edges`）；节点配置继续按节点类型使用白名单。客户端不得提交 `credentialId`、最终分数、隐藏用例或平台验证标记，执行时由服务端从授权凭据生成固定快照。社区定义不能把任意字符串当作内置 `SkillId`／`ToolId`，只能引用已允许的内置能力。
 
-指令型 Skill 的候选定义包含固定指令和随包参考文本，由服务端校验后注入指定模型上下文，不赋予额外工具、网络或代码权限。其类型与配方区分，格式／引用规则待 Q8 确认。首版不支持任意脚本 Skill 或嵌套子流程。
+`dependencies` 是精确快照数组，每项严格包含 `type`、`platformId`、`version` 和 `digest`；`digest` 必须是 SHA-256 内容摘要，不得表示可变远程包、安装命令或运行时自动解析。`examples` 是组件材料，不等同于竞技 TestCase；每项严格包含 `id`、`label`、`input`、`output`、`outcome` 和 `visibility`（`public`／`private`），公开投影只选择作者明确标记为 `public` 且再次显式授权的示例。`license: null` 仅可私有保存，不能提交公开发布申请。`provenance` 严格包含 `sourceType`（`original`／`adapted`／`third-party`）和 `declaration`，保存作者的来源／贡献声明，不代替法律审查。
 
-参考资料不得因文件名或说明而被自动当作可信系统指令；读取范围、字节数和模型上下文预算需在执行前限定。
+### 6.2 `instruction-skill` envelope 与 `SKILL.md`
 
-- 使用严格字段允许列表；版本不支持、未知节点或工具直接拒绝。
-- 建议初始文件上限 256 KiB、20 个样例，作为待验证配置值，不视为已定容量承诺。
-- 在读取／解析前限制 HTTP body 字节；解析后限制文本、节点／边、Schema 大小和深度。
-- 可执行定义入口拒绝远程引用、脚本、安装命令和嵌套组件；不读取上传者提供的本地路径。扩展申请中的 URL 只作审核材料，不自动抓取。
-- 定义文件不得包含 API Key、Cookie、凭据 ID 或私有运行记录；严格结构验证加秘密检测，检测不等于绝无秘密。
-- 导出服务端构造安全投影，不直接导出数据库对象；含敏感材料时阻止发布并明确提示。
-- 文本默认转义；不允许组件说明通过 HTML／Markdown 注入执行脚本。
-- 导入不自动运行；Fork 不继承作者的凭据或私有样例。
+`instruction-skill` 允许的顶层字段只有：`formatVersion`、`kind`、`name`、`description`、`instruction`、`references`、`dependencies`、`examples`、`license`、`provenance`。其中 `instruction` 是不可信的用户指令文本；它不能增加工具、网络、文件系统、代码执行或系统策略权限。
+
+`SKILL.md` 只接受以下元信息子集：
+
+- `name`：必填，作为作者内容保存，不作为系统翻译键。
+- `description`：必填，作为作者内容保存，不作为系统翻译键。
+
+正文映射为 `instruction`。除上述元信息外，front matter 的未知键一律拒绝；`scripts`、`assets`、`tools`、`commands`、`install`、`url` 及任意执行／依赖声明均拒绝。首版只接受单个 `SKILL.md`，不接受可执行目录或任意 ZIP 包。
+
+### 6.3 `references/` 附件路径与上下文加载
+
+- 逻辑路径必须是 POSIX 相对路径，并且以 `references/` 开头；拒绝绝对路径、反斜杠、`.`／`..`、宿主路径、符号链接、执行文件和路径规范化后越界。
+- 附件必须由作者显式上传并在 `references` 清单中逐项声明 `path`、`mediaType`、`sizeBytes` 和 `sha256` 内容摘要；首版只允许 UTF-8 `text/plain`。
+- 加载器只读取当前冻结版本清单中的附件，不递归扫描目录，不根据文件名、正文或远程 URL 发现更多内容；扩展申请中的 URL 仅作材料保存，不自动抓取。
+- 按冻结版本中的 `references` 清单顺序加载；清单顺序是契约的一部分，不能依赖文件系统遍历顺序。导入时可用规范化 POSIX 路径做校验和重复检测，但不得在保存后静默重排加载顺序。
+- 每份资料都包在“用户提供的参考资料”边界内，不提升为系统指令；正文和资料均视为不可信输入。
+- 组装上下文前计算总字节／token／时长等服务端限制；超限直接拒绝，不静默截断、分块、检索、递归加载或回退到网络资源。具体自测数值由 D2 版本化配置批准前保持关闭／fail closed；解析器的结构性上限仅是防御性拒绝边界，不构成自测配额、容量承诺或费用政策。
+- T2 当前以 repository-backed `component_attachment_contents` 独立表保存 UTF-8 文本正文（数据库 `octet_length` 上限 256 KiB），与附件元数据在同一事务写入；服务层按 owner 或 active release + public visibility 读取。导入／冻结绑定、公开导出、对象存储和正文 HTTP 路由仍留给后续 T3/T6，不在本切片确定。
+- 附件元数据列表不携带正文；读取 body 重新检查所有权及公开选择，缺失正文 fail closed。
+
+### 6.4 安全导入、导出与错误契约
+
+- 读取 body、解析结构、文本、附件数量／字节、节点／边、Schema 深度和上下文预算均分层限制；任一限制缺少配置时拒绝执行。
+- 定义文件不得包含 API Key、Cookie、凭据 ID、连接串密码、私有运行记录、隐藏 fixtures 或客户端声称的分数／验证状态；检测到敏感字段或未知字段即拒绝。秘密检测不是权利或安全的绝对保证。
+- 导入只生成不执行的预览；保存时服务端重新解析，不信任客户端回传的预览对象。导出由服务端构造公开投影，不直接序列化数据库对象；Fork 清除作者凭据和私有样例。
+- 文本默认转义；作者原文与系统 UI 翻译分离，不把作者文本当作翻译键或未经净化的 HTML。
+
+错误继续使用 `AppError`／`safeError()` 的安全投影。现有通用码沿用 `REQUEST_BODY_TOO_LARGE`、`REQUEST_VALIDATION_FAILED`、`INVALID_WORKFLOW`、`OWNERSHIP_FORBIDDEN`、`ACCESS_FORBIDDEN`、`BUDGET_EXCEEDED`、`RATE_LIMITED`。组件库需要在共享错误契约中新增并本地化以下稳定领域码；这些名称是 T0 契约；即使共享错误码已预留，也不代表组件路由、业务状态或统一评测能力已经完成：
+
+- `COMPONENT_DEFINITION_INVALID`：结构、未知字段或 envelope 不合法。
+- `COMPONENT_UNSUPPORTED_CAPABILITY`：脚本、远程抓取、MCP、嵌套或其他首版不支持能力。
+- `COMPONENT_ATTACHMENT_INVALID`：路径、类型、摘要、符号链接或附件限制不合法。
+- `COMPONENT_LICENSE_REQUIRED`：公开流程缺少许可或权利声明。
+- `COMPONENT_LICENSE_UNSUPPORTED`：许可不在产品／法务批准的 allowlist 中。
+- `COMPONENT_VERSION_CONFLICT`：草稿／冻结版本的乐观并发冲突。
+- `SELF_TEST_NOT_ALLOWED`：用户、版本、凭据或执行准入不满足条件。
+- `SELF_TEST_QUOTA_EXCEEDED`：服务端版本化额度或共享并发已耗尽。
+- `SELF_TEST_CONSENT_REQUIRED`：未确认数据、调用或费用同意。
+- `EVALUATION_NOT_READY`：统一 evaluation-foundation 尚未通过执行／费用 Gate。
+
+错误响应只公开稳定 code 和安全消息；不返回原始 Prompt、宿主路径、凭据、模型原始异常或私有附件内容。
+
+### 6.5 公开投影 allow／deny 规则
+
+公开 DTO 由服务端按冻结的 `ComponentVersion` 和作者选择重新构造，不能直接序列化 Component、数据库行或 SelfTestRun。允许公开的字段限于：
+
+- 组件／版本的公开 ID、类型、名称、说明、版本号、内容摘要和发布状态；
+- 经过安全投影的 workflow 节点／边、允许公开的指令文本、参数／Schema、模型策略身份和受控成本／边界说明；模型配置不得包含凭据引用或私有端点；
+- 作者明确选择公开的成功／失败示例、`references/` 纯文本附件及其大小／类型／摘要；
+- 精确依赖版本／摘要、来源／贡献声明、已批准的许可证和必要的 NOTICE／署名信息；
+- 发布检查状态及范围受限的作者自测／平台效果评测摘要，且必须标明证据来源、版本、时间和适用范围。
+
+禁止公开的字段和材料包括：
+
+- API Key、Cookie、凭据 ID、base URL、连接串密码、私有 Provider 配置、内部路径和宿主信息；
+- 未被作者选择公开的样例、附件、测试套件、自测明细、原始模型回包、日志、EvaluationJob／Attempt／Invocation 标识和队列／预算内部数据；
+- 隐藏 fixtures、竞技隐藏 Suite、运行数据、其他用户对象、草稿／未冻结内容及客户端上传的分数、`platformVerified` 或其他未经服务端产生的验证标记；
+- 可变远程依赖、脚本／命令／MCP 端点、安装指令和任何能够扩大运行权限的材料。
+
+服务端投稿发布检查与公开投影边界均只接受 D1 冻结 allowlist：MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC；任何其他许可证均 fail closed。公开投影缺少许可、来源声明、受支持的发布状态或作者的明确公开选择时，发布流程同样 fail closed；投影入口要求服务端确认非草稿状态，并为示例／`references/` 传入显式选择清单，且只接受标记为 `public` 的示例。发布检查、自测摘要和平台效果评测摘要必须分栏展示，不得合并成“已验证”或组件收益标签。
+
+上述投影实现与测试仍只是仓库内切片。T0 还要求为选定的 export manifest 固定精确 release commit，并在该 commit 上获得 source-export audit `PASS`；当前／历史二进制和 secret-like 命中、禁止路径、私有依赖、根／第一方许可证、贡献者权利及可复现依赖证据都必须逐项闭合。`source-export-inventory.md` 记录的是 draft／audit evidence，不是批准的 release manifest。
 
 ## 7. BYOK 自测和效果证据
 
-自测入口：选择冻结版本 → 选择自己的官方凭据 → 选择样例 → 确认发送内容与预算 → 运行 → 查看证据。
+自测入口的业务顺序是：选择冻结版本 → 选择自己的官方凭据 → 选择允许的样例 → 确认发送内容与服务端预算 → 请求统一评测作业 → 查询结果。该入口只描述组件业务层，不新建一套请求内执行器。
 
-服务端必须独立执行：
+### 7.1 社区组件层职责
 
-1. 验证定义／样例／凭据所有权或明确访问许可。
-2. 从 Official Registry 解析模型，不能只靠前端显示“官方”。
-3. 拒绝此入口的 Custom Endpoint；普通 Run API 不能成为绕过入口。
-4. 固定版本、模型和样例，记录同意内容；保留取消、超时与并发保护。
-5. 限制样例数、输出、额外调用、工具、费用和总时间；错误不触发无限重试。
-6. 持久化状态，页面断线不得诱发客户端自动重发付费任务。
-7. 输出 NDJSON，错误不带模型原始秘密；私有运行只有作者可读。
-8. 不写竞技榜单、不产生竞技声望、不借用生产隐藏 Suite。
+1. 验证用户拥有 ComponentVersion、TestSuiteVersion 和凭据引用，并固定定义、依赖、样例、运行时／策略身份、同意版本和请求摘要。
+2. 从 Official Registry 选择合法模型；拒绝此入口的 Custom Endpoint，且不能通过普通 Run API 绕过该准入。
+3. 在统一创建边界内写入独立 SelfTestRun，并关联唯一 EvaluationJob；客户端不能上传最终分数、usage、平台评测标记或成功声明替代执行。
+4. 提供查询／取消的所有权检查和安全结果投影；页面断线不自动重发付费任务。自测结果不写竞技 Submission、声望、排行榜或生产隐藏 Suite。
+5. 在 Worker 开始前及后续受控步骤提供版本／组件撤销和凭据有效性检查；失效时阻止实际调用。
 
-当前价格未知时 cost=null：可报告 token 上限，不能承诺金额硬上限。金额展示、价格版本与预算强制执行必须有一致依据后才开放相关承诺。
+### 7.2 evaluation-foundation 职责
 
-作者样例存在选择偏差。平台效果评测如实施，须使用有无组件对照、固定模型／样例集／版本、记录预算差异、失败与中止情况。评测标记应有范围，不以单次结果称“所有任务更好”。
+evaluation-foundation 负责 EvaluationJob、Attempt／Invocation、Outbox、Worker、幂等、队列与容量、预算预占／结算、取消／超时／中断和不确定上游状态的收敛。它是执行状态和真实 usage 的权威来源；社区层只保存 SelfTestRun 的业务关联和对外允许的汇总，不复制这些基础表或账本。
+
+失败样例不等同于作业失败：完成所有获准样例后，可以生成含失败样例的完成报告；基础设施中断或上游状态不确定时，不伪造完整报告，也不自动以付费重跑解决不确定状态。具体 API／消息版本和原子创建协议以 [跨分支交付](../evaluation-foundation/integration.md) 的联合契约为准，当前文档不宣称它们已经存在。
+
+当前价格未知时 `cost = null`：可报告已有依据的 token／调用／时长限制，不能承诺金额硬上限。任何真实调用仍须等待 evaluation-foundation、容量／费用、Official 凭据、撤销和 D2 配置 Gate。
+
+发布检查、作者自测和平台效果评测是三类独立证据：
+
+| 证据来源 | 产生者 | 可公开内容 | 不得替代 |
+| --- | --- | --- | --- |
+| 发布检查 | 平台审核／发布流程 | 检查状态、范围和原因 | 作者自测或平台效果评测 |
+| 作者自测 | 作者使用自己的授权凭据，经统一评测基础执行 | 版本化摘要、状态、时间和限制 | 平台发布检查或组件收益结论 |
+| 平台效果评测 | 平台精选、单独预算批准的对照实验 | 固定范围、样本、失败／中止、usage／成本摘要 | 竞技 Verified 或作者自测 |
+
+作者样例存在选择偏差；平台效果评测如实施，须使用有无组件对照、固定模型／样例集／版本，并记录预算差异、失败和中止情况。任何来源都不能由客户端写入 `platformVerified` 或将单次结果表述为所有任务收益。
 
 ## 8. 生命周期和风险处置
 
@@ -220,11 +295,18 @@ P1 与 P2 可在契约冻结后分别开发；P4 依赖账号权限基础，不�
 ### 与 Gateway 计划的关系
 
 - 复用 Registry／安全调用；不重写模型网关。
-- 依赖 Phase 1 官方凭据边界及 Phase 2 角色／审计的必要子集；这些并非当前已完成能力。
+- 依赖 Phase 1 官方凭据边界及 Phase 2 角色／审计的必要子集；本轮已完成社区 HTTP/API 所需的服务端角色 allowlist、repository-backed durable 审计表／默认事务写入和并发保护子集，但不等于 Gateway Phase 2 或真实自测已开放。
 - 私有自测不必等待 Verified worker 全部建成，但不得借此开放可信榜单。
 - 若平台复测使用平台资金，应先落实自己的预算预留和执行策略，不能直接把作者 Key 当平台测试凭据。
 
 ## 11. 验证矩阵与交付要求
+
+### 本轮已完成的验证证据（2026-09-06）
+
+- T1 真实浏览器：桌面 `1280x577` 与窄屏 `390x844` 均完成；验证 `/workshop?skill=structured`、`/workshop?tool=calculator`、错误态、详情交互和无横向溢出；hydration mismatch 已修复。
+- T2 HTTP/API 与权限：服务端认证角色 allowlist 已接入；已回归 owner／reviewer／admin 权限边界、作者自审拒绝、CSRF／来源控制、CAS／期望版本并发保护，以及 repository-backed durable 审计表的默认事务写入路径和注入式 audit writer seam；HTTP 错误路径也已回归。客户端不能声明或提升角色。
+- T2 附件正文切片：`persistTextAttachment` 服务端重新计算 UTF-8 字节数与 SHA-256，校验冻结版本 `references` 清单，原子写入元数据与正文并默认保持 private；`readTextAttachment` 只返回正文并复用 owner／active release + public attachment 访问检查。当前不提供上传／导入／正文 HTTP 路由，整体 T2 Gate 仍未关闭。
+- 工程回归：`pnpm typecheck` 通过；社区聚焦测试 `64 passed, 0 failed`；`git diff --check` 通过。该测试结果仅记录本轮实际聚焦命令，不代表 T0 发布 Gate、完整 T2 数据 Gate 或 T5 已完成。
 
 - 领域：状态转换、不可变版本、依赖快照、禁止自审、重复发布和撤销。
 - 安全：伪造 owner、他人凭据、跨用户版本／测试记录、秘密导出、超大上传、未知操作、说明注入。
@@ -298,7 +380,7 @@ Skill 包是指令和资源的交付格式，不是一个自动可执行的程�
 
 1. Next 控制面：账号、包版本、审核、额度与提交任务，不执行用户脚本。
 2. Skill 加载器：根据固定版本加载指令与参考资料；只暴露获准的资源，不递归扫描平台文件。
-3. 执行 Worker／Agent Runtime：组织模型上下文、调用模型、接收工具请求、校验与分派、汇总结果。首版复用现有工作流执行和 AI SDK；后续长任务再接独立持久化 Worker。
+3. 执行 Worker／Agent Runtime：组织模型上下文、调用模型、接收工具请求、校验与分派、汇总结果。首版复用现有工作流执行和 AI SDK；组件自测及后续长任务的持久化调度由 evaluation-foundation 提供，社区层不另建 Worker 或队列。
 4. 模型适配器：通过用户自己的官方凭据调用 Flash 等支持模型；密钥由受控后端使用，不因脚本要求而写入沙箱。
 5. 工具层：已有确定性工具、未来获准的脚本入口、未来获准的 MCP 集成。执行前逐次校验权限与预算。
 6. 脚本隔离环境：后续执行可执行 Skill 时才需要；按任务隔离文件、进程、资源和网络，不共享平台数据库凭据、Docker socket 或宿主目录。
@@ -350,9 +432,9 @@ ADR 0010 的“不依赖编码 CLI”与嵌入 Pi 核心 SDK 不冲突。确切�
 
 ### 16.2 自测请求
 
-候选字段：componentVersionId、testSuiteVersionId、credentialId、runtimeKind、consentVersion、idempotencyKey。
+业务关联字段为：componentVersionId、testSuiteVersionId、credentialId、runtimeKind、consentVersion、idempotencyKey；具体数据库列名和 API 类型仍待 T2／联合 T5 实现冻结。
 
-服务器拒绝客户端指定 owner、官方 baseURL、厂商价格、最终分数、platform-evaluated 标记或无限制工具；模型 offering 从合法选择解析，使用者无权扩大默认执行范围。
+服务器拒绝客户端指定 owner、官方 baseURL、厂商价格、最终分数、platform-evaluated 标记或无限制工具；模型 offering 从合法选择解析，使用者无权扩大默认执行范围。SelfTestRun、EvaluationJob 和 Outbox 按 [跨分支交付](../evaluation-foundation/integration.md) 的统一创建边界关联，不能先各自创建再事后拼接。
 
 成功响应返回 testRunId 和状态／事件入口。completed 的必要条件是实际完成全部获准样例、完成结果保存；部分样例失败可形成完成的测试结果，基础设施中断则形成失败状态，不能把两者混淆。
 
@@ -379,7 +461,7 @@ API 不提供“管理员直接改分”路径。评价、举报和审核结论�
 
 每个文本附件绑定 owner、componentVersion、大小、类型和内容摘要；引用只能命中该版本清单，不能解析为任意宿主路径。读附件同样检查私有访问权。
 
-首版建议以明确选择的附件文本组装上下文，执行前计算容量并拒绝超限，不自动让模型遍历磁盘。是否做按需读取工具、检索或分块应在 T0 冻结，不悄悄新增 RAG 服务。
+首版以第 6.3 节明确选择的附件文本组装上下文，执行前计算容量并拒绝超限，不自动让模型遍历磁盘；首版不提供按需读取工具、检索、分块服务或远程抓取。
 
 这些约束用于指导实现和测试，不代表现有 HTTP 路由已经支持上述字段。
 
@@ -394,7 +476,7 @@ D4 已确认：商业保护针对复制整个平台并经营竞争服务，不�
 
 具体 LICENSE、历史贡献权利和商业条款尚待核对；文档不是法律授权。本次未调整仓库可见性、拆仓或公开代码，也不承诺阻止独立实现的竞争产品。
 
-## 17. evaluation-foundation 联合交付契约（2026-09-06）
+## 18. evaluation-foundation 联合交付契约（2026-09-06）
 
 已确认方向以 [Q1–Q25](../evaluation-foundation/README.md) 为准；分工见 [跨分支交付](../evaluation-foundation/integration.md)。本节不代表接口或数据库已经实现。
 

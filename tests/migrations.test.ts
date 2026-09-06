@@ -49,9 +49,18 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS \"components\"/);
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS \"component_test_runs\"/);
+  assert.match(migrations[3].sql, /CREATE TABLE IF NOT EXISTS \"community_audit_events\"/);
+  assert.match(migrations[4].sql, /CREATE TABLE IF NOT EXISTS \"component_attachment_contents\"/);
+  assert.match(migrations[4].sql, /octet_length\("content"\) <= 262144/);
+  assert.match(migrations[2].sql, /evaluation_job_id\" TEXT UNIQUE/);
+  assert.match(migrations[2].sql, /credential_id\" TEXT NOT NULL/);
+  assert.match(migrations[2].sql, /idempotency_key\" TEXT NOT NULL/);
+  assert.doesNotMatch(migrations[2].sql, /CREATE TABLE.*evaluation_jobs|outbox|budget/i);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -132,16 +141,75 @@ test('legacy fixtures lack issuer and retain auth, credentials and ranked histor
 });
 
 
-test('Phase 0 frozen baseline equals target without ledger and legacy plus issuer', async () => {
+test('initial baseline remains frozen while schema.sql includes the additive community target', async () => {
   const migrations = await loadMigrations();
   const target = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
   const ledgerMarker = '-- Runner-owned history.';
   assert.equal(target.split(ledgerMarker).length, 2);
-  assert.equal(migrations[0].sql.trim(), target.split(ledgerMarker)[0].trim());
+  assert.match(target, /CREATE TABLE IF NOT EXISTS "components"/);
+  assert.match(target, /CREATE TABLE IF NOT EXISTS "component_usage_references"/);
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();
   assert.equal(alter, 'ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS issuer TEXT;');
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
+  assert.doesNotMatch(migrations[2].sql, /ALTER TABLE public\.(users|builds|runs)/);
+});
+
+test('community migration is additive, repeatable and preserves existing rows', async () => {
+  const migration = (await loadMigrations()).find(item => item.version === '0003');
+  assert(migration);
+  assert.doesNotMatch(migration.sql, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE /i);
+  for (const table of [
+    'components', 'component_versions', 'component_attachments',
+    'component_test_suites', 'component_test_suite_versions', 'component_test_runs',
+    'publication_requests', 'publication_reviews', 'component_releases',
+    'component_usage_references', 'extension_applications',
+  ]) {
+    assert.match(migration.sql, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`));
+  }
+  const fake = fakeDatabase();
+  const legacyRow = { version: '0001', name: first.name, checksum: first.checksum, legacy: true };
+  fake.rows().push(legacyRow);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  assert.equal(fake.rows().filter(row => row.version === '0003').length, 1);
+});
+
+test('community audit migration is additive, repeatable and preserves existing rows', async () => {
+  const migration = (await loadMigrations()).find(item => item.version === '0004');
+  assert(migration);
+  assert.doesNotMatch(migration.sql, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE /i);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS \"community_audit_events\"/);
+  assert.match(migration.sql, /\"component_version_id\" TEXT REFERENCES/);
+  assert.match(migration.sql, /\"publication_request_id\" TEXT REFERENCES/);
+  const fake = fakeDatabase();
+  const legacyRow = { version: '0001', name: first.name, checksum: first.checksum, legacy: true };
+  fake.rows().push(legacyRow);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  assert.equal(fake.rows().filter(row => row.version === '0004').length, 1);
+});
+
+test('component attachment contents migration is additive, repeatable and preserves existing rows', async () => {
+  const migration = (await loadMigrations()).find(item => item.version === '0005');
+  assert(migration);
+  assert.doesNotMatch(migration.sql, /DROP TABLE|TRUNCATE|DELETE FROM|UPDATE /i);
+  assert.match(migration.sql, /CREATE TABLE IF NOT EXISTS \"component_attachment_contents\"/);
+  assert.match(migration.sql, /PRIMARY KEY REFERENCES \"component_attachments\"/);
+  assert.match(migration.sql, /octet_length\(\"content\"\) <= 262144/);
+  const fake = fakeDatabase();
+  const legacyRow = { version: '0001', name: first.name, checksum: first.checksum, legacy: true };
+  fake.rows().push(legacyRow);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  await runMigrations(fake.database, [first, migration]);
+  assert.equal(fake.rows().filter(row => row.legacy).length, 1);
+  assert.equal(fake.rows().filter(row => row.version === '0005').length, 1);
 });
 
 test('rejects transaction control before opening a transaction, even in conservative guard contexts', async () => {

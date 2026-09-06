@@ -40,13 +40,12 @@ const LEGACY_KEY_BY_TEXT: Partial<Record<string, MessageKey>> = {
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
 export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<DisplayLanguage>(() => {
-    if (typeof document !== 'undefined') {
-      const bootstrapped = document.documentElement.dataset.displayLanguage;
-      if (isDisplayLanguage(bootstrapped)) return bootstrapped;
-    }
-    return DEFAULT_LANGUAGE;
-  });
+  // Keep the first client render identical to the server render. The bootstrap
+  // script updates the document language before hydration, but reading that
+  // value here would make persisted Chinese preferences change text during
+  // hydration. The effect below applies the preference immediately after the
+  // hydration boundary is complete.
+  const [language, setLanguageState] = useState<DisplayLanguage>(DEFAULT_LANGUAGE);
   const setLanguage = useCallback((next: DisplayLanguage) => {
     setLanguageState(next);
     persistLanguage(next, typeof window === 'undefined' ? undefined : window.localStorage);

@@ -3,6 +3,7 @@ import type { Build, CaseResult, Config, Credential, FailureCase, Metrics, Probl
 import type { AIProvider, ProviderResolver } from '../lib/ai/types.ts';
 import { ensure, ERROR_CODES, withErrorCode } from '../shared/errors.ts';
 import { SKILLS, TOOLS, BADGES, JSON_SCHEMA, ROUTES, starterWorkflow } from '../shared/catalog.ts';
+import { getCatalogDetailDefinition, type CatalogDetail, type CatalogKind } from '../shared/catalog-details.ts';
 import { validateWorkflow, publicWorkflow, forkWorkflow } from '../lib/workflow/validate.ts';
 import { executeWorkflow } from '../lib/workflow/engine.ts';
 import { JUDGES, matchesSchema } from '../lib/judge/index.ts';
@@ -90,6 +91,62 @@ export class ArenaService {
     });
   }
   async tools(){return TOOLS;}
+  private catalogDetail(kind: CatalogKind, id: string) {
+    const definition = getCatalogDetailDefinition(kind, id);
+    ensure(definition, 'Catalog component not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+    return {
+      ...definition,
+      parameters: definition.parameters.map((parameter) => ({ ...parameter })),
+      parameterSchema: structuredClone(definition.parameterSchema),
+      sourceProjection: { ...definition.sourceProjection },
+      boundary: {
+        ...definition.boundary,
+        cost: { ...definition.boundary.cost, modelCalls: { ...definition.boundary.cost.modelCalls }, tokenBudget: { ...definition.boundary.cost.tokenBudget }, toolCalls: { ...definition.boundary.cost.toolCalls } },
+        latency: { ...definition.boundary.latency, expectedMs: { ...definition.boundary.latency.expectedMs } },
+        capabilities: { ...definition.boundary.capabilities },
+      },
+      version: { ...definition.version },
+      modelBinding: { ...definition.modelBinding },
+      examples: definition.examples.map((example) => ({
+        ...example,
+        modelBinding: { ...example.modelBinding },
+        source: { ...example.source },
+      })),
+    };
+  }
+  async skillDetail(id: string): Promise<CatalogDetail> {
+    const detail = this.catalogDetail('skill', id);
+    const summary = (await this.skills()).find((skill) => skill.id === id);
+    return {
+      ...detail,
+      evidence: {
+        competitiveStats: summary ? {
+          usageCount: summary.usageCount,
+          successRate: summary.successRate,
+          simulated: summary.simulated,
+          label: 'Arena association statistics only; not component uplift or Verified evidence.',
+        } : null,
+        authorSelfTest: { status: 'not_available', label: 'Author self-test is not implemented in this read-only catalog slice.' },
+        platformEvaluation: { status: 'not_available', label: 'Platform evaluation is separate and is not represented by this catalog detail.' },
+      },
+    };
+  }
+  async toolDetail(id: string): Promise<CatalogDetail> {
+    const detail = this.catalogDetail('tool', id);
+    return {
+      ...detail,
+      evidence: {
+        competitiveStats: {
+          usageCount: null,
+          successRate: null,
+          simulated: false,
+          label: 'Tools have no component uplift or Verified evidence in this read-only catalog slice.',
+        },
+        authorSelfTest: { status: 'not_available', label: 'Author self-test is not implemented in this read-only catalog slice.' },
+        platformEvaluation: { status: 'not_available', label: 'Platform evaluation is separate and is not represented by this catalog detail.' },
+      },
+    };
+  }
   async leaderboard(args:{problemId?:string;tier?:string;sort?:string}){
     const tier=['demo','byok','verified'].includes(args.tier||'')?args.tier as Tier:(this.options.demoMode?'demo':'byok');
     const [all,users,builds]=await Promise.all([this.repo.read('submissions',{tier}),this.repo.read('users'),this.repo.read('builds')]);
