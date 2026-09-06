@@ -165,3 +165,13 @@ _Avoid_: Model provider, deployment environment
 **Runtime Adapter**:
 The AgentForge boundary that connects an execution runtime or a vendor's task service to the platform's authorized run lifecycle and evidence model.
 _Avoid_: Model API adapter, tool permission
+
+## Evaluation execution
+
+**Evaluation Job**:
+An accepted request for a frozen evaluation providing challenge feedback, a competitive result, Author Self-Test evidence or Platform Component Evaluation evidence. Its purpose determines authority, budget ownership and permitted evidence; completion does not itself grant certification.
+_Avoid_: Publication Review, Submission, email task
+
+**Execution Budget Reservation**:
+A temporary allocation of approved execution allowance that prevents concurrent evaluations from exceeding that allowance. It is not a purchased balance or a reservation of a Verification Ticket.
+_Avoid_: Wallet balance, payment, Credit Reservation
