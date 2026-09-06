@@ -85,3 +85,26 @@ pnpm test:smoke
 ```
 
 Start from disposable local data for smoke/UI tests. The GitHub Actions workflow automates full-stack install, PostgreSQL, typechecking, build and smoke, but was not itself executed here. For public deployment, add genuine versioned migrations, locked dependencies and a deployment-specific security review.
+
+## Evaluation Worker operations gate
+
+The durable evaluation foundation now includes a reproducible worker image and fail-closed operational probe. The deployment artifacts are:
+
+- `Dockerfile.worker`
+- `scripts/evaluation-worker-production.ts`
+- `scripts/evaluation-worker.ts`
+- `scripts/worker-healthcheck.ts`
+- `.env.worker.example`
+- `docs/evaluation-worker-operations.md`
+
+The worker requires `DATABASE_URL`, `REDIS_URL`, `EVALUATION_SCHEDULER_MODE=outbox`, explicit queue name/prefix, a unique worker identity, and the credential encryption key. The healthcheck verifies PostgreSQL, the evaluation schema, Redis `PING`, and required configuration without printing secrets. Missing configuration or unavailable dependencies is a failure; there is no in-memory fallback.
+
+The migration integration gate remains separate from application runtime configuration:
+
+```sh
+MIGRATION_TEST_DATABASE_URL='<disposable-local-test-connection>' pnpm test:migrations
+```
+
+Use an isolated disposable PostgreSQL service for this command. Do not substitute `DATABASE_URL`, a shared database, or a production database. See [evaluation worker operations](evaluation-worker-operations.md) for shutdown, restart/backoff, lease/heartbeat, queue retention, local profile and deployment checklist details.
+
+This is configuration and validation tooling, not evidence of a live production deployment or real managed Redis/provider acceptance.

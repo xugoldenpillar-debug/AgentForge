@@ -38,13 +38,21 @@ export interface EvaluationReconciliationResult {
 export class EvaluationWorker {
   private readonly dependencies: EvaluationQueueDependencies;
   private readonly now: () => string;
+  private shutdownRequested = false;
 
   constructor(dependencies: EvaluationQueueDependencies) {
     this.dependencies = dependencies;
     this.now = dependencies.now ?? (() => new Date().toISOString());
   }
 
+  requestShutdown(): void {
+    this.shutdownRequested = true;
+  }
+
   async processNext(): Promise<EvaluationWorkerMessageResult> {
+    if (this.shutdownRequested) {
+      return { status: 'not-ready', message: null, jobId: null, attemptId: null, detail: 'shutdown-requested' };
+    }
     if (!(await this.isQueueReady())) {
       return { status: 'not-ready', message: null, jobId: null, attemptId: null };
     }
@@ -222,22 +230,74 @@ export class EvaluationWorker {
       return this.finishWithoutExecution(message, runningAttempt, executionToken, claimedStateVersion + 1, 'control-plane-unavailable');
     }
 
-    let outcome: EvaluationExecutionOutcome;
-    try {
-      outcome = await this.dependencies.executor.execute({
-        job: runningJob,
-        attempt: runningAttempt,
-        workerId: this.dependencies.workerId,
-        executionToken,
-        message,
-      });
-    } catch {
-      // An executor exception may mean that an upstream call was dispatched but
-      // its result was not durably observed. Treat it as unknown and acknowledge
-      // the delivery rather than retrying paid work blindly.
-      outcome = { kind: 'unknown', code: 'UPSTREAM_RESULT_UNKNOWN' };
+    const execution = await this.executeWithHeartbeat({
+      job: runningJob,
+      attempt: runningAttempt,
+      workerId: this.dependencies.workerId,
+      executionToken,
+      message,
+    }, claimedStateVersion + 1);
+    if (execution.leaseLost) {
+      // The old worker no longer owns the attempt. Acknowledge the delivery so
+      // it is not blindly replayed; reconciliation will fence the attempt and
+      // preserve any possibly-dispatched upstream call as unknown.
+      return {
+        status: 'stale-worker',
+        message: null,
+        jobId: message.jobId,
+        attemptId: runningAttempt.id,
+        detail: 'attempt-lease-lost-during-execution',
+      };
     }
-    return this.finishAttempt(message, runningAttempt, executionToken, claimedStateVersion + 1, outcome);
+    return this.finishAttempt(message, runningAttempt, executionToken, execution.stateVersion, execution.outcome);
+  }
+
+  private async executeWithHeartbeat(
+    context: EvaluationExecutionContext,
+    initialStateVersion: number,
+  ): Promise<{
+    readonly outcome: EvaluationExecutionOutcome;
+    readonly stateVersion: number;
+    readonly leaseLost: boolean;
+  }> {
+    const heartbeatMs = Math.max(1_000, Math.floor(this.dependencies.leaseTtlMs / 3));
+    let stateVersion = initialStateVersion;
+    let leaseLost = false;
+    let renewalInFlight: Promise<void> | null = null;
+    const heartbeat = setInterval(() => {
+      if (renewalInFlight || leaseLost) return;
+      renewalInFlight = (async () => {
+        try {
+          const renewed = await this.renewAttemptLease(context.attempt);
+          if (!renewed) {
+            leaseLost = true;
+            return;
+          }
+          stateVersion += 1;
+        } catch {
+          leaseLost = true;
+        } finally {
+          renewalInFlight = null;
+        }
+      })();
+    }, heartbeatMs);
+    heartbeat.unref?.();
+
+    try {
+      let outcome: EvaluationExecutionOutcome;
+      try {
+        outcome = await this.dependencies.executor.execute(context);
+      } catch {
+        // An executor exception may mean that an upstream call was dispatched
+        // but its result was not durably observed. Never retry that paid call.
+        outcome = { kind: 'unknown', code: 'UPSTREAM_RESULT_UNKNOWN' };
+      }
+      if (renewalInFlight) await renewalInFlight;
+      return { outcome, stateVersion, leaseLost };
+    } finally {
+      clearInterval(heartbeat);
+      if (renewalInFlight) await renewalInFlight;
+    }
   }
 
   private async finishAttempt(

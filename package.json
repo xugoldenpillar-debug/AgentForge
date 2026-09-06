@@ -1,24 +1,62 @@
 {
-  "name": "agentforge", "version": "1.0.0", "private": true, "type": "module",
-  "engines": { "node": ">=22.16.0" }, "packageManager": "pnpm@10.15.1",
+  "name": "agentforge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "packageManager": "pnpm@10.15.1",
   "scripts": {
-    "dev": "next dev", "build": "next build", "start": "next start",
-    "db": "tsx scripts/db.ts", "db:generate": "drizzle-kit generate", "db:migrate": "tsx scripts/migrate.ts", "db:seed": "tsx scripts/seed.ts",
-    "typecheck": "tsc --noEmit", "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db": "tsx scripts/db.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:seed": "tsx scripts/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
     "test:provider-sdk": "tsx --test tests/deepseek-sdk.integration.ts",
     "test:migrations": "node --experimental-strip-types --test tests/migrations.integration.ts",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "worker:start": "tsx scripts/evaluation-worker-production.ts",
+    "worker:healthcheck": "node --experimental-strip-types scripts/worker-healthcheck.ts"
   },
   "dependencies": {
-    "next": "16.3.4", "react": "19.2.8", "react-dom": "19.2.8",
-    "@xyflow/react": "^12.8.4", "ai": "^6.0.0", "@ai-sdk/openai-compatible": "^2.0.0", "@ai-sdk/gateway": "^3.0.0",
-    "drizzle-orm": "^0.44.5", "postgres": "^3.4.7", "better-auth": "^1.7.2", "@better-auth/drizzle-adapter": "^1.7.2",
-    "zod": "^4.1.5", "zustand": "^5.0.8", "lucide-react": "^0.468.0",
-    "@radix-ui/react-slot": "^1.2.3", "class-variance-authority": "^0.7.1", "clsx": "^2.1.1", "tailwind-merge": "^3.3.1", "server-only": "^0.0.1", "undici": "^7.15.0"
+    "@ai-sdk/gateway": "^3.0.0",
+    "@ai-sdk/openai-compatible": "^2.0.0",
+    "@better-auth/drizzle-adapter": "^1.7.2",
+    "@radix-ui/react-slot": "^1.2.3",
+    "@xyflow/react": "^12.8.4",
+    "ai": "^6.0.0",
+    "better-auth": "^1.7.2",
+    "bullmq": "5.81.4",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.44.5",
+    "ioredis": "5.11.1",
+    "lucide-react": "^0.468.0",
+    "next": "16.3.4",
+    "postgres": "^3.4.7",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.3.1",
+    "undici": "^7.15.0",
+    "zod": "^4.1.5",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
-    "typescript": "^5.9.2", "@types/node": "^22.18.0", "@types/react": "^19.1.12", "@types/react-dom": "^19.1.9",
-    "tailwindcss": "^4.1.12", "@tailwindcss/postcss": "^4.1.12", "drizzle-kit": "^0.31.4", "tsx": "^4.20.5", "dotenv": "^17.2.2"
+    "@tailwindcss/postcss": "^4.1.12",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "dotenv": "^17.2.2",
+    "drizzle-kit": "^0.31.4",
+    "tailwindcss": "^4.1.12",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
   }
 }

@@ -42,9 +42,27 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    await runMigrations(database, migrations);
-    assert.equal((await runMigrations(database, migrations)).skipped, 2);
-    assert.equal((await sql`SELECT * FROM information_schema.columns WHERE table_name = 'accounts' AND column_name = 'issuer'`).length, 1);
+    assert.deepEqual((await runMigrations(database, migrations)).applied, migrations.map(migration => migration.name));
+    assert.ok(migrations.some(migration => migration.name === '0003_evaluation_foundation.sql'));
+    assert.equal((await runMigrations(database, migrations)).skipped, migrations.length);
+    assert.equal((await sql`SELECT * FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'issuer'`).length, 1);
+    const durableTables = [
+      'evaluation_jobs',
+      'evaluation_attempts',
+      'evaluation_invocations',
+      'evaluation_usage_records',
+      'evaluation_idempotency_keys',
+      'evaluation_budget_reservations',
+      'evaluation_outbox',
+    ];
+    const freshTables = await sql`
+      SELECT table_name
+      FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ${sql(durableTables)}
+      ORDER BY table_name
+    `;
+    assert.deepEqual(freshTables.map(row => row.table_name), [...durableTables].sort());
     // Destructive reset is confined to the database created above.
     await sql.unsafe('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
     await sql.unsafe(await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8'));
@@ -58,15 +76,17 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     };
     const before = await snapshot();
     const concurrent = await Promise.all([runMigrations(database, migrations), runMigrations(database, migrations)]);
-    assert.deepEqual(concurrent.map(result => result.applied.length).sort(), [0, 2]);
+    assert.deepEqual(concurrent.map(result => result.applied.length).sort(), [0, migrations.length]);
     assert.equal(await snapshot(), before);
-    assert.equal((await runMigrations(database, migrations)).skipped, 2);
+    assert.equal((await runMigrations(database, migrations)).skipped, migrations.length);
     assert.equal(await snapshot(), before);
-    const bad = parseMigration('0003_failure.sql', 'CREATE TABLE public.rollback_probe (id TEXT); SELECT 1/0;');
+    assert.equal((await sql`SELECT * FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'issuer'`).length, 1);
+    const recoveryVersion = String(Number(migrations.at(-1)!.version) + 1).padStart(4, '0');
+    const bad = parseMigration(`${recoveryVersion}_failure.sql`, 'CREATE TABLE public.rollback_probe (id TEXT); SELECT 1/0;');
     await assert.rejects(runMigrations(database, [...migrations, bad]));
     assert.equal((await sql`SELECT to_regclass('public.rollback_probe') AS name`)[0].name, null);
-    assert.equal((await sql`SELECT * FROM public.schema_migrations`).length, 2);
-    const good = parseMigration('0003_recovery.sql', 'CREATE TABLE public.rollback_probe (id TEXT);');
+    assert.equal((await sql`SELECT * FROM public.schema_migrations`).length, migrations.length);
+    const good = parseMigration(`${recoveryVersion}_recovery.sql`, 'CREATE TABLE public.rollback_probe (id TEXT);');
     assert.equal((await runMigrations(database, [...migrations, good])).applied.length, 1);
     await assert.rejects(runMigrations(database, [...migrations, parseMigration(good.name, 'SELECT 1;')]), /history mismatch/);
   } finally {
