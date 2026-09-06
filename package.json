@@ -5,6 +5,8 @@
     "dev": "next dev", "build": "next build", "start": "next start",
     "db": "tsx scripts/db.ts", "db:generate": "drizzle-kit generate", "db:migrate": "tsx scripts/migrate.ts", "db:seed": "tsx scripts/seed.ts",
     "typecheck": "tsc --noEmit", "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:provider-sdk": "tsx --test tests/deepseek-sdk.integration.ts",
+    "test:migrations": "node --experimental-strip-types --test tests/migrations.integration.ts",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
     "demo": "node --experimental-strip-types portable/server.ts", "setup": "node scripts/setup.mjs"
   },

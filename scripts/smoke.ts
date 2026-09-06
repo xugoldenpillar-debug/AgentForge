@@ -9,8 +9,32 @@ if(!['localhost','127.0.0.1'].includes(parsed.hostname)&&process.env.SMOKE_ALLOW
 let cookie='';
 async function request(path:string,body?:unknown){const res=await fetch(base+path,{method:body===undefined?'GET':'POST',headers:{...(cookie?{Cookie:cookie}:{}),...(body===undefined?{}:{'Content-Type':'application/json',Origin:base})},...(body===undefined?{}:{body:JSON.stringify(body)})});assert(res.ok,`${path}: HTTP ${res.status}`);const cookies=res.headers.getSetCookie();if(cookies.length)cookie=cookies.map(x=>x.split(';')[0]).join('; ');return res;}
 const unique=randomUUID().slice(0,8);
-await request('/api/auth/sign-up/email',{name:'Smoke Builder',email:`smoke-${unique}@example.invalid`,password:'SmokeLocalOnly!2026'});
+const email = `smoke-${unique}@example.invalid`;
+const password = `SmokeLocalOnly!${randomUUID()}`;
+const signup = await (await request('/api/auth/sign-up/email', {
+  name: 'Smoke Builder', email, password,
+})).json();
+assert.equal(typeof signup?.user?.id, 'string');
 assert(cookie,'Authentication did not create a session.');
+const signupSession = await (await request('/api/auth/get-session')).json();
+assert.equal(signupSession?.user?.id, signup.user.id);
+const revokedCookie = cookie;
+await request('/api/auth/sign-out', {});
+assert.equal(await (await request('/api/auth/get-session')).json(), null);
+// Replay the actual old credential, not just the browser's cleared cookie.
+cookie = revokedCookie;
+assert.equal(await (await request('/api/auth/get-session')).json(), null);
+cookie = '';
+const denied = await fetch(`${base}/api/auth/sign-in/email`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Origin: base },
+  body: JSON.stringify({ email, password: `${password}-wrong` }),
+});
+assert.equal(denied.status, 401, 'Incorrect password must be rejected.');
+await request('/api/auth/sign-in/email', { email, password });
+const signinSession = await (await request('/api/auth/get-session')).json();
+assert.equal(signinSession?.user?.id, signupSession.user.id);
+
 for(const [problemId,judge]of [['messy-json','json'],['support-router','enum'],['secret-keeper','secret']] as const){
  const build=await (await request('/api/arena/builds',{problemId,title:`Smoke ${problemId}`,visibility:'public',workflow:starterWorkflow(judge)})).json();
  for(const kind of ['public','hidden']){
@@ -21,4 +45,4 @@ for(const [problemId,judge]of [['messy-json','json'],['support-router','enum'],[
  const board=await (await request(`/api/arena/leaderboard?problemId=${problemId}&tier=demo`)).json();assert(board.some((row:{buildId:string})=>row.buildId===build.id));
  const fork=await (await request(`/api/arena/builds/${build.id}/fork`,{})).json();assert.equal(fork.parentBuildId,build.id);
 }
-console.log('Smoke passed: signup, all 3 challenges, public runs, hidden submissions, leaderboards and forks.');
+console.log('Smoke passed: signup, session revocation, password rejection, sign-in, all 3 challenges, public runs, hidden submissions, leaderboards and forks.');

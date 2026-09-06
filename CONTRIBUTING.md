@@ -145,9 +145,11 @@ python scripts/browser-smoke.py --base-url http://127.0.0.1:3000
 
 ## 7. 数据库与依赖管理的已知边界
 
-当前 `pnpm db` 执行 schema 脚本和 seed；`pnpm db:migrate` 没有版本台账。`db:generate` 生成的 Drizzle 文件不会被该执行器自动应用。
+当前 `pnpm db` 执行版本迁移和 seed；`pnpm db:migrate` 使用 `src/db/migrations/*.sql` 与 `schema_migrations` 台账、SHA-256 校验和事务锁。`src/db/schema.sql` 是目标结构，不会在每次启动时重放。`db:generate` 生成的 Drizzle 文件不会被该执行器自动应用。
 
-每次结构变更同时维护 SQL 和 Drizzle 定义，并为旧库设计升级路径。`CREATE TABLE IF NOT EXISTS` 不能补字段，例如旧库的 `accounts.issuer` 仍需升级。不要通过删除开发数据来掩盖迁移问题。
+禁止修改已应用迁移；新增升级文件，并同步目标 SQL 和 Drizzle schema。迁移测试使用显式 `MIGRATION_TEST_DATABASE_URL` 指向本机 PostgreSQL，运行 `pnpm test:migrations`；测试创建并清理独立 UUID 数据库，不使用应用的 `DATABASE_URL`。详见 `docs/MIGRATIONS.md`。
+
+每次结构变更同时维护 SQL 和 Drizzle 定义，并为旧库设计升级路径。`CREATE TABLE IF NOT EXISTS` 不能补字段，旧库的 `accounts.issuer` 由版本迁移 `0002_accounts_issuer.sql` 补齐，真实认证仍需单独 smoke。不要通过删除开发数据来掩盖迁移问题。
 
 仓库当前无 `pnpm-lock.yaml`，CI 使用 `pnpm install --no-frozen-lockfile`，依赖尚未完全锁定。下一次依赖治理应：
 

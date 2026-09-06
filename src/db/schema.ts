@@ -1,4 +1,5 @@
-import { pgTable, text, boolean, integer, doublePrecision, jsonb, timestamp, primaryKey, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, text, boolean, integer, doublePrecision, jsonb, timestamp, primaryKey, uniqueIndex, index, check } from "drizzle-orm/pg-core";
 
 export const user = pgTable("users", {
   id: text("id").primaryKey(),
@@ -261,3 +262,13 @@ export const forkRelations = pgTable("fork_relations", {
 });
 
 export const tableRegistry = {users: user, problems, testCases, builds, buildVersions, workflowNodes, workflowEdges, skills, tools, buildSkills, buildTools, runs, runCases, submissions, credentials, failureCases, reputations, badges, userBadges, forkRelations};
+
+// Managed by the versioned runner, not by application repositories or seed data.
+export const schemaMigrations = pgTable("schema_migrations", {
+  version: text("version").primaryKey(),
+  name: text("name").notNull(),
+  checksum: text("checksum").notNull(),
+  appliedAt: timestamp("applied_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  check("schema_migrations_checksum_check", sql`${table.checksum} ~ '^[0-9a-f]{64}$'`),
+]);

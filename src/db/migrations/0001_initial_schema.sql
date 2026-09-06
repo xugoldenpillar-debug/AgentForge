@@ -250,11 +250,3 @@ CREATE INDEX IF NOT EXISTS nodes_kind_idx ON workflow_nodes(kind);
 CREATE INDEX IF NOT EXISTS runs_user_idx ON runs(user_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS rate_limits (key TEXT PRIMARY KEY, hits INTEGER NOT NULL, expires_at TIMESTAMPTZ NOT NULL);
 CREATE TABLE IF NOT EXISTS execution_locks (key TEXT PRIMARY KEY, token TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL);
-
--- Runner-owned history. Version SQL remains the immutable source of upgrades.
-CREATE TABLE IF NOT EXISTS public.schema_migrations (
-  version TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  checksum TEXT NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
-  applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);

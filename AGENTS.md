@@ -72,7 +72,7 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 ## 6. 数据库变更
 
 - 修改数据结构时同时检查 `src/db/schema.ts`、`src/db/schema.sql`、仓储、种子和 Better Auth schema 映射。
-- 当前 `pnpm db:migrate` 读取 `src/db/schema.sql`，通过 postgres.js `sql.begin` 执行；不是版本化迁移系统。
+- 当前 `pnpm db:migrate` 按顺序执行 `src/db/migrations/*.sql`，通过 postgres.js `sql.begin`、事务 advisory lock 和 `schema_migrations` checksum 台账保护升级；`src/db/schema.sql` 保持全新库目标结构，不能替代版本迁移。
 - 不在池化连接上用普通 `sql.unsafe` 执行手写 `BEGIN/COMMIT`；不要将连接池全局设为单连接来掩盖事务问题。
 - `CREATE TABLE IF NOT EXISTS` 不会升级已有表。新增字段必须提供可重复执行的升级语句或明确迁移方案，不能只改建表定义。
 - `pnpm db:generate` 输出到 `drizzle/`，当前执行脚本不会自动应用这些产物；禁止声称生成即完成迁移。
@@ -118,8 +118,8 @@ pnpm test:smoke
 ## 9. 当前工程缺口（不是已完成能力）
 
 - 仓库尚未提交 `pnpm-lock.yaml`，CI 当前使用 `--no-frozen-lockfile`。后续应以 `packageManager` 指定的 pnpm 生成并验证锁文件，再在同一 PR 将 CI 切到 `--frozen-lockfile`。
-- 尚未配置 lint/format 命令或版本化数据库迁移。不要调用不存在的脚本，也不要在文档中将建议写成已启用检查。
-- 已有数据库可能缺少 `accounts.issuer`：当前建表定义含该字段，但旧库不会自动补列；升级时需单独处理并验证。
+- 尚未配置 lint/format 命令。版本化迁移已有实现；真实 PostgreSQL Gate 须以本次 `pnpm test:migrations` 结果为准，不得以单元测试替代。
+- 旧库的 `accounts.issuer` 由 `0002_accounts_issuer.sql` 以可重复执行的 nullable ADD COLUMN 补齐；升级后仍需验证真实注册/登录。
 - GitHub 分支保护是远端设置，本文件和 PR 模板不会自动启用。
 
 新增工程工具时应在同一变更中更新脚本、CI 和文档。解决上述缺口后同步删改本节，避免过期说明。

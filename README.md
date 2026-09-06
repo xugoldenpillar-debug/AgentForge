@@ -51,7 +51,7 @@ pnpm db
 pnpm dev
 ```
 
-Open `http://localhost:3000`. `pnpm run setup` creates `.env` with unique encryption/authentication keys and never overwrites an existing file. `pnpm db` applies the checked-in initial schema and idempotent seed. The example uses a local development PostgreSQL password; change it before deployment. If changing `POSTGRES_PASSWORD`, also update the local `DATABASE_URL` for a host-run application.
+Open `http://localhost:3000`. `pnpm run setup` creates `.env` with unique encryption/authentication keys and never overwrites an existing file. `pnpm db` applies the checked-in versioned SQL migrations and idempotent seed. Migration history is checksummed and protected by a transaction-scoped lock; see `docs/MIGRATIONS.md`. The example uses a local development PostgreSQL password; change it before deployment. If changing `POSTGRES_PASSWORD`, also update the local `DATABASE_URL` for a host-run application.
 
 Full stack: Next.js 16 App Router, TypeScript, Tailwind 4, shadcn-style Radix components, **@xyflow/react** with Zustand, Vercel AI SDK adapters, PostgreSQL with Drizzle, Zod request validation, Better Auth email/password and optional GitHub OAuth. All model and credential code executes on the server.
 
@@ -170,4 +170,4 @@ Before extending AgentForge, read:
 - `CONTRIBUTING.md` — local development, Git branches/commits/PRs, database changes and the test matrix.
 - `.github/pull_request_template.md` — change scope, evidence, compatibility and review checklist.
 
-The repository currently has no committed pnpm lockfile, lint/format scripts or versioned database migration runner. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
+The repository currently has no committed pnpm lockfile or lint/format scripts. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.

@@ -1,20 +1,32 @@
 import 'dotenv/config';
-import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 import { database } from '../src/db/index.ts';
+import { loadMigrations, runMigrations, runMigrationCommand } from './migration-runner.ts';
+
+let openedSql: ReturnType<typeof database>['sql'] | undefined;
 
 export async function migrate() {
-  const raw = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
-  const ddl = raw.replace(/^\s*BEGIN\s*;/im, '').replace(/^\s*COMMIT\s*;/im, '').trim();
-  await database().sql.begin(async tx => {
-    await tx.unsafe(ddl);
-  });
-  console.log('Database schema is ready.');
+  const migrations = await loadMigrations();
+  const result = await runMigrations({
+    async transaction(work) {
+      // postgres.js reserves a connection for this callback; the pool stays unchanged.
+      openedSql = database().sql;
+      return openedSql.begin(async tx => work({
+        async query(sql, parameters = []) {
+          return await tx.unsafe(sql, parameters);
+        },
+      }));
+    },
+  }, migrations);
+  console.log(`Database schema is ready (${result.applied.length} applied, ${result.skipped} unchanged).`);
+  return result;
 }
 
-if (process.argv[1]?.endsWith('migrate.ts')) {
-  try {
-    await migrate();
-  } finally {
-    await database().sql.end();
-  }
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const succeeded = await runMigrationCommand(
+    migrate,
+    async () => { await openedSql?.end(); },
+    message => console.error(message),
+  );
+  if (!succeeded) process.exitCode = 1;
 }
