@@ -1,4 +1,18 @@
 import type { ErrorCode } from './errors.ts';
+import type {
+  CancellationReason,
+  EvaluationAttemptState,
+  EvaluationBudgetKind,
+  EvaluationBudgetReservationState,
+  EvaluationInputSnapshot,
+  JsonObject,
+  EvaluationInvocationState,
+  EvaluationJobState,
+  EvaluationOutboxEventKind,
+  EvaluationPurpose,
+  UsageChargeability,
+  UsageCertainty,
+} from './evaluation-types.ts';
 export type NodeKind = 'input' | 'prompt' | 'model' | 'skill' | 'tool' | 'validator' | 'output';
 export type SkillId = 'structured' | 'reflection' | 'concise' | 'extract' | 'safety' | 'retry';
 export type ToolId = 'calculator' | 'json-validator' | 'text-search' | 'date-parser' | 'string-matcher';
@@ -42,6 +56,138 @@ export interface Reputation { id: string; userId: string; points: number; reason
 export interface Badge { id: string; name: string; description: string; icon: string }
 export interface UserBadge { id: string; userId: string; badgeId: string; createdAt: string }
 export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string }
+export type EvaluationAssociationKind = 'competitive-run' | 'self-test-run' | 'component-evaluation';
+export type EvaluationOutboxStatus = 'pending' | 'leased' | 'published' | 'dead-letter';
+export interface EvaluationJobRow {
+  id: string;
+  userId: string;
+  purpose: EvaluationPurpose;
+  associationKind: EvaluationAssociationKind;
+  businessRecordId: string;
+  competitiveRunId: string | null;
+  associationVisibility: 'public' | 'hidden' | null;
+  snapshot: EvaluationInputSnapshot;
+  snapshotDigest: string;
+  idempotencyScope: string;
+  idempotencyKey: string;
+  requestDigest: string;
+  budgetReservationId: string | null;
+  state: EvaluationJobState;
+  stateVersion: number;
+  executionToken: string | null;
+  cancellationReason: CancellationReason | null;
+  cancellationRequestedAt: string | null;
+  completion: { readonly evidence: 'complete' | 'partial'; readonly summary?: JsonObject } | null;
+  failure: { readonly code: string; readonly retryable: boolean } | null;
+  acceptedAt: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+export interface EvaluationAttemptRow {
+  id: string;
+  jobId: string;
+  attemptNumber: number;
+  deliveryKey: string;
+  state: EvaluationAttemptState;
+  stateVersion: number;
+  workerId: string | null;
+  workerLeaseId: string | null;
+  leaseExpiresAt: string | null;
+  heartbeatAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface EvaluationInvocationRow {
+  id: string;
+  jobId: string;
+  attemptId: string;
+  invocationIndex: number;
+  requestId: string;
+  idempotencyKey: string;
+  providerScope: string;
+  providerId: string;
+  modelId: string;
+  requestDigest: string;
+  state: EvaluationInvocationState;
+  providerRequestId: string | null;
+  usageRecordId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+export interface EvaluationUsageRecordRow {
+  id: string;
+  jobId: string;
+  attemptId: string;
+  invocationId: string | null;
+  certainty: UsageCertainty;
+  chargeability: UsageChargeability;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  reasoningTokens: number | null;
+  toolCalls: number | null;
+  latencyMs: number | null;
+  costUsd: number | null;
+  providerRequestId: string | null;
+  evidenceRef: string | null;
+  recordedAt: string;
+}
+export interface EvaluationIdempotencyKeyRow {
+  id: string;
+  scope: string;
+  key: string;
+  requestDigest: string;
+  jobId: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+export interface EvaluationBudgetReservationRow {
+  id: string;
+  jobId: string;
+  purpose: EvaluationPurpose;
+  kind: EvaluationBudgetKind;
+  state: EvaluationBudgetReservationState;
+  usageCertainty: UsageCertainty;
+  chargeability: UsageChargeability;
+  reservedInputTokens: number | null;
+  reservedOutputTokens: number | null;
+  reservedToolCalls: number | null;
+  reservedExecutionMs: number | null;
+  reservedCostUsd: number | null;
+  settledInputTokens: number | null;
+  settledOutputTokens: number | null;
+  settledToolCalls: number | null;
+  settledExecutionMs: number | null;
+  settledCostUsd: number | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface EvaluationOutboxRow {
+  id: string;
+  jobId: string;
+  aggregateId: string;
+  version: number;
+  kind: EvaluationOutboxEventKind;
+  occurredAt: string;
+  requestDigest: string;
+  payload: JsonObject;
+  dedupeKey: string;
+  status: EvaluationOutboxStatus;
+  availableAt: string;
+  leaseToken: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  deliveryAttempts: number;
+  lastErrorCode: string | null;
+  lastErrorAt: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 export interface CatalogSkill { id: SkillId; name: string; description: string; effect: string; icon: string; author: string }
 export interface CatalogTool { id: ToolId; name: string; description: string; icon: string }
 export interface Tables {
@@ -50,6 +196,7 @@ export interface Tables {
   buildSkills: {id: string; versionId: string; skillId: SkillId}; buildTools: {id: string; versionId: string; toolId: ToolId};
   runs: Run; runCases: RunCase; submissions: Submission; credentials: Credential;
   failureCases: FailureCase; reputations: Reputation; badges: Badge; userBadges: UserBadge; forkRelations: ForkRelation;
+  evaluationJobs: EvaluationJobRow; evaluationAttempts: EvaluationAttemptRow; evaluationInvocations: EvaluationInvocationRow; evaluationUsageRecords: EvaluationUsageRecordRow; evaluationIdempotencyKeys: EvaluationIdempotencyKeyRow; evaluationBudgetReservations: EvaluationBudgetReservationRow; evaluationOutbox: EvaluationOutboxRow;
 }
 export type TableName = keyof Tables;
 export interface Repository {

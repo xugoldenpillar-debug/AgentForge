@@ -261,7 +261,203 @@ export const forkRelations = pgTable("fork_relations", {
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
 
-export const tableRegistry = {users: user, problems, testCases, builds, buildVersions, workflowNodes, workflowEdges, skills, tools, buildSkills, buildTools, runs, runCases, submissions, credentials, failureCases, reputations, badges, userBadges, forkRelations};
+export const evaluationJobs = pgTable("evaluation_jobs", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  purpose: text("purpose").notNull(),
+  associationKind: text("association_kind").notNull(),
+  businessRecordId: text("business_record_id").notNull(),
+  competitiveRunId: text("competitive_run_id").references(() => runs.id, { onDelete: "restrict" }),
+  associationVisibility: text("association_visibility"),
+  snapshot: jsonb("snapshot").notNull(),
+  snapshotDigest: text("snapshot_digest").notNull(),
+  idempotencyScope: text("idempotency_scope").notNull(),
+  idempotencyKey: text("idempotency_key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  budgetReservationId: text("budget_reservation_id"),
+  state: text("state").notNull(),
+  stateVersion: integer("state_version").notNull().default(0),
+  executionToken: text("execution_token"),
+  cancellationReason: text("cancellation_reason"),
+  cancellationRequestedAt: timestamp("cancellation_requested_at", { withTimezone: true, mode: "date" }),
+  completion: jsonb("completion"),
+  failure: jsonb("failure"),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+}, (t) => [
+  uniqueIndex("evaluation_jobs_association_unique").on(t.associationKind, t.businessRecordId),
+  index("evaluation_jobs_user_created_idx").on(t.userId, t.createdAt),
+  index("evaluation_jobs_state_created_idx").on(t.state, t.createdAt, t.id),
+  uniqueIndex("evaluation_jobs_one_active_user_idx").on(t.userId).where(sql`${t.state} in ('accepted', 'queued', 'running', 'cancelling', 'unknown', 'reconciling')`),
+  check("evaluation_jobs_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation')`),
+  check("evaluation_jobs_association_check", sql`(
+    (${t.purpose} = 'competitive' and ${t.associationKind} = 'competitive-run' and ${t.competitiveRunId} is not null and ${t.businessRecordId} = ${t.competitiveRunId})
+    or (${t.purpose} = 'author-self-test' and ${t.associationKind} = 'self-test-run' and ${t.competitiveRunId} is null)
+    or (${t.purpose} = 'component-evaluation' and ${t.associationKind} = 'component-evaluation' and ${t.competitiveRunId} is null)
+  )`),
+  check("evaluation_jobs_state_version_check", sql`${t.stateVersion} >= 0`),
+]);
+
+export const evaluationAttempts = pgTable("evaluation_attempts", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").notNull().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  attemptNumber: integer("attempt_number").notNull(),
+  deliveryKey: text("delivery_key").notNull(),
+  state: text("state").notNull(),
+  stateVersion: integer("state_version").notNull().default(0),
+  workerId: text("worker_id"),
+  workerLeaseId: text("worker_lease_id"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+  heartbeatAt: timestamp("heartbeat_at", { withTimezone: true, mode: "date" }),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  finishedAt: timestamp("finished_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("evaluation_attempts_delivery_unique").on(t.jobId, t.deliveryKey),
+  uniqueIndex("evaluation_attempts_one_active_idx").on(t.jobId).where(sql`${t.state} in ('claimed', 'running', 'cancelling', 'reconciling')`),
+  index("evaluation_attempts_job_created_idx").on(t.jobId, t.createdAt, t.id),
+  index("evaluation_attempts_lease_idx").on(t.state, t.leaseExpiresAt),
+  check("evaluation_attempts_number_check", sql`${t.attemptNumber} > 0`),
+  check("evaluation_attempts_state_version_check", sql`${t.stateVersion} >= 0`),
+  check("evaluation_attempts_lease_check", sql`(
+    ${t.state} not in ('claimed', 'running', 'cancelling', 'reconciling')
+    or (${t.workerId} is not null and ${t.workerLeaseId} is not null and ${t.leaseExpiresAt} is not null)
+  )`),
+]);
+
+export const evaluationInvocations = pgTable("evaluation_invocations", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").notNull().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  attemptId: text("attempt_id").notNull().references(() => evaluationAttempts.id, { onDelete: "restrict" }),
+  invocationIndex: integer("invocation_index").notNull(),
+  requestId: text("request_id").notNull().unique(),
+  idempotencyKey: text("idempotency_key").notNull().unique(),
+  providerScope: text("provider_scope").notNull(),
+  providerId: text("provider_id").notNull(),
+  modelId: text("model_id").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  state: text("state").notNull(),
+  providerRequestId: text("provider_request_id"),
+  usageRecordId: text("usage_record_id"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+}, (t) => [
+  uniqueIndex("evaluation_invocations_attempt_index_unique").on(t.attemptId, t.invocationIndex),
+  index("evaluation_invocations_attempt_idx").on(t.attemptId, t.invocationIndex),
+  index("evaluation_invocations_provider_scope_idx").on(t.providerScope, t.createdAt),
+  check("evaluation_invocations_index_check", sql`${t.invocationIndex} > 0`),
+  check("evaluation_invocations_state_check", sql`${t.state} in ('pending', 'started', 'succeeded', 'failed', 'cancelled', 'unknown', 'reconciling')`),
+]);
+
+export const evaluationUsageRecords = pgTable("evaluation_usage_records", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").notNull().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  attemptId: text("attempt_id").notNull().references(() => evaluationAttempts.id, { onDelete: "restrict" }),
+  invocationId: text("invocation_id").unique(),
+  certainty: text("certainty").notNull(),
+  chargeability: text("chargeability").notNull(),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  reasoningTokens: integer("reasoning_tokens"),
+  toolCalls: integer("tool_calls"),
+  latencyMs: doublePrecision("latency_ms"),
+  costUsd: doublePrecision("cost_usd"),
+  providerRequestId: text("provider_request_id"),
+  evidenceRef: text("evidence_ref"),
+  recordedAt: timestamp("recorded_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  index("evaluation_usage_records_job_idx").on(t.jobId, t.recordedAt),
+  index("evaluation_usage_records_certainty_idx").on(t.certainty, t.recordedAt),
+  check("evaluation_usage_records_certainty_check", sql`${t.certainty} in ('known', 'unknown')`),
+  check("evaluation_usage_records_chargeability_check", sql`${t.chargeability} in ('not-chargeable', 'chargeable', 'uncertain')`),
+  check("evaluation_usage_records_nonnegative_check", sql`(
+    (${t.inputTokens} is null or ${t.inputTokens} >= 0)
+    and (${t.outputTokens} is null or ${t.outputTokens} >= 0)
+    and (${t.reasoningTokens} is null or ${t.reasoningTokens} >= 0)
+    and (${t.toolCalls} is null or ${t.toolCalls} >= 0)
+    and (${t.latencyMs} is null or ${t.latencyMs} >= 0)
+    and (${t.costUsd} is null or ${t.costUsd} >= 0)
+  )`),
+]);
+
+export const evaluationIdempotencyKeys = pgTable("evaluation_idempotency_keys", {
+  id: text("id").primaryKey(),
+  scope: text("scope").notNull(),
+  key: text("key").notNull(),
+  requestDigest: text("request_digest").notNull(),
+  jobId: text("job_id").notNull().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true, mode: "date" }),
+}, (t) => [
+  uniqueIndex("evaluation_idempotency_scope_key_unique").on(t.scope, t.key),
+  uniqueIndex("evaluation_idempotency_scope_job_unique").on(t.scope, t.jobId),
+  index("evaluation_idempotency_job_idx").on(t.jobId),
+]);
+
+export const evaluationBudgetReservations = pgTable("evaluation_budget_reservations", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").notNull().unique().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  purpose: text("purpose").notNull(),
+  kind: text("kind").notNull(),
+  state: text("state").notNull(),
+  usageCertainty: text("usage_certainty").notNull(),
+  chargeability: text("chargeability").notNull(),
+  reservedInputTokens: integer("reserved_input_tokens"),
+  reservedOutputTokens: integer("reserved_output_tokens"),
+  reservedToolCalls: integer("reserved_tool_calls"),
+  reservedExecutionMs: doublePrecision("reserved_execution_ms"),
+  reservedCostUsd: doublePrecision("reserved_cost_usd"),
+  settledInputTokens: integer("settled_input_tokens"),
+  settledOutputTokens: integer("settled_output_tokens"),
+  settledToolCalls: integer("settled_tool_calls"),
+  settledExecutionMs: doublePrecision("settled_execution_ms"),
+  settledCostUsd: doublePrecision("settled_cost_usd"),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  index("evaluation_budget_reservations_state_idx").on(t.state, t.updatedAt),
+  check("evaluation_budget_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation')`),
+  check("evaluation_budget_kind_check", sql`${t.kind} in ('execution-budget', 'benchmark-cost', 'platform-spend')`),
+  check("evaluation_budget_state_check", sql`${t.state} in ('reserved', 'partially-settled', 'settled', 'released', 'held-for-reconciliation')`),
+  check("evaluation_budget_certainty_check", sql`${t.usageCertainty} in ('known', 'unknown')`),
+  check("evaluation_budget_chargeability_check", sql`${t.chargeability} in ('not-chargeable', 'chargeable', 'uncertain')`),
+]);
+
+export const evaluationOutbox = pgTable("evaluation_outbox", {
+  id: text("id").primaryKey(),
+  jobId: text("job_id").notNull().references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  aggregateId: text("aggregate_id").notNull(),
+  version: integer("version").notNull(),
+  kind: text("kind").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "date" }).notNull(),
+  requestDigest: text("request_digest").notNull(),
+  payload: jsonb("payload").notNull(),
+  dedupeKey: text("dedupe_key").notNull().unique(),
+  status: text("status").notNull().default("pending"),
+  availableAt: timestamp("available_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  leaseToken: text("lease_token"),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true, mode: "date" }),
+  deliveryAttempts: integer("delivery_attempts").notNull().default(0),
+  lastErrorCode: text("last_error_code"),
+  lastErrorAt: timestamp("last_error_at", { withTimezone: true, mode: "date" }),
+  publishedAt: timestamp("published_at", { withTimezone: true, mode: "date" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  index("evaluation_outbox_pending_idx").on(t.status, t.availableAt, t.id),
+  index("evaluation_outbox_job_idx").on(t.jobId, t.createdAt, t.id),
+  check("evaluation_outbox_status_check", sql`${t.status} in ('pending', 'leased', 'published', 'dead-letter')`),
+  check("evaluation_outbox_version_check", sql`${t.version} > 0`),
+  check("evaluation_outbox_attempts_check", sql`${t.deliveryAttempts} >= 0`),
+]);
+
+export const tableRegistry = {users: user, problems, testCases, builds, buildVersions, workflowNodes, workflowEdges, skills, tools, buildSkills, buildTools, runs, runCases, submissions, credentials, failureCases, reputations, badges, userBadges, forkRelations, evaluationJobs, evaluationAttempts, evaluationInvocations, evaluationUsageRecords, evaluationIdempotencyKeys, evaluationBudgetReservations, evaluationOutbox};
 
 // Managed by the versioned runner, not by application repositories or seed data.
 export const schemaMigrations = pgTable("schema_migrations", {

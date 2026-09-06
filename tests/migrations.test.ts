@@ -49,9 +49,10 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
+  assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS public\.evaluation_jobs/);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -132,12 +133,18 @@ test('legacy fixtures lack issuer and retain auth, credentials and ranked histor
 });
 
 
-test('Phase 0 frozen baseline equals target without ledger and legacy plus issuer', async () => {
+test('versioned migrations match the fresh schema phases and preserve legacy upgrades', async () => {
   const migrations = await loadMigrations();
   const target = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
+  const foundationMarker = '-- Durable evaluation foundation.';
   const ledgerMarker = '-- Runner-owned history.';
-  assert.equal(target.split(ledgerMarker).length, 2);
-  assert.equal(migrations[0].sql.trim(), target.split(ledgerMarker)[0].trim());
+  const [baseline, foundationAndLedger] = target.split(foundationMarker);
+  assert.ok(foundationAndLedger, 'fresh schema must include the evaluation foundation phase');
+  const [foundation, ledger] = foundationAndLedger.split(ledgerMarker);
+  assert.ok(ledger, 'fresh schema must include the runner-owned history phase');
+  assert.equal(migrations[0].sql.trim(), baseline.trim());
+  const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '');
+  assert.equal(migrations[2].sql.trim(), freshFoundation.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();
