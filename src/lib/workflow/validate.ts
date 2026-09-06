@@ -104,5 +104,5 @@ export function publicWorkflow(w:Workflow, exposePrompt:boolean): Workflow {
   return {nodes:w.nodes.map(n=>({...n,config:!exposePrompt?{}:n.kind==='model'?{modelId:n.config.modelId,maxTokens:n.config.maxTokens,temperature:n.config.temperature}:structuredClone(n.config)})),edges:structuredClone(w.edges)};
 }
 export function forkWorkflow(w:Workflow): Workflow {
-  return {...structuredClone(w),nodes:w.nodes.map(n=>({...structuredClone(n),config:n.kind==='model'?{...n.config,credentialId:'demo',modelId:'demo-forge'}:structuredClone(n.config)}))};
+  return {...structuredClone(w),nodes:w.nodes.map(n=>({...structuredClone(n),config:n.kind==='model'?{...n.config,credentialId:'',modelId:''}:structuredClone(n.config)}))};
 }

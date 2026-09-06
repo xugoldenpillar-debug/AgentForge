@@ -1,3 +1,5 @@
+> Current architecture: Next.js only. Portable records below are retired historical evidence, not current acceptance. See [retirement evidence](verification/retire-portable-2026-09-06.md).
+
 # 本机全栈验证环境（2026-09-06）
 
 工作目录：`/Users/pillarxu/.codex/worktrees/f4f7/AgentForge`。这是独立本地 Demo 测试环境，不是生产配置，也未启用 Verified Gateway。

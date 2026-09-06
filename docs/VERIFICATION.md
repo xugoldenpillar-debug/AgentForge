@@ -1,3 +1,5 @@
+> Current architecture: Next.js only. Portable records below are retired historical evidence, not current acceptance. See [retirement evidence](verification/retire-portable-2026-09-06.md).
+
 > **2026-09-06 live BYOK update:** [Application Flash evidence](verification/deepseek-app-live-2026-09-06.md): one authorized real public run, 4/4, 976/1000, 242 tokens; not Verified or production acceptance. Offline SDK suite: 18 passed.
 
 > **2026-09-06 foundation update:** See [DeepSeek Gateway Phase 0 evidence](verification/deepseek-gateway-phase0-2026-09-06.md) for this working tree's 112 passing native tests, successful typecheck/build, and subsequently passed PostgreSQL/authentication gates. Historical results below remain historical; no Verified Gateway or paid model acceptance is claimed.

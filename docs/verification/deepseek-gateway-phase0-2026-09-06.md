@@ -1,3 +1,5 @@
+> Historical evidence: any Portable checks describe the retired runtime, not the current Next.js application.
+
 # DeepSeek Gateway foundation verification — 2026-09-06
 
 ## Scope and provenance

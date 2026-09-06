@@ -6,14 +6,6 @@
 
 以 `package.json` 为工具版本来源：Node.js 最低 **22.16.0**，全栈开发优先与 CI 的 **Node 22** 对齐；包管理器为 **pnpm 10.15.1**。不要混用 npm/yarn 生成额外锁文件。
 
-### 免安装演示
-
-```sh
-node --experimental-strip-types portable/server.ts
-```
-
-访问 `http://localhost:3000`。这是模拟模型，不产生模型 API 费用；账号和数据保存在 `.data/portable/`。不要同时启动多个进程访问同一数据目录。
-
 ### Next.js 全栈开发
 
 先确认 Docker 引擎已经运行，并确认使用的是本地开发数据库：
@@ -32,14 +24,14 @@ pnpm dev
 
 如果 Corepack 不可用，先准备与 `packageManager` 一致的 pnpm，不能把某台电脑全局安装的版本当作项目规范。
 
-两种服务器默认都使用 3000 端口，一次启动一种。切换时确认占用端口的进程及其工作目录，不要误杀无关服务。不要把旧解压目录的服务器当作当前 Git checkout 的效果。
+Next.js 默认使用 3000 端口。切换时确认占用端口的进程及其工作目录，不要误杀无关服务。不要把旧解压目录的服务器当作当前 Git checkout 的效果。
 
 完整配置与边界见 `README.md`、`.env.example` 和 `docs/ARCHITECTURE.md`。
 
 ## 2. 任务与变更范围
 
 - 一个任务围绕一个明确目标，先写清验收标准和非目标。
-- Bug 报告包含复现步骤、期望/实际行为、运行时（portable 或 Next.js）、环境和脱敏日志。
+- Bug 报告包含复现步骤、期望/实际行为、Next.js 版本和 APP_ENV、环境和脱敏日志。
 - 新功能说明它影响业务闭环的哪一环，以及是否涉及数据、鉴权、评分或真实模型费用。
 - 大范围架构变更先在 `docs/` 写设计：方案、替代方案、边界、数据兼容和验证计划，再实现。
 - 避免将依赖升级、全量格式化、重构和业务功能塞进同一个 PR。
@@ -81,7 +73,7 @@ docs(dev): 明确双运行时验证和 Git 协作规范
 ```
 
 - type 使用 `feat`、`fix`、`docs`、`refactor`、`test`、`chore`、`ci`、`perf` 等。
-- scope 指向模块，如 `builder`、`workflow`、`auth`、`db`、`judge`、`scoring`、`portable`。
+- scope 指向模块，如 `builder`、`workflow`、`auth`、`db`、`judge`、`scoring`。
 - 一个提交只做一件可解释的事；不要使用 `update`、`fix stuff` 一类无信息说明。
 - 破坏性变化使用 `!` 或 `BREAKING CHANGE:` 并说明迁移办法。
 - 提交前使用 `git diff --check` 和 `git diff --cached`，确认未夹带密钥、数据或无关文件。
@@ -113,10 +105,9 @@ git push -u origin <your-branch>
 | 变更类型 | 最低验证要求 |
 | --- | --- |
 | 纯文档、模板 | `git diff --check`，路径和命令核对；不要求无意义地重新部署 |
-| 引擎、评分、评测、服务 | Node 回归测试、新增针对性用例；依赖可用时 typecheck/build；两个运行时的相关路径 |
+| 引擎、评分、评测、服务 | Node 回归测试、新增针对性用例；依赖可用时 typecheck/build；正式应用相关路径 |
 | HTTP/API/权限 | 回归测试、授权失败与跨用户访问、敏感字段序列化、目标运行时 smoke |
-| React/Builder UI | typecheck/build、真实 Next.js 页面桌面/窄屏交互；不能以 portable UI 测试替代 |
-| Portable UI/服务器 | 原生 HTTP 回归、portable smoke、必要时 portable 浏览器测试 |
+| React/Builder UI | typecheck/build、真实 Next.js 页面桌面/窄屏交互；必须直接验证 React 前端 |
 | 数据库/认证 | 新库、旧库升级、重复迁移、数据保留、注册登录、全栈 smoke、typecheck/build |
 | 依赖或 CI | 安装一致性、完整测试、typecheck/build、全栈 CI |
 
@@ -132,11 +123,10 @@ pnpm test:smoke
 
 `pnpm test` 与上面的 Node 测试命令等价。生产构建 smoke 先 `pnpm build`，再另开终端 `pnpm start`。
 
-可选免安装 UI 浏览器检查（需 Python、Playwright 和 Chromium）：
-
-```sh
-python scripts/browser-smoke.py --base-url http://127.0.0.1:3000
-```
+测试环境与正式环境使用同一套 Next.js 应用。仅隔离测试环境设置
+`APP_ENV=test` 和 `DEMO_MODE=true`；默认不启用模拟模型。初始化仅补齐业务目录，
+测试用模拟用户与成绩由 `tests/helpers/` 生成，不进入普通数据库初始化。
+浏览器验收直接检查 Next.js 桌面/窄屏页面，不维护第二套演示 UI。
 
 - smoke 会创建账号和 Build，不是只读检查；不得指向生产数据库或服务器。
 - 使用 HTTP 桥接时必须注明方式与覆盖范围，不当作原生浏览器网络验证。

@@ -2,43 +2,11 @@
 
 **Build AI. Beat Problems.** A locally playable AI-building arena: build an agent, run public tests, submit against a server-side benchmark, compete across five leaderboards, then fork a better version.
 
-This repository contains a **Next.js application** and an **offline portable demo**. They share the actual domain service, workflow executor, scoring, judges, fixtures, encryption and response serializers. The portable demo exists so you can play without npm, PostgreSQL or a model account; it is not a production replacement for the requested stack.
+AgentForge has one application runtime: **Next.js + PostgreSQL + Better Auth**.
+Development and isolated testing use the same application. The early Portable preview
+has been retired; existing local data is not deleted or migrated.
 
-## Start playing immediately (no dependency installation)
-
-Install Node.js **22.16 or newer**, open a terminal in this directory, and run:
-
-```sh
-node --experimental-strip-types portable/server.ts
-```
-
-Open `http://localhost:3000`. Default local demo account:
-
-```text
-Email:    demo@agentforge.local
-Password: ForgeDemo!2026
-```
-
-You can also register a new account. Choose a challenge, open **Build agent**, change the prompt or equip a skill, **Save version**, **Run Public Tests**, and **Submit**. Open the resulting build or leaderboard row and **Fork / Remix**. A demo run does not send network requests to a model or spend tokens.
-
-The portable UI includes drag-to-move nodes, port-to-port connections, edge removal, node duplication/deletion, zoom, configuration, version saves, traces, case results, scoring, profiles, encrypted credential CRUD, failure hunting and community problems. State persists under `.data/portable/`; stop the process before backing up or resetting this directory. Do not share this directory: it contains account data and the local encryption key.
-
-For a different port on macOS/Linux:
-
-```sh
-PORT=3001 node --experimental-strip-types portable/server.ts
-```
-
-For PowerShell:
-
-```powershell
-$env:PORT = "3001"
-node --experimental-strip-types portable/server.ts
-```
-
-The portable runtime binds to `127.0.0.1` only and always simulates AI. It rejects real provider runs explicitly rather than pretending a model was called.
-
-## Run the requested full stack
+## Run the application
 
 Prerequisites: Node.js >=22.16, Corepack/pnpm, Docker with Compose, internet access for dependency installation.
 
@@ -62,15 +30,25 @@ node scripts/setup.mjs
 docker compose up --build
 ```
 
-The app waits for PostgreSQL's health check, initializes the schema/seed, and starts Next.js. Both exposed ports bind to localhost by default. There is no database or Docker requirement for the portable command above.
+The app waits for PostgreSQL's health check, initializes the schema/seed, and starts Next.js. Both exposed ports bind to localhost by default.
 
-### Verification status -- read this before deployment
+### Environment and verification
 
-The authoring environment could not reach npm and had neither PostgreSQL nor Docker. **The full Next.js dependency install, dependency-aware typecheck/build, Drizzle/Better Auth integration, Docker build, GitHub OAuth and paid model calls were not executed here.** Their source and startup paths are provided, but they need a normal networked environment to verify. The CI workflow includes these checks; its presence is not a passing CI result.
+Normal environments default to `APP_ENV=development`, `DEMO_MODE=false`. Even an old
+`DEMO_MODE=true` has no effect unless `APP_ENV=test` is explicitly set. Test mode is
+for isolated test databases only, including when testing a production build locally.
+`NODE_ENV` does not opt in. Never deploy with the test environment configuration.
 
-What was actually executed: **53 automated core/service/native-HTTP tests**, strict TypeScript checks for the dependency-free core, a three-challenge HTTP smoke test, and **14 portable-browser checks** with actual backend requests. Browser checks used a documented HTTP bridge because the environment blocked direct browser access to localhost. Native HTTP tests independently verified real streaming, cookies, persistence and revocation. See `docs/VERIFICATION.md` for exact scope.
+Database initialization inserts only reference challenges, cases, skills, tools and
+badges. It neither generates fake activity nor overwrites existing catalog records.
+No standard account is created. Register your account and configure Providers.
+Existing Demo history remains labeled and separate; forks and new workflows have no
+selected provider. Saving a draft is allowed; running requires a provider and consent.
 
-No lockfile has been fabricated. `pnpm install` will generate `pnpm-lock.yaml`; review and commit it before a deployment, then change CI/Docker to frozen-lockfile installation. Dependency ranges are not a substitute for a reproducible, security-reviewed release.
+See `docs/verification/retire-portable-2026-09-06.md` for this change's evidence and
+`docs/VERIFICATION.md` for historical results. Historical Portable screenshots and
+checks are not current Next.js acceptance. The application remains an MVP, not a
+production security certification or a completed Verified Gateway implementation.
 
 ## Real model calls / BYOK
 
@@ -88,7 +66,7 @@ Set `AI_GATEWAY_API_KEY` and `PLATFORM_MODEL`. Supply verified input/output pric
 
 ### GitHub login
 
-Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for a GitHub OAuth application, with callback `http://localhost:3000/api/auth/callback/github` for local development. Keep `BETTER_AUTH_URL` equal to the actual origin. The login button appears only when configured. Email/password does not require GitHub. The portable runtime intentionally does not implement OAuth.
+Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for a GitHub OAuth application, with callback `http://localhost:3000/api/auth/callback/github` for local development. Keep `BETTER_AUTH_URL` equal to the actual origin. The login button appears only when configured. Email/password does not require GitHub.
 
 ## Gameplay and initial content
 
@@ -104,33 +82,28 @@ Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` for a GitHub OAuth application
 | Leaderboards | Overall, Cheapest, Fastest, Robust, Minimalist, each separated into Demo / BYOK / Verified |
 | Builds | Immutable versions, optimistic saves, private prompts, selected-version forks, parent relationships |
 | Community | Pending problem submissions; top-submitted-version failure hunting; reputation and five badges |
-| Seeds | 10 users, 20 explicitly simulated leaderboard builds, runs, two illustrative failures, 6 skills, 5 tools |
+| Initialization | Reference catalog only; simulated activity exists only in test fixtures |
 
 The demo provider is a deliberately imperfect bounded simulator, not an LLM. It does not read expected answers or hidden fixtures. Prompts, skills and graph changes affect the simulated outputs; real runs use the separate AI SDK adapter. Seed leaderboard values and demo costs are clearly labeled as simulated.
 
 ## Commands
 
 ```sh
-# No dependencies required for these:
-node --experimental-strip-types --test tests/*.test.ts
-node --experimental-strip-types portable/server.ts
-node --experimental-strip-types scripts/smoke.ts  # while a local server is running
-
-# After dependency installation:
+pnpm test
+pnpm test:provider-sdk        # offline; no paid requests
 pnpm typecheck
 pnpm build
 pnpm db:migrate
-pnpm db:seed
-pnpm test:smoke
-pnpm exec tsc --noEmit -p tsconfig.core.json
-
-# Optional browser checks (Python + Playwright + Chromium):
-python -m pip install playwright
-python -m playwright install chromium
-python scripts/browser-smoke.py --base-url http://127.0.0.1:3000
+pnpm db:seed                 # reference catalog only
+pnpm test:migrations         # explicit isolated PostgreSQL target required
+pnpm test:smoke              # running isolated Next.js test server required
 ```
 
-The browser script targets the **portable UI**, not the React frontend. Its default mode uses native browser networking. `--bridge` exists solely for restricted test environments and is identified in the saved report. Smoke tests create test accounts/builds; use a disposable local database. `SMOKE_BASE_URL` selects another origin.
+For full-stack smoke, set `APP_ENV=test` and `DEMO_MODE=true` on the target Next.js
+process and point it at a disposable database. Smoke checks this mode before creating
+accounts or builds. For normal-mode boundary checks only, set
+`SMOKE_EXPECT_TEST_MODE=false`; no model calls are made. `SMOKE_BASE_URL` selects the origin. Never target production or
+your working credential database. Browser verification targets the real React UI.
 
 ## Source map
 
@@ -146,10 +119,9 @@ src/lib/crypto/          Authenticated BYOK encryption
 src/server/              Arena service, serializers, fixture/seed, API, SSRF policy
 src/db/                  Drizzle schema/repository and initial SQL schema
 src/shared/              Domain models and safe public component catalog
-portable/                Offline Node server, JSON persistence, local scrypt auth
-public/                  Shared premium dark theme and portable browser app
-scripts/                 Setup, migration, seed, smoke, Docker and browser checks
-tests/                   Pure engine, service and native HTTP regression tests
+public/                  Application static assets
+scripts/                 Setup, migration, reference seed, Next.js smoke, Docker
+tests/                   Engine, service, migration and test-only memory/fixture helpers
 ```
 
 ## Security and scope boundaries
@@ -160,7 +132,7 @@ The checked-in fixtures and fixed Secret Keeper secret are for a **local, inspec
 
 Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox, agent marketplace payments or background worker. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. Execution is synchronous/streamed with limits; run the app on a host that supports the configured request duration. Not a multi-tenant production certification.
 
-See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Actual portable screenshots are under `docs/screenshots/`.
+See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Retired Portable screenshots under `docs/screenshots/` are historical only.
 
 ## Development and contribution
 
