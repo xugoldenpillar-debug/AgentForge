@@ -1,7 +1,7 @@
 import { lookup } from 'node:dns/promises';
 import { Agent } from 'undici';
-import { AppError, ERROR_CODES } from '../../shared/errors';
-import { isPublicAddress } from '../../server/url-policy';
+import { AppError, ERROR_CODES } from '../../shared/errors.ts';
+import { isPublicAddress } from '../../server/url-policy.ts';
 const agents=new Map<string,Agent>();
 export function safeProviderFetch(baseUrl:string):typeof fetch {
   const base=new URL(baseUrl);

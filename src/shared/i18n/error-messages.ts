@@ -31,6 +31,16 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, MessageKey> = {
   [ERROR_CODES.RUN_ALREADY_ACTIVE]: 'errors.runAlreadyActive',
   [ERROR_CODES.RUN_CANCELLED]: 'errors.runCancelled',
   [ERROR_CODES.ENDPOINT_NOT_FOUND]: 'errors.endpointNotFound',
+  [ERROR_CODES.COMPONENT_DEFINITION_INVALID]: 'errors.componentDefinitionInvalid',
+  [ERROR_CODES.COMPONENT_UNSUPPORTED_CAPABILITY]: 'errors.componentUnsupportedCapability',
+  [ERROR_CODES.COMPONENT_ATTACHMENT_INVALID]: 'errors.componentAttachmentInvalid',
+  [ERROR_CODES.COMPONENT_LICENSE_REQUIRED]: 'errors.componentLicenseRequired',
+  [ERROR_CODES.COMPONENT_LICENSE_UNSUPPORTED]: 'errors.componentLicenseUnsupported',
+  [ERROR_CODES.COMPONENT_VERSION_CONFLICT]: 'errors.componentVersionConflict',
+  [ERROR_CODES.SELF_TEST_NOT_ALLOWED]: 'errors.selfTestNotAllowed',
+  [ERROR_CODES.SELF_TEST_QUOTA_EXCEEDED]: 'errors.selfTestQuotaExceeded',
+  [ERROR_CODES.SELF_TEST_CONSENT_REQUIRED]: 'errors.selfTestConsentRequired',
+  [ERROR_CODES.EVALUATION_NOT_READY]: 'errors.evaluationNotReady',
   [ERROR_CODES.UNKNOWN_ERROR]: 'errors.generic',
   [ERROR_CODES.INTERNAL_SERVER_ERROR]: 'errors.generic'
 };

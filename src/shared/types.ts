@@ -1,19 +1,9 @@
-import type { ErrorCode } from './errors.ts';
-export type NodeKind = 'input' | 'prompt' | 'model' | 'skill' | 'tool' | 'validator' | 'output';
-export type SkillId = 'structured' | 'reflection' | 'concise' | 'extract' | 'safety' | 'retry';
-export type ToolId = 'calculator' | 'json-validator' | 'text-search' | 'date-parser' | 'string-matcher';
+import type { ErrorCode } from './error-core.ts';
+import type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
+export type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
 export type Category = 'normal' | 'edge' | 'adversarial' | 'security';
 export type Tier = 'demo' | 'byok' | 'verified';
 export type RunKind = 'public' | 'hidden' | 'failure';
-export type Config = {
-  systemPrompt?: string; userTemplate?: string; modelId?: string; credentialId?: string;
-  maxTokens?: number; temperature?: number; skillId?: SkillId; toolId?: ToolId;
-  schema?: Record<string, unknown>; maxLength?: number; expression?: string; query?: string;
-  match?: string; mode?: 'contains' | 'exact'; format?: 'json' | 'enum' | 'text'; values?: string[];
-};
-export interface WorkflowNode { id: string; kind: NodeKind; label: string; x: number; y: number; config: Config }
-export interface WorkflowEdge { id: string; source: string; target: string }
-export interface Workflow { nodes: WorkflowNode[]; edges: WorkflowEdge[] }
 export interface Constraints { tokenBudget: number; toolCallLimit: number; maxCost: number; maxLatencyMs: number }
 export interface TestCase { id: string; problemId: string; visibility: 'public' | 'hidden'; category: Category; input: string; expected: unknown }
 export type JudgeId = 'json' | 'enum' | 'secret' | 'exact' | 'contains';
@@ -44,12 +34,109 @@ export interface UserBadge { id: string; userId: string; badgeId: string; create
 export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string }
 export interface CatalogSkill { id: SkillId; name: string; description: string; effect: string; icon: string; author: string }
 export interface CatalogTool { id: ToolId; name: string; description: string; icon: string }
+
+export type ComponentKind = 'workflow-recipe' | 'instruction-skill';
+export type ComponentVisibility = 'private' | 'unlisted' | 'public';
+export type ComponentTestRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type PublicationRequestStatus = 'submitted' | 'in_review' | 'approved' | 'rejected' | 'withdrawn';
+export type PublicationReviewDecision = 'approved' | 'rejected';
+export type ComponentReleaseStatus = 'active' | 'withdrawn' | 'deprecated' | 'revoked';
+export type TestSuiteVisibility = 'private' | 'public';
+export type ExtensionApplicationStatus = 'submitted' | 'in_review' | 'approved' | 'rejected' | 'withdrawn';
+
+export interface Component {
+  id: string; ownerId: string; name: string; description: string; kind: ComponentKind;
+  visibility: ComponentVisibility; draftRevision: number; draftDefinition: unknown;
+  currentVersionId: string | null; createdAt: string; updatedAt: string
+}
+export interface ComponentVersion {
+  id: string; ownerId: string; componentId: string; versionNumber: number; contractVersion: number;
+  definition: unknown; definitionDigest: string; dependencies: unknown; publicMaterial: unknown;
+  licenseSpdx: string | null; provenance: unknown; frozenAt: string; createdAt: string
+}
+export interface Attachment {
+  id: string; ownerId: string; componentVersionId: string; path: string; mediaType: string;
+  sizeBytes: number; sha256: string; storageKey: string; visibility: 'private' | 'public'; createdAt: string
+}
+export interface ComponentAttachmentContent {
+  attachmentId: string;
+  content: string;
+}
+export interface ComponentTestSuite {
+  id: string; ownerId: string; componentId: string; name: string; description: string;
+  visibility: TestSuiteVisibility; currentVersionId: string | null; createdAt: string; updatedAt: string
+}
+export interface ComponentTestSuiteVersion {
+  id: string; ownerId: string; testSuiteId: string; versionNumber: number; cases: unknown; casesDigest: string;
+  visibility: TestSuiteVisibility; frozenAt: string; createdAt: string
+}
+export interface ComponentTestRun {
+  id: string; ownerId: string; componentVersionId: string; testSuiteVersionId: string;
+  evaluationJobId: string | null; credentialId: string; modelId: string | null;
+  runtimeKind: string; executionSource: string | null; idempotencyKey: string;
+  constraints: unknown; usage: unknown | null; resultSummary: unknown | null;
+  status: ComponentTestRunStatus; consentVersion: string | null; requestDigest: string;
+  failureReason: string | null; createdAt: string; startedAt: string | null; completedAt: string | null
+}
+export interface PublicationRequest {
+  id: string; componentVersionId: string; requesterId: string; status: PublicationRequestStatus;
+  requestRevision: number; publicMaterialSnapshot: unknown; declaration: string;
+  createdAt: string; updatedAt: string; decidedAt: string | null
+}
+export interface PublicationReview {
+  id: string; publicationRequestId: string; reviewerId: string; decision: PublicationReviewDecision;
+  reason: string; evidence: unknown; createdAt: string
+}
+export interface ComponentRelease {
+  id: string; componentVersionId: string; publicationRequestId: string; status: ComponentReleaseStatus;
+  releasedAt: string; disabledReason: string | null; createdAt: string
+}
+export interface UsageReference {
+  id: string; userId: string; buildVersionId: string; componentVersionId: string;
+  expansionDigest: string; createdAt: string
+}
+
+export interface ExtensionApplication {
+  id: string; ownerId: string; extensionType: string; source: string;
+  permissionDeclaration: string; materials: unknown; status: ExtensionApplicationStatus;
+  createdAt: string; updatedAt: string; decidedAt: string | null
+}
+
+export type CommunityAuditAction =
+  | 'component.created'
+  | 'component.draft.updated'
+  | 'component.version.frozen'
+  | 'publication.requested'
+  | 'publication.reviewed';
+
+export interface CommunityAuditEventRow {
+  id: string;
+  action: CommunityAuditAction;
+  actorId: string;
+  componentId: string;
+  componentVersionId: string | null;
+  publicationRequestId: string | null;
+  occurredAt: string;
+  metadata: Readonly<Record<string, string | number | boolean | null>>;
+}
+
+export type TestSuite = ComponentTestSuite;
+export type TestSuiteVersion = ComponentTestSuiteVersion;
+export type TestRun = ComponentTestRun;
+export type Review = PublicationReview;
+export type Release = ComponentRelease;
 export interface Tables {
   users: User; problems: Problem; testCases: TestCase; builds: Build; buildVersions: BuildVersion;
   workflowNodes: StoredNode; workflowEdges: StoredEdge; skills: CatalogSkill; tools: CatalogTool;
   buildSkills: {id: string; versionId: string; skillId: SkillId}; buildTools: {id: string; versionId: string; toolId: ToolId};
   runs: Run; runCases: RunCase; submissions: Submission; credentials: Credential;
   failureCases: FailureCase; reputations: Reputation; badges: Badge; userBadges: UserBadge; forkRelations: ForkRelation;
+  components: Component; componentVersions: ComponentVersion; attachments: Attachment;
+  componentAttachmentContents: ComponentAttachmentContent;
+  componentTestSuites: ComponentTestSuite; componentTestSuiteVersions: ComponentTestSuiteVersion;
+  componentTestRuns: ComponentTestRun; publicationRequests: PublicationRequest;
+  publicationReviews: PublicationReview; componentReleases: ComponentRelease; usageReferences: UsageReference;
+  extensionApplications: ExtensionApplication; communityAuditEvents: CommunityAuditEventRow;
 }
 export type TableName = keyof Tables;
 export interface Repository {

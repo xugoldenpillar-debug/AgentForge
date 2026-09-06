@@ -1,6 +1,6 @@
 # 开发任务、PR 顺序与 Gate
 
-日期：2026-09-06。所有复选框均表示实现验收，当前全部未完成。文档完成不等于功能完成。R 编号见 requirements.md。
+日期：2026-09-06。复选框表示对应交付项的验收；文档项可先完成，但不等于功能完成。R 编号见 requirements.md。T0 当前已完成契约形状、受控加载／错误契约的文档、仓库内解析／公开投影／契约测试切片及审计机制；这不等于可发布的公共 SDK，政策、权利链、公开导出清单和发布审计仍未闭合。
 
 ## 依赖图
 
@@ -21,35 +21,38 @@ T5 可仅使用 DAG 完成；Pi 不必进入首版发布。T6 依赖角色和审
 ## 建议原子 PR
 
 ### T0：范围、定义契约与政策
-- [ ] 解决 decisions.md 的发布阻塞项，记录采用值；保留未来范围。
-- [ ] 冻结 recipe／instruction-skill、版本、依赖和公开投影 Schema。
-- [ ] 定义 SKILL.md 元信息支持子集、附件路径、上下文加载与错误码。
+- [ ] 记录已确认的产品决策并完成剩余发布 Gate；D1 allowlist 已冻结为 MIT、Apache-2.0、BSD-2-Clause、BSD-3-Clause、ISC，并已在服务端投稿发布检查与公共投影边界强制执行；但实际许可证／权利链与发布证据仍待审查；D2 保持 invite-only + fail-closed，额度暂不开放。
+- [x] 冻结 recipe／instruction-skill、版本、依赖和公开投影 Schema（文档、解析／投影实现与契约测试的仓库内切片已完成；不表示公开 surface 已独立、可导出或可发布）。
+- [x] 定义 SKILL.md 元信息支持子集、附件路径、上下文加载与错误码（文档、解析／投影实现与契约测试的仓库内切片已完成；不表示公开 surface 已独立、可导出或可发布）。
 - [ ] 明确实际社区源码许可，不把可见源码误当作获得复用许可。
-- [ ] 按 D4 形成核心私有／公开组件与 SDK 的发布清单；盘点来源、贡献、历史授权与依赖许可，另行冻结具体许可证。
-- [ ] 公开导出检查覆盖文件及 Git 历史；排除私有核心、隐藏 fixtures、秘密和运行数据，验证公开内容不依赖私有源码。可见性变更与推送须另行授权。
-- Gate：需求／接口／错误正反例一致；未知字段拒绝；没有默认脚本能力。公开发布前，发布清单与授权审查完成，文件／历史检查无禁止公开内容；未通过不得公开仓库或产物。
+- [ ] 按 D4 形成并批准核心私有／公开组件与 SDK 的发布清单；按已确认 D1 allowlist 盘点来源、贡献者权利、历史授权、根仓库／第一方许可、NOTICE 与依赖许可。当前 `source-export-inventory.md` 只是审计证据与发布清单草案，不是批准的 release manifest；内部开发优先，暂不公开 SDK。
+- [ ] 对选定的公开导出 manifest 及其精确 release commit 执行当前树与可达 Git 历史检查：逐项处置当前／历史二进制、secret-like 命中、禁止路径、fixtures、秘密、运行数据、私有核心依赖和删除／改名路径；确认根／第一方许可证、贡献者权利和可复现依赖证据齐全，并在该精确 commit 上复跑审计得到 `PASS`。审计机制存在或当前结果为 `REVIEW_REQUIRED` 均不满足本项；可见性变更与推送须另行授权。
+- Gate：需求／接口／错误正反例一致；未知字段拒绝；没有默认脚本能力。T0 只有在已确认的 D1/D2 产品决策之外，实际许可与权利审查完成、选定 release manifest 绑定精确 release commit 且审计结果为 `PASS` 后才算完成；D2 额度未开放不影响内部 T1/T2 开发，但此前不得公开 SDK、仓库或产物。
 - 追踪：R2、R3、R5、R8。
 
 ### T1：内置目录与实例
-- [ ] 详情页：源码安全投影、参数、执行成本、边界和失败示例。
-- [ ] 示例绑定版本、模型、来源及时间；查看示例绝不调用模型。
-- [ ] 区分关联提交准确率、作者自测和平台对照收益。
-- [ ] 中英文系统文本与作者原文分开。
-- Gate：6 Skill／5 Tool 信息齐全；桌面／390px 可用；无假验证标签。
+- [x] 详情页：6 个 Skill／5 个 Tool 均提供源码安全投影、参数、执行成本、边界和失败示例。
+- [x] 示例绑定版本、模型、来源及时间；静态示例不会调用模型或创建 Run。
+- [x] 区分关联提交准确率、作者自测和平台对照收益；不以任一项冒充组件增益证据。
+- [x] 中英文系统文本与作者原文分开。
+- [x] 实现桌面／窄屏布局适配和详情页交互；无假验证标签。
+- [x] 浏览器验收：真实 Next.js 页面已完成桌面 `1280x577` 与窄屏 `390x844` 验收，覆盖 `/workshop?skill=structured`、`/workshop?tool=calculator`、详情交互、错误态和无横向溢出；同时修复 hydration mismatch。
+- Gate：T1 代码切片与真实浏览器验收均已完成；未开放自测或假验证标签。
 - 追踪：R1、R7、R15。
 
 ### T2：数据、所有权与审核权限
-- [ ] Component／Version／Attachment／TestSuite／TestRun／PublicationRequest／Review／Release／UsageReference 迁移；TestRun 的 evaluationJobId 关联迁移在 EF 相关表可用后集成，不复制作业/用量/预算表。
-- [ ] 扩展申请单独存储，不误创建有效执行准入。
-- [ ] schema.ts、schema.sql、迁移、仓储与序列化一致；旧 Build 无破坏升级。
-- [ ] Admin 服务端鉴权、禁止自审、审计及并发审批前置。
-- [ ] 存储持久化文本附件；单机本地目录不能假设适用于多实例部署。
-- Gate：真实数据库空库／旧库／重复／并发／保留测试；跨用户对象／附件访问拒绝。
+- [x] Component／Version／Attachment／TestSuite／TestRun／PublicationRequest／Review／Release／UsageReference 及 ExtensionApplication 的 schema 与迁移基础已落地；TestRun 仅保留 evaluationJobId 关联，不复制作业／用量／预算表。
+- [x] 扩展申请单独存储，不因提交材料创建有效执行准入。
+- [x] `schema.ts`、`schema.sql`、迁移和 MemoryRepository 表注册已同步；ComponentVersion 保存不可变快照／摘要，Attachment 保存版本绑定的路径、类型、大小、摘要和存储键元数据；文本正文另存于 repository-backed `component_attachment_contents`。
+- [ ] 完成序列化一致性及旧 Build 无破坏升级的完整服务验证。
+- [x] 完成 HTTP/API 与服务端认证角色 allowlist：角色从服务端认证上下文解析，不接受客户端角色；覆盖 owner／reviewer／admin 权限边界、作者自审拒绝、CSRF／来源控制、CAS／期望版本并发保护；审计事件已落到 repository-backed durable 持久化表，并由默认服务事务路径写入；注入式 audit writer 保留为测试／扩展 seam；HTTP 错误路径已回归。
+- [ ] 存储持久化文本附件并完成跨实例访问；本轮已完成 repository-backed 文本正文、原子元数据／正文写入、受控读取、幂等与摘要校验；导入／冻结绑定、公有可见性和完整真实服务 Gate 仍未完成，单机本地目录不能假设适用于多实例部署。
+- [ ] Gate：真实数据库空库／旧库／重复／并发／保留测试，以及跨用户对象／附件访问拒绝。文本附件迁移与服务层 focused 回归已完成，但导入／冻结绑定语义、序列化一致性、旧 Build 兼容性、真实数据库服务跨实例读写、完整真实数据库 Gate 与整体 T2 服务 Gate 仍未完成；这不等于完整审计／法律／产品发布 Gate 已完成。
 - 追踪：R5、R6、R8、R10。
 
 ### T3：个人创作与导入导出
 - [ ] 创建／修改草稿、乐观版本冲突、冻结后不可改。
-- [ ] JSON 配方、SKILL.md 和显式文本附件导入；body、文件数、字节及 Schema 深度限制。
+- [ ] JSON 配方、SKILL.md 和显式文本附件导入；instruction 文本、文件数、字节及 Schema 深度限制。
 - [ ] 拒绝路径穿越、符号链接、执行文件、不支持元信息和远程资源自动加载。
 - [ ] 安全导出清除凭据引用、私有测试记录和未授权附件。
 - [ ] instruction-skill 通过显式引用加入 workflow；不修改内置 SkillId 的含义，不覆盖全局 system 安全策略。

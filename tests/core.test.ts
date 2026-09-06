@@ -58,3 +58,34 @@ test('Safety Guard detects an explicit instruction override without executing it
 test('A cancelled execution does not call the provider',async()=>{
  const abort=new AbortController();abort.abort();let called=false;await assert.rejects(()=>executeWorkflow({workflow:starterWorkflow('json'),input:'hello',constraints,signal:abort.signal,resolve:async()=>{called=true;return {provider:new DemoProvider(),model:'demo-forge'};}}),/cancelled/);assert.equal(called,false);
 });
+
+test('Built-in catalog details provide complete static coverage and evidence separation', async () => {
+  const catalog = await import('../src/shared/catalog-details.ts');
+  const detailEntries = Object.values(catalog.CATALOG_DETAILS);
+  assert.equal(detailEntries.filter((detail) => detail.kind === 'skill').length, 6);
+  assert.equal(detailEntries.filter((detail) => detail.kind === 'tool').length, 5);
+  for (const detail of detailEntries) {
+    assert.equal(detail.version.version, '1.0.0');
+    assert.equal(detail.contentOrigin, 'system');
+    assert.equal(detail.sourceProjection.format, 'safe-text-projection');
+    assert.ok(detail.parameters.length >= 1);
+    assert.ok(detail.parameterSchema);
+    assert.equal(detail.examples.length, 2);
+    assert.deepEqual(detail.examples.map((example) => example.outcome), ['success', 'failure']);
+    for (const example of detail.examples) {
+      assert.equal(example.visibility, 'public');
+      assert.equal(example.provenance, 'maintained-static-example');
+      assert.equal(example.contentOrigin, 'system');
+      assert.equal(example.version, detail.version.version);
+      assert.equal(example.modelBinding.invoked, false);
+      assert.equal(example.modelBinding.runtime, 'catalog-fixture');
+      assert.ok(example.source.ref.startsWith(`catalog/${detail.kind}s/${detail.id}`));
+    }
+  }
+});
+
+test('Catalog detail lookup rejects unknown IDs without broadening the built-in registry', async () => {
+  const { getCatalogDetailDefinition } = await import('../src/shared/catalog-details.ts');
+  assert.equal(getCatalogDetailDefinition('skill', 'community-skill'), undefined);
+  assert.equal(getCatalogDetailDefinition('tool', 'community-tool'), undefined);
+});

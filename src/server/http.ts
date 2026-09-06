@@ -1,5 +1,6 @@
 import { AppError, ensure, ERROR_CODES, safeError } from '../shared/errors.ts';
 import type { ArenaService } from './service.ts';
+import type { CommunityService } from './community-service.ts';
 
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   ensure(request.headers.get('content-type')?.includes('application/json'), 'Use application/json.', 400, ERROR_CODES.REQUEST_CONTENT_TYPE_INVALID);
@@ -30,8 +31,13 @@ export async function readJson(request: Request): Promise<Record<string, unknown
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const errorResponse = (error: ReturnType<typeof safeError>) => ({ error: { code: error.code, message: error.message } });
 
-export async function handleArena(request: Request, options: { service: ArenaService; userId?: string; origin: string; validateBody?: (path: string, body: Record<string, unknown>) => void }): Promise<Response> {
-  const { service, userId } = options;
+function requireCommunity(service: CommunityService | undefined): CommunityService {
+  ensure(service, 'Community component library is not available.', 503, ERROR_CODES.INTERNAL_SERVER_ERROR);
+  return service;
+}
+
+export async function handleArena(request: Request, options: { service: ArenaService; communityService?: CommunityService; userId?: string; origin: string; validateBody?: (path: string, body: Record<string, unknown>) => void }): Promise<Response> {
+  const { service, communityService, userId } = options;
   try {
     const url = new URL(request.url), path = url.pathname.replace(/^\/api\/arena\/?/, '').split('/').filter(Boolean).map(decodeURIComponent), method = request.method;
     const mutating = method !== 'GET';
@@ -47,11 +53,34 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       return userId;
     };
     if (method === 'GET') {
+      if (path[0] === 'components') {
+        const actor = auth();
+        if (path.length === 1) return json(await requireCommunity(communityService).listOwnedComponents(actor));
+        if (path[1] === 'versions' && path[2] && path[3] === 'attachments') {
+          return json(await requireCommunity(communityService).listAttachments(actor, path[2]));
+        }
+        if (path[1] && path[2] === 'versions' && path[3] && path[4] === 'attachments') {
+          const community = requireCommunity(communityService);
+          const version = await community.getComponentVersion(actor, path[3]);
+          ensure(version.componentId === path[1], 'Component version does not belong to this component.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+          return json(await community.listAttachments(actor, path[3]));
+        }
+        if (path[1] === 'attachments' && path[2]) {
+          return json(await requireCommunity(communityService).getAttachment(actor, path[2]));
+        }
+        if (path[1] && path[2] === 'versions' && path[3]) {
+          return json(await requireCommunity(communityService).getComponentVersion(actor, path[3]));
+        }
+        if (path[1]) return json(await requireCommunity(communityService).getComponent(actor, path[1]));
+      }
+      if (path[0] === 'attachments' && path[1]) {
+        return json(await requireCommunity(communityService).getAttachment(auth(), path[1]));
+      }
       if (path[0] === 'boot') return json(await service.boot());
       if (path[0] === 'overview') return json(await service.overview());
       if (path[0] === 'problems') return json(path[1] ? await service.problem(path[1]) : await service.problems());
-      if (path[0] === 'skills') return json(await service.skills());
-      if (path[0] === 'tools') return json(await service.tools());
+      if (path[0] === 'skills') return json(path[1] ? await service.skillDetail(path[1]) : await service.skills());
+      if (path[0] === 'tools') return json(path[1] ? await service.toolDetail(path[1]) : await service.tools());
       if (path[0] === 'leaderboard') return json(await service.leaderboard({ problemId: url.searchParams.get('problemId') || undefined, tier: url.searchParams.get('tier') || undefined, sort: url.searchParams.get('sort') || undefined }));
       if (path[0] === 'builds' && path[1]) return json(await service.build(path[1], userId, url.searchParams.get('version') || undefined));
       if (path[0] === 'profile' && path[1]) return json(await service.profile(path[1] === 'me' ? auth() : path[1], userId));
@@ -60,9 +89,43 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       if (path[0] === 'failures') return json(await service.failures(url.searchParams.get('problemId') || undefined));
     }
     if (method === 'DELETE' && path[0] === 'providers' && path[1]) return json(await service.deleteProvider(auth(), path[1]));
-    if (method === 'POST') {
+    if (method === 'POST' || method === 'PATCH') {
       const body = await readJson(request);
       options.validateBody?.(path.join('/'), body);
+      if (method === 'POST' && path[0] === 'components' && path.length === 1) {
+        return json(await requireCommunity(communityService).createDraft(auth(), { definition: body.definition }), 201);
+      }
+      if (method === 'PATCH' && path[0] === 'components' && path.length === 2) {
+        return json(await requireCommunity(communityService).updateDraft(auth(), {
+          componentId: path[1],
+          expectedRevision: body.expectedRevision as number,
+          definition: body.definition,
+        }));
+      }
+      if (method === 'POST' && path[0] === 'components' && path[1] && path[2] === 'versions' && path.length === 3) {
+        return json(await requireCommunity(communityService).freezeVersion(auth(), {
+          componentId: path[1],
+          expectedRevision: body.expectedRevision as number,
+        }), 201);
+      }
+      if (method === 'POST' && path[0] === 'publication-requests' && path.length === 1) {
+        return json(await requireCommunity(communityService).createPublicationRequest(auth(), {
+          componentVersionId: body.componentVersionId as string,
+          publicExampleIds: body.publicExampleIds as string[] | undefined,
+          publicReferencePaths: body.publicReferencePaths as string[] | undefined,
+          declaration: body.declaration as string,
+        }), 201);
+      }
+      if (method === 'POST' && path[0] === 'admin' && path[1] === 'publication-requests' && path[2] && path[3] === 'reviews' && path.length === 4) {
+        return json(await requireCommunity(communityService).reviewPublication(auth(), {
+          publicationRequestId: path[2],
+          expectedStatus: body.expectedStatus as import('../shared/types.ts').PublicationRequestStatus,
+          expectedRevision: body.expectedRevision as number,
+          decision: body.decision as import('../shared/types.ts').PublicationReviewDecision,
+          reason: body.reason as string,
+          checks: body.checks as string[] | undefined,
+        }));
+      }
       if (path[0] === 'builds' && path[2] === 'fork') return json(await service.fork(auth(), path[1], typeof body.versionId === 'string' ? body.versionId : undefined), 201);
       if (path[0] === 'builds') return json(await service.saveBuild(auth(), body), 201);
       if (path[0] === 'providers') return json(await service.addProvider(auth(), body), 201);

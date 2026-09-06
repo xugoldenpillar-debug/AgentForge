@@ -1,14 +1,14 @@
 import { generateText, stepCountIs, type LanguageModel } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createGateway } from '@ai-sdk/gateway';
-import type { AIProvider, AIRequest, AIResult } from './types';
-import type { Credential } from '../../shared/types';
-import type { Pricing } from '../scoring';
-import { calculateCost } from '../scoring';
-import { AppError, ensure, ERROR_CODES } from '../../shared/errors';
-import { safeProviderFetch } from './safe-fetch';
-import { sdkTools } from './sdk-tools';
-import { resolveOfficialProviderOffering } from './provider-registry';
+import type { AIProvider, AIRequest, AIResult } from './types.ts';
+import type { Credential } from '../../shared/types.ts';
+import type { Pricing } from '../scoring/index.ts';
+import { calculateCost } from '../scoring/index.ts';
+import { AppError, ensure, ERROR_CODES } from '../../shared/errors.ts';
+import { safeProviderFetch } from './safe-fetch.ts';
+import { sdkTools } from './sdk-tools.ts';
+import { resolveOfficialProviderOffering } from './provider-registry.ts';
 
 class SDKProvider implements AIProvider {
   id: string;
