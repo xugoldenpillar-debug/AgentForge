@@ -95,3 +95,37 @@ test('HTTP apply is authenticated and run is invite-gated', async () => {
   assert.equal(body.applied, true);
   assert.equal(body.invited, false);
 });
+
+test('unsupported Pi model returns a configuration error inside HTTP 200 NDJSON offline', async () => {
+  const { service } = await fixture({ PI_RUNTIME_INVITED_EMAILS: user.email });
+  const credential = await service.addProvider(user.id, {
+    name: 'Offline unsupported model', baseUrl: 'https://api.deepseek.com',
+    modelId: 'unsupported-private-model', apiKey: 'offline-dummy-key-never-valid'
+  });
+  const originalFetch = globalThis.fetch;
+  let networkCalls = 0;
+  globalThis.fetch = async () => {
+    networkCalls += 1;
+    throw new Error('Network forbidden');
+  };
+  try {
+    const origin = 'http://localhost:3000';
+    const response = await handleArena(new Request(`${origin}/api/arena/pi-self-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ intent: 'run', prompt: 'offline', credentialId: credential.id, consent: true })
+    }), { service, origin, userId: user.id, validateBody });
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-type') ?? '', /application\/x-ndjson/);
+    const body = await response.text();
+    const events = body.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(events.at(-1).type, 'error');
+    assert.equal(events.at(-1).code, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
+    assert.equal(events.some((event) => event.type === 'completed'), false);
+    assert.equal(body.includes('unsupported-private-model'), false);
+    assert.equal(body.includes('offline-dummy-key-never-valid'), false);
+    assert.equal(networkCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

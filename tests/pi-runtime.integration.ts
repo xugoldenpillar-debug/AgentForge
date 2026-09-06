@@ -550,3 +550,133 @@ test('real Agent plus wrapProtocol runs a fake calculator loop without network',
     globalThis.fetch = originalFetch;
   }
 });
+
+// These cases exercise the installed Agent's resolved prompt() failure path, not FakePiAgent.
+test('installed SDK wrapProtocol preserves safe terminal failures offline', async (t) => {
+  assert.equal(isPiCoreInstalled(), true, 'The pinned SDK must be installed for this regression gate.');
+  const { buildPiSelfTestContext } = await import('../src/server/runtime/pi/self-test.ts');
+  const cases = [
+    { name: 'provider exception', code: ERROR_CODES.PROVIDER_REQUEST_FAILED,
+      streamFn: async () => { throw new Error('private-provider-detail token=secret'); } },
+    { name: 'structured exception', code: ERROR_CODES.PROVIDER_NETWORK_REJECTED,
+      streamFn: async () => { throw new AppError('private-provider-detail token=secret', 502, ERROR_CODES.PROVIDER_NETWORK_REJECTED); } },
+    { name: 'missing usage', code: ERROR_CODES.PROVIDER_RESPONSE_INVALID,
+      streamFn: createFakeStreamFn([{ type: 'text', text: 'must not complete' }]) },
+    { name: 'token budget', code: ERROR_CODES.BUDGET_EXCEEDED,
+      streamFn: createFakeStreamFn([{ type: 'text', text: 'must not complete', usage: { inputTokens: 5000, outputTokens: 1 } }]) },
+    { name: 'cost budget', code: ERROR_CODES.BUDGET_EXCEEDED,
+      streamFn: createFakeStreamFn([{ type: 'text', text: 'must not complete', usage: { inputTokens: 10, outputTokens: 1 } }]), maxCost: 0 },
+    { name: 'model step budget', code: ERROR_CODES.BUDGET_EXCEEDED,
+      streamFn: createFakeStreamFn([
+        { type: 'tool_call', name: 'calculator', args: { expression: '1+1' }, usage: { inputTokens: 1, outputTokens: 1 } },
+        { type: 'text', text: 'must not complete', usage: { inputTokens: 1, outputTokens: 1 } }
+      ]), maxSteps: 1 },
+    { name: 'iterator exception', code: ERROR_CODES.PROVIDER_REQUEST_FAILED,
+      streamFn: async function* () {
+        yield { type: 'text_delta' as const, text: 'partial' };
+        throw new Error('private-provider-detail token=secret');
+      } },
+    { name: 'abort chunk', code: null,
+      streamFn: createFakeStreamFn([{ type: 'abort' }]) }
+  ];
+  let networkCalls = 0;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    networkCalls += 1;
+    throw new Error('Network forbidden');
+  };
+  try {
+    for (const scenario of cases) {
+      await t.test(scenario.name, async () => {
+        const adapter = await createPiAdapterFromInstall({
+          env: ENABLED_ENV, nodeVersion: NODE_OK, wrapProtocol: true, streamFn: scenario.streamFn
+        });
+        const context = buildPiSelfTestContext('offline', new AbortController().signal);
+        if (scenario.maxCost !== undefined) context.constraints.maxCost = scenario.maxCost;
+        if (scenario.maxSteps !== undefined && context.definition.kind === 'pi') {
+          context.definition.task.maxSteps = scenario.maxSteps;
+        }
+        const events = [];
+        for await (const event of adapter.execute(context)) events.push(event);
+        const terminal = events.filter((event) => ['completed', 'failed', 'cancelled'].includes(event.type));
+        assert.equal(terminal.length, 1);
+        assert.equal(terminal[0].type, scenario.code === null ? 'cancelled' : 'failed');
+        if (terminal[0].type === 'failed') assert.equal(terminal[0].code, scenario.code);
+        assert.equal(JSON.stringify(events).includes('private-provider-detail'), false);
+        assert.equal(JSON.stringify(events).includes('token=secret'), false);
+      });
+    }
+    assert.equal(networkCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('protocol wrapper never passes raw exception text into SDK messages', async () => {
+  const { toPiProtocolStreamFn } = await import('../src/server/runtime/pi/protocol.ts');
+  const stream = await toPiProtocolStreamFn(async () => {
+    throw new AppError('private-provider-detail token=secret', 502, ERROR_CODES.PROVIDER_REQUEST_FAILED);
+  })({}, {});
+  const events = [];
+  for await (const event of stream) events.push(event);
+  const message = await stream.result();
+  assert.equal(message.stopReason, 'error');
+  assert.equal(JSON.stringify({ events, message }).includes('private-provider-detail'), false);
+  assert.equal(JSON.stringify({ events, message }).includes('token=secret'), false);
+});
+
+test('failure metadata is out-of-band and cannot be forged by serializable message properties', async () => {
+  const { toPiProtocolStreamFn, piProtocolFailure } = await import('../src/server/runtime/pi/protocol.ts');
+  const stream = await toPiProtocolStreamFn(async () => {
+    throw new AppError('private metadata', 400, ERROR_CODES.BUDGET_EXCEEDED);
+  })({}, {});
+  const message = await stream.result();
+  assert.equal(piProtocolFailure(message).code, ERROR_CODES.BUDGET_EXCEEDED);
+  assert.deepEqual(Reflect.ownKeys(message).sort(), [
+    'api', 'content', 'errorMessage', 'model', 'provider', 'role', 'stopReason', 'timestamp', 'usage'
+  ]);
+  const serialized = JSON.stringify(message);
+  assert.equal(serialized.includes(ERROR_CODES.BUDGET_EXCEEDED), false);
+  assert.equal(serialized.includes('private metadata'), false);
+  assert.equal(piProtocolFailure({ ...message, code: ERROR_CODES.BUDGET_EXCEEDED }).code,
+    ERROR_CODES.PROVIDER_REQUEST_FAILED);
+});
+
+for (const reason of ['caller', 'timeout'] as const) {
+  test(`installed SDK Bridge A ${reason} yields exactly one terminal event offline`, async (t) => {
+    assert.equal(isPiCoreInstalled(), true);
+    const { createBridgeAStreamFn } = await import('../src/server/runtime/pi/bridge-a.ts');
+    const { buildPiSelfTestContext } = await import('../src/server/runtime/pi/self-test.ts');
+    const controller = new AbortController();
+    if (reason === 'timeout') {
+      t.mock.method(AbortSignal, 'timeout', () => controller.signal);
+    }
+    let cancelled = 0;
+    let modelCalls = 0;
+    const response = new Response(new ReadableStream({
+      pull() { queueMicrotask(() => controller.abort(new Error('private abort reason'))); },
+      cancel() { cancelled += 1; }
+    }, { highWaterMark: 0 }));
+    const adapter = await createPiAdapterFromInstall({
+      env: ENABLED_ENV, nodeVersion: NODE_OK, wrapProtocol: true,
+      streamFn: createBridgeAStreamFn({
+        apiKey: 'offline-dummy', baseUrl: 'https://api.deepseek.com',
+        modelId: 'deepseek-v4-flash', maxTokens: 16,
+        providerFetch: async () => { modelCalls += 1; return response; }
+      })
+    });
+    const context = buildPiSelfTestContext('offline',
+      reason === 'caller' ? controller.signal : new AbortController().signal);
+    const events = [];
+    for await (const event of adapter.execute(context)) events.push(event);
+    const terminals = events.filter((event) => ['failed', 'cancelled', 'completed'].includes(event.type));
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].type, reason === 'caller' ? 'cancelled' : 'failed');
+    if (terminals[0].type === 'failed') assert.equal(terminals[0].code, ERROR_CODES.PROVIDER_REQUEST_FAILED);
+    assert.equal(events.at(-1), terminals[0]);
+    assert.equal(JSON.stringify(events).includes('private abort reason'), false);
+    assert.equal(modelCalls, 1);
+    assert.equal(cancelled, 1);
+    assert.equal(response.body?.locked, false);
+  });
+}

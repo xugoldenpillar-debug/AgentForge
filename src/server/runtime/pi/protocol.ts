@@ -1,3 +1,4 @@
+import { AppError, ERROR_CODES } from '../../../shared/errors.ts';
 import type { ControlledStreamChunk, ControlledStreamFn } from './stream-fn.ts';
 
 type AssistantUsage = {
@@ -24,6 +25,16 @@ type AssistantMessageLike = {
 export type PiProtocolStream = AsyncIterable<unknown> & {
   result: () => Promise<AssistantMessageLike>;
 };
+
+// Metadata stays local to messages created by this bridge; SDK/provider text is never trusted.
+const failures = new WeakMap<object, AppError>();
+const FAILURE_MESSAGE = 'The model request could not be completed.';
+
+export function piProtocolFailure(message: object): AppError {
+  return failures.get(message) ?? new AppError(
+    FAILURE_MESSAGE, 502, ERROR_CODES.PROVIDER_REQUEST_FAILED
+  );
+}
 
 function emptyUsage(): AssistantUsage {
   return {
@@ -144,7 +155,8 @@ export function toPiProtocolStreamFn(streamFn: ControlledStreamFn): (
         return createProtocolStream(events, error);
       }
       if (!usage) {
-        const error = assistantMessage(content, 'error', emptyUsage(), 'missing usage');
+        const error = assistantMessage([], 'error', emptyUsage(), FAILURE_MESSAGE);
+        failures.set(error, new AppError(FAILURE_MESSAGE, 502, ERROR_CODES.PROVIDER_RESPONSE_INVALID));
         events.push({ type: 'error', reason: 'error', error });
         return createProtocolStream(events, error);
       }
@@ -155,8 +167,12 @@ export function toPiProtocolStreamFn(streamFn: ControlledStreamFn): (
       events.push({ type: 'done', reason: stopReason, message: done });
       return createProtocolStream(events, done);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'stream failed';
-      const failed = assistantMessage([], 'error', emptyUsage(), message.slice(0, 200));
+      const failed = assistantMessage([], 'error', emptyUsage(), FAILURE_MESSAGE);
+      failures.set(failed, new AppError(
+        FAILURE_MESSAGE,
+        error instanceof AppError ? error.status : 502,
+        error instanceof AppError && error.code ? error.code : ERROR_CODES.PROVIDER_REQUEST_FAILED
+      ));
       return createProtocolStream([
         { type: 'start', partial: failed },
         { type: 'error', reason: 'error', error: failed }

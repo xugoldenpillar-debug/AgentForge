@@ -49,7 +49,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /ADD COLUMN IF NOT EXISTS runtime_kind TEXT/);
@@ -148,6 +148,9 @@ test('Phase 0 frozen baseline equals target without ledger and legacy plus issue
     targetHead
       .replace(/\n  "runtime_kind" TEXT,\n  "adapter_version" TEXT,\n  "policy_version" TEXT,/, '')
       .replace(/,\n  "pi_runtime_access" TEXT/, '')
+      .replace(/\n  "mode" TEXT NOT NULL DEFAULT 'workflow',\n  "agent_definition" JSONB,\n  "definition_digest" TEXT,/, '')
+      .replace(/,\n  CONSTRAINT build_versions_mode_payload CHECK \([\s\S]*?\n  \)/, '')
+      .replace(/\n  "source_version_id" TEXT REFERENCES "build_versions"\("id"\),/, '')
       .trim(),
     baseline
   );

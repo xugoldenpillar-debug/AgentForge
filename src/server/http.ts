@@ -53,7 +53,13 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       if (path[0] === 'skills') return json(await service.skills());
       if (path[0] === 'tools') return json(await service.tools());
       if (path[0] === 'leaderboard') return json(await service.leaderboard({ problemId: url.searchParams.get('problemId') || undefined, tier: url.searchParams.get('tier') || undefined, sort: url.searchParams.get('sort') || undefined }));
-      if (path[0] === 'builds' && path[1]) return json(await service.build(path[1], userId, url.searchParams.get('version') || undefined));
+      if (path[0] === 'builds' && path[1]) {
+        const result = await service.build(path[1], userId, url.searchParams.get('version') ?? undefined);
+        const requestedMode = url.searchParams.get('mode');
+        ensure((requestedMode === null && result.mode === 'workflow') || requestedMode === result.mode,
+          'This client must explicitly request mode=agent to read an Agent draft.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+        return json(result);
+      }
       if (path[0] === 'profile' && path[1]) return json(await service.profile(path[1] === 'me' ? auth() : path[1], userId));
       if (path[0] === 'providers') return json(await service.providers(auth()));
       if (path[0] === 'pi-self-test') return json(await service.piSelfTestStatus(auth()));
@@ -64,7 +70,15 @@ export async function handleArena(request: Request, options: { service: ArenaSer
     if (method === 'POST') {
       const body = await readJson(request);
       options.validateBody?.(path.join('/'), body);
-      if (path[0] === 'builds' && path[2] === 'fork') return json(await service.fork(auth(), path[1], typeof body.versionId === 'string' ? body.versionId : undefined), 201);
+      if (path[0] === 'builds' && path[2] === 'fork') {
+        ensure(Object.keys(body).every(key => ['versionId', 'mode'].includes(key)) &&
+          (!Object.hasOwn(body, 'versionId') || (typeof body.versionId === 'string' && body.versionId.length > 0 && body.versionId.length <= 100)) &&
+          (!Object.hasOwn(body, 'mode') || body.mode === 'agent' || body.mode === 'workflow'),
+          'Invalid Fork fields.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+        const source = await service.build(path[1], auth(), body.versionId as string | undefined);
+        ensure(source.mode === (body.mode ?? 'workflow'), 'Fork mode mismatch.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+        return json(await service.fork(auth(), path[1], source.version.id), 201);
+      }
       if (path[0] === 'builds') return json(await service.saveBuild(auth(), body), 201);
       if (path[0] === 'providers') return json(await service.addProvider(auth(), body), 201);
       if (path[0] === 'problems') return json(await service.createProblem(auth(), body), 201);

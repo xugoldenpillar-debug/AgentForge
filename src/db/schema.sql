@@ -87,11 +87,20 @@ CREATE TABLE IF NOT EXISTS "builds" (
 CREATE TABLE IF NOT EXISTS "build_versions" (
   "id" TEXT PRIMARY KEY,
   "build_id" TEXT NOT NULL REFERENCES "builds"("id") ON DELETE CASCADE,
+  "mode" TEXT NOT NULL DEFAULT 'workflow',
+  "agent_definition" JSONB,
+  "definition_digest" TEXT,
   "revision" INTEGER NOT NULL,
   "title" TEXT NOT NULL,
   "visibility" TEXT NOT NULL,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE ("build_id", "revision")
+  UNIQUE ("build_id", "revision"),
+  CONSTRAINT build_versions_mode_payload CHECK (
+    (mode = 'workflow' AND agent_definition IS NULL AND definition_digest IS NULL)
+    OR (mode = 'agent' AND visibility = 'private' AND agent_definition IS NOT NULL
+      AND COALESCE(agent_definition->>'mode' = 'agent', false) AND COALESCE(agent_definition->>'definitionSchemaVersion' = '1', false)
+      AND definition_digest IS NOT NULL AND definition_digest ~ '^sha256:[0-9a-f]{64}$')
+  )
 );
 CREATE TABLE IF NOT EXISTS "workflow_nodes" (
   "id" TEXT NOT NULL,
@@ -241,6 +250,7 @@ CREATE TABLE IF NOT EXISTS "user_badges" (
   UNIQUE ("user_id", "badge_id")
 );
 CREATE TABLE IF NOT EXISTS "fork_relations" (
+  "source_version_id" TEXT REFERENCES "build_versions"("id"),
   "id" TEXT PRIMARY KEY,
   "parent_build_id" TEXT NOT NULL REFERENCES "builds"("id") ON DELETE CASCADE,
   "child_build_id" TEXT NOT NULL UNIQUE REFERENCES "builds"("id") ON DELETE CASCADE,

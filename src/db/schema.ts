@@ -96,11 +96,16 @@ export const builds = pgTable("builds", {
 export const buildVersions = pgTable("build_versions", {
   id: text("id").primaryKey(),
   buildId: text("build_id").notNull().references(() => builds.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull().default("workflow"),
+  agentDefinition: jsonb("agent_definition"),
+  definitionDigest: text("definition_digest"),
   revision: integer("revision").notNull(),
   title: text("title").notNull(),
   visibility: text("visibility").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-}, (t) => [uniqueIndex("build_versions_unique_0").on(t.buildId, t.revision)]);
+}, (t) => [uniqueIndex("build_versions_unique_0").on(t.buildId, t.revision),
+  check("build_versions_mode_payload", sql`(${t.mode} = 'workflow' AND ${t.agentDefinition} IS NULL AND ${t.definitionDigest} IS NULL) OR (${t.mode} = 'agent' AND ${t.visibility} = 'private' AND ${t.agentDefinition} IS NOT NULL AND COALESCE(${t.agentDefinition}->>'mode' = 'agent', false) AND COALESCE(${t.agentDefinition}->>'definitionSchemaVersion' = '1', false) AND ${t.definitionDigest} IS NOT NULL AND ${t.definitionDigest} ~ '^sha256:[0-9a-f]{64}$')`)
+]);
 
 export const workflowNodes = pgTable("workflow_nodes", {
   id: text("id").notNull(),
@@ -258,6 +263,7 @@ export const userBadges = pgTable("user_badges", {
 }, (t) => [uniqueIndex("user_badges_unique_0").on(t.userId, t.badgeId)]);
 
 export const forkRelations = pgTable("fork_relations", {
+  sourceVersionId: text("source_version_id").references(() => buildVersions.id),
   id: text("id").primaryKey(),
   parentBuildId: text("parent_build_id").notNull().references(() => builds.id, { onDelete: "cascade" }),
   childBuildId: text("child_build_id").notNull().unique().references(() => builds.id, { onDelete: "cascade" }),

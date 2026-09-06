@@ -15,7 +15,23 @@ export class DrizzleRepository implements Repository {
   async insert<K extends TableName>(name:K,rows:Tables[K][]):Promise<void>{if(rows.length)await this.orm.insert(tableRegistry[name]).values(rows.map(r=>toDatabase(r as unknown as Record<string,unknown>)));}
   async update<K extends TableName>(name:K,where:Partial<Tables[K]>,values:Partial<Tables[K]>):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.update(t).set(toDatabase(values as Record<string,unknown>)).where(this.condition(t,where)).returning());}
   async remove<K extends TableName>(name:K,where:Partial<Tables[K]>):Promise<void>{const t=tableRegistry[name];await this.orm.delete(t).where(this.condition(t,where));}
-  async transaction<T>(fn:(tx:Repository)=>Promise<T>):Promise<T>{if(this.nested)return fn(this);for(let attempt=0;;attempt++){try{return await this.orm.transaction((tx:any)=>fn(new DrizzleRepository(tx,this.sql,true)),{isolationLevel:'serializable'});}catch(e){if(attempt<2&&(e as {code?:string}).code==='40001')continue;throw e;}}}
+  async transaction<T>(fn: (tx: Repository) => Promise<T>): Promise<T> {
+    if (this.nested) return fn(this);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.orm.transaction(
+          (tx: typeof this.orm) => fn(new DrizzleRepository(tx, this.sql, true)),
+          {isolationLevel: 'serializable'}
+        );
+      } catch (error) {
+        // Drizzle wraps postgres.js errors. Retry the whole transaction so CAS is rechecked.
+        const databaseError = error as {code?: string; cause?: {code?: string}};
+        const code = databaseError.code ?? databaseError.cause?.code;
+        if (attempt < 2 && (code === '40001' || code === '40P01')) continue;
+        throw error;
+      }
+    }
+  }
   async rateLimit(key:string,limit:number,windowMs:number):Promise<boolean>{
     const rows=await this.sql`INSERT INTO rate_limits(key,hits,expires_at) VALUES(${key},1,now()+${windowMs}*interval '1 millisecond') ON CONFLICT(key) DO UPDATE SET hits=CASE WHEN rate_limits.expires_at<=now() THEN 1 ELSE rate_limits.hits+1 END, expires_at=CASE WHEN rate_limits.expires_at<=now() THEN now()+${windowMs}*interval '1 millisecond' ELSE rate_limits.expires_at END RETURNING hits`;
     return Number(rows[0].hits)<=limit;

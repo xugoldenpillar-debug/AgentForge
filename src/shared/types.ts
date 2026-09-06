@@ -1,3 +1,4 @@
+import type { AgentBuildDefinition } from './agent-build-contract.ts';
 import type { ErrorCode } from './errors.ts';
 export type NodeKind = 'input' | 'prompt' | 'model' | 'skill' | 'tool' | 'validator' | 'output';
 export type SkillId = 'structured' | 'reflection' | 'concise' | 'extract' | 'safety' | 'retry';
@@ -29,7 +30,18 @@ export interface User {
   piRuntimeAccess?: 'applied' | 'invited' | null;
 }
 export interface Build { id: string; problemId: string; userId: string; title: string; visibility: 'public' | 'private'; currentVersionId: string; parentBuildId: string | null; createdAt: string; updatedAt: string }
-export interface BuildVersion { id: string; buildId: string; revision: number; title: string; visibility: 'public' | 'private'; createdAt: string }
+export interface BuildVersion {
+  id: string;
+  buildId: string;
+  revision: number;
+  title: string;
+  visibility: 'public' | 'private';
+  createdAt: string;
+  /** Missing only in legacy in-memory fixtures; PostgreSQL defaults to workflow. */
+  mode?: 'workflow' | 'agent';
+  agentDefinition?: AgentBuildDefinition | null;
+  definitionDigest?: string | null;
+}
 export interface StoredNode extends WorkflowNode { versionId: string }
 export interface StoredEdge extends WorkflowEdge { versionId: string }
 export interface Metrics { inputTokens: number; outputTokens: number; reasoningTokens: number; toolCalls: number; latency: number; cost: number | null; estimated: boolean }
@@ -52,7 +64,15 @@ export interface FailureCase { id: string; problemId: string; buildId: string; v
 export interface Reputation { id: string; userId: string; points: number; reason: string; referenceId: string; createdAt: string }
 export interface Badge { id: string; name: string; description: string; icon: string }
 export interface UserBadge { id: string; userId: string; badgeId: string; createdAt: string }
-export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string }
+export interface ForkRelation {
+  id: string;
+  parentBuildId: string;
+  childBuildId: string;
+  userId: string;
+  createdAt: string;
+  /** Legacy lineage is unknown; never infer the source from a mutable pointer. */
+  sourceVersionId?: string | null;
+}
 export interface CatalogSkill { id: SkillId; name: string; description: string; effect: string; icon: string; author: string }
 export interface CatalogTool { id: ToolId; name: string; description: string; icon: string }
 export interface Tables {

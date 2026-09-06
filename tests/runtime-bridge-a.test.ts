@@ -24,7 +24,7 @@ function sse(text: string, usage: Record<string, unknown> | null = {
   };
   if (usage) stop.usage = usage;
   lines.push(`data: ${JSON.stringify(stop)}`, 'data: [DONE]', '');
-  const payload = lines.join('\n');
+  const payload = lines.join('\n\n');
   return new Response(payload, {
     status: 200,
     headers: { 'content-type': 'text/event-stream' }
@@ -92,4 +92,138 @@ test('Bridge A fails closed on missing usage and rejects non-Flash endpoints', a
     () => createBridgeBStreamFn(),
     (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.RUNTIME_UNAVAILABLE
   );
+});
+
+test('Bridge A maps unsupported models to a safe configuration error', () => {
+  assert.throws(() => createBridgeAStreamFn({
+    apiKey: key,
+    baseUrl: 'https://api.deepseek.com',
+    modelId: 'unsupported-private-model',
+    maxTokens: 16
+  }), (error: unknown) => error instanceof AppError
+    && error.code === ERROR_CODES.PROVIDER_CONFIGURATION_INVALID
+    && !error.message.includes('unsupported-private-model'));
+});
+
+for (const ending of ['', '\n', '\r\n', '\r']) {
+  test(`Bridge A discards an unterminated SSE usage event at EOF (${JSON.stringify(ending)})`, async () => {
+    const stream = createBridgeAStreamFn({
+      apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+      providerFetch: async () => new Response(
+        'data: {"usage":{"prompt_tokens":1,"completion_tokens":1}}' + ending
+      )
+    });
+    await assert.rejects(() => stream({}, { messages: [{ role: 'user', content: 'offline' }] }), (error: unknown) => error instanceof AppError
+      && error.code === ERROR_CODES.PROVIDER_RESPONSE_INVALID);
+  });
+}
+
+for (const newline of ['\n', '\r\n', '\r']) {
+  test(`Bridge A accepts framed multiline SSE split across bytes (${JSON.stringify(newline)})`, async () => {
+    const payload = [
+      ': comment', 'data: {"choices":[{"delta":{"content":"你好"}}],',
+      'data: "usage":{"prompt_tokens":1,"completion_tokens":2}}', '', ''
+    ].join(newline);
+    const bytes = new TextEncoder().encode(payload);
+    const stream = createBridgeAStreamFn({
+      apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+      providerFetch: async () => new Response(new ReadableStream({
+        start(controller) {
+          for (const byte of bytes) controller.enqueue(Uint8Array.of(byte));
+          controller.close();
+        }
+      }))
+    });
+    const chunks = [];
+    for await (const chunk of await stream({}, { messages: [{ role: 'user', content: 'offline' }] })) chunks.push(chunk);
+    assert.deepEqual(chunks, [
+      { type: 'text_delta', text: '你好' },
+      { type: 'usage', inputTokens: 1, outputTokens: 2 }
+    ]);
+  });
+}
+
+const offlineContext = { messages: [{ role: 'user', content: 'offline' }] };
+const usageFrame = 'data: {"usage":{"prompt_tokens":1,"completion_tokens":2}}\n\n';
+
+test('Bridge A handles BOM/comments/fields and stops at framed DONE without waiting for EOF', async () => {
+  let cancelled = 0;
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        '\uFEFF: heartbeat\r\nid: 7\r\nevent: message\r\nretry: 1000\r\ndata\r\n\r\n'
+          + usageFrame + 'data: [DONE]\n\n'
+          + 'data: {"choices":[{"delta":{"content":"ignored after DONE"}}]}\n\n'
+      ));
+    },
+    cancel() { cancelled += 1; }
+  }));
+  const stream = createBridgeAStreamFn({
+    apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+    providerFetch: async () => response
+  });
+  const chunks = [];
+  for await (const chunk of await stream({}, offlineContext)) chunks.push(chunk);
+  assert.deepEqual(chunks, [{ type: 'usage', inputTokens: 1, outputTokens: 2 }]);
+  assert.equal(cancelled, 1);
+  assert.equal(response.body?.locked, false);
+});
+
+for (const reason of ['caller', 'timeout'] as const) {
+  test(`Bridge A ${reason} interrupts pending reads and releases the response`, async (t) => {
+    const controller = new AbortController();
+    if (reason === 'timeout') {
+      t.mock.method(AbortSignal, 'timeout', (ms: number) => {
+        assert.equal(ms, 30_000);
+        return controller.signal;
+      });
+    }
+    let cancelled = 0;
+    const response = new Response(new ReadableStream({
+      start(stream) {
+        stream.enqueue(new TextEncoder().encode(usageFrame));
+      },
+      pull() {
+        queueMicrotask(() => controller.abort(new Error('private timeout detail')));
+      },
+      cancel() { cancelled += 1; }
+    }));
+    const stream = createBridgeAStreamFn({
+      apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+      providerFetch: async () => response
+    });
+    const result = stream({}, offlineContext, reason === 'caller' ? { signal: controller.signal } : undefined);
+    if (reason === 'timeout') {
+      await assert.rejects(() => result, (error: unknown) => error instanceof AppError
+        && error.code === ERROR_CODES.PROVIDER_REQUEST_FAILED
+        && !error.message.includes('private timeout detail'));
+    } else {
+      const chunks = [];
+      for await (const chunk of await result) chunks.push(chunk);
+      assert.deepEqual(chunks, [{ type: 'aborted' }]);
+    }
+    assert.equal(cancelled, 1);
+    assert.equal(response.body?.locked, false);
+  });
+}
+
+test('Bridge A cancels HTTP error bodies and sanitizes body-read errors', async () => {
+  let cancelled = 0;
+  const response = new Response(new ReadableStream({
+    cancel() { cancelled += 1; }
+  }), { status: 503 });
+  const failedResponse = new Response(new ReadableStream({
+    start(controller) { controller.error(new Error('private body error')); }
+  }));
+  for (const body of [response, failedResponse]) {
+    const stream = createBridgeAStreamFn({
+      apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+      providerFetch: async () => body
+    });
+    await assert.rejects(() => stream({}, offlineContext), (error: unknown) => error instanceof AppError
+      && error.code === ERROR_CODES.PROVIDER_REQUEST_FAILED
+      && !error.message.includes('private body error'));
+    assert.equal(body.body?.locked, false);
+  }
+  assert.equal(cancelled, 1);
 });

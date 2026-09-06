@@ -9,6 +9,7 @@
 - [评测基础](evaluation-foundation/README.md)：Q1–Q25、公共任务/取消/容量/费用/缓存/邮件政策。
 - [社区组件](community-component-library/README.md)：创作、版本、自测、审核发布、使用与撤销。
 - [可信网关](deepseek-verified-gateway/design.md)：Official/Custom/Verified、Registry、Profile/Season、Ticket、Receipt、独立私有网关。
+- [Agent Build 模式](agent-mode/README.md)：首批提案、五份契约与 A–F Gate；未实现，后续实施另行授权。模式/runtime/trust 分开，复用公共评测基础。
 - [Pi](pi-runtime/design.md)：可选执行适配器，默认关闭、离线 PoC，不能旁路公共控制。
 - [厂商 SDK](vendor-agent-sdk/roadmap.md)：未来候选协议，不在本轮实现，也不自动取得 Verified。
 

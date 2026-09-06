@@ -97,50 +97,86 @@ async function readSseText(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let afterCr = false;
+  let dataLines: string[] = [];
   let text = '';
   let usage: { inputTokens: number; outputTokens: number; reasoningTokens: number } | undefined;
-  while (true) {
-    if (signal?.aborted) {
-      await reader.cancel().catch(() => undefined);
-      return { text, usage };
+  let finished = false;
+  let cancellation: Promise<void> | undefined;
+  const cancel = (): Promise<void> => {
+    // Cleanup failure must not replace the original provider/abort failure.
+    cancellation ??= reader.cancel().catch(() => undefined);
+    return cancellation;
+  };
+  const onAbort = (): void => { void cancel(); };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      signal?.throwIfAborted();
+      if (done) {
+        finished = true;
+        break;
+      }
+      // SSE dispatches at a blank line, not EOF or each individual data line.
+      for (const character of decoder.decode(value, { stream: true })) {
+        if (afterCr && character === '\n') {
+          afterCr = false;
+          continue;
+        }
+        afterCr = character === '\r';
+        if (character !== '\r' && character !== '\n') {
+          buffer += character;
+          continue;
+        }
+        const line = buffer;
+        buffer = '';
+        if (line !== '') {
+          if (line === 'data') dataLines.push('');
+          else if (line.startsWith('data:')) {
+            const value = line.slice(5);
+            dataLines.push(value.startsWith(' ') ? value.slice(1) : value);
+          }
+          continue;
+        }
+        const data = dataLines.join('\n');
+        dataLines = [];
+        if (data === '[DONE]') return { text, usage };
+        if (!data) continue;
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(data) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        if (!parsed || typeof parsed !== 'object') continue;
+        const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+        for (const choice of choices) {
+          if (!choice || typeof choice !== 'object') continue;
+          const delta = (choice as { delta?: { content?: unknown } }).delta;
+          if (delta && typeof delta.content === 'string') text += delta.content;
+        }
+        const rawUsage = parsed.usage;
+        if (rawUsage && typeof rawUsage === 'object') {
+          const row = rawUsage as Record<string, unknown>;
+          const details = row.completion_tokens_details && typeof row.completion_tokens_details === 'object'
+            ? row.completion_tokens_details as Record<string, unknown>
+            : {};
+          usage = {
+            inputTokens: Number(row.prompt_tokens),
+            outputTokens: Number(row.completion_tokens),
+            reasoningTokens: Number(details.reasoning_tokens ?? 0)
+          };
+        }
+      }
     }
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data || data === '[DONE]') continue;
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(data) as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
-      for (const choice of choices) {
-        if (!choice || typeof choice !== 'object') continue;
-        const delta = (choice as { delta?: { content?: unknown } }).delta;
-        if (delta && typeof delta.content === 'string') text += delta.content;
-      }
-      const rawUsage = parsed.usage;
-      if (rawUsage && typeof rawUsage === 'object') {
-        const row = rawUsage as Record<string, unknown>;
-        const details = row.completion_tokens_details && typeof row.completion_tokens_details === 'object'
-          ? row.completion_tokens_details as Record<string, unknown>
-          : {};
-        usage = {
-          inputTokens: Number(row.prompt_tokens),
-          outputTokens: Number(row.completion_tokens),
-          reasoningTokens: Number(details.reasoning_tokens ?? 0)
-        };
-      }
-    }
+    return { text, usage };
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+    if (!finished) await cancel();
+    reader.releaseLock();
   }
-  return { text, usage };
 }
 
 /**
@@ -152,11 +188,19 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
     throw new AppError(UNAVAILABLE, 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
   }
   const baseUrl = officialBaseUrl(config.baseUrl);
-  resolveOfficialProviderOffering({
-    providerId: 'deepseek',
-    modelId: config.modelId,
-    thinking: false
-  });
+  try {
+    resolveOfficialProviderOffering({
+      providerId: 'deepseek',
+      modelId: config.modelId,
+      thinking: false
+    });
+  } catch {
+    throw new AppError(
+      'Unsupported official DeepSeek model.',
+      400,
+      ERROR_CODES.PROVIDER_CONFIGURATION_INVALID
+    );
+  }
   const maxTokens = Math.min(Math.max(16, Math.floor(config.maxTokens)), FLASH_MAX_TOKENS);
 
   return async function bridgeAStream(_model, context, options) {
@@ -185,9 +229,8 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
 
     const timeout = AbortSignal.timeout(30_000);
     const signal = options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-    let response: Response;
     try {
-      response = await providerFetch(`${baseUrl}/chat/completions`, {
+      const response = await providerFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${config.apiKey}`,
@@ -196,6 +239,39 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
         body: JSON.stringify(body),
         signal
       });
+
+      if (!response.ok) {
+        // Rejected response bodies must not retain a pooled provider connection.
+        await response.body?.cancel().catch(() => undefined);
+        throw new AppError(
+          'Model request failed. Check the provider, model, network and account balance.',
+          502,
+          ERROR_CODES.PROVIDER_REQUEST_FAILED
+        );
+      }
+
+      const streamed = await readSseText(response, signal);
+      signal.throwIfAborted();
+      const usage = streamed.usage;
+      ensure(
+        usage !== undefined
+          && Number.isSafeInteger(usage.inputTokens) && usage.inputTokens >= 0
+          && Number.isSafeInteger(usage.outputTokens) && usage.outputTokens >= 0,
+        'Official provider returned invalid token usage.',
+        502,
+        ERROR_CODES.PROVIDER_RESPONSE_INVALID
+      );
+      ensure(
+        usage.reasoningTokens === 0,
+        'Official non-thinking response contained reasoning usage.',
+        502,
+        ERROR_CODES.PROVIDER_RESPONSE_INVALID
+      );
+
+      return (async function* chunks(): AsyncGenerator<ControlledStreamChunk> {
+        if (streamed.text) yield { type: 'text_delta', text: streamed.text };
+        yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+      })();
     } catch (error) {
       if (options?.signal?.aborted) {
         return (async function* aborted(): AsyncGenerator<ControlledStreamChunk> {
@@ -209,40 +285,5 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
         ERROR_CODES.PROVIDER_REQUEST_FAILED
       );
     }
-
-    if (!response.ok) {
-      throw new AppError(
-        'Model request failed. Check the provider, model, network and account balance.',
-        502,
-        ERROR_CODES.PROVIDER_REQUEST_FAILED
-      );
-    }
-
-    const streamed = await readSseText(response, options?.signal);
-    if (options?.signal?.aborted) {
-      return (async function* aborted(): AsyncGenerator<ControlledStreamChunk> {
-        yield { type: 'aborted' };
-      })();
-    }
-    const usage = streamed.usage;
-    ensure(
-      usage !== undefined
-        && Number.isSafeInteger(usage.inputTokens) && usage.inputTokens >= 0
-        && Number.isSafeInteger(usage.outputTokens) && usage.outputTokens >= 0,
-      'Official provider returned invalid token usage.',
-      502,
-      ERROR_CODES.PROVIDER_RESPONSE_INVALID
-    );
-    ensure(
-      usage.reasoningTokens === 0,
-      'Official non-thinking response contained reasoning usage.',
-      502,
-      ERROR_CODES.PROVIDER_RESPONSE_INVALID
-    );
-
-    return (async function* chunks(): AsyncGenerator<ControlledStreamChunk> {
-      if (streamed.text) yield { type: 'text_delta', text: streamed.text };
-      yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
-    })();
   };
 }

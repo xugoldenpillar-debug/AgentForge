@@ -1,3 +1,4 @@
+import { piProtocolFailure } from './protocol.ts';
 import { safeError, ERROR_CODES } from '../../../shared/errors.ts';
 import {
   RUNTIME_EVENT_LIMITS,
@@ -134,6 +135,14 @@ export function mapPiLikeEvent(event: unknown, state: PiEventMapState): RuntimeE
     });
   }
   if (type === 'message_end') {
+    if (isRecord(event.message) && event.message.role === 'assistant') {
+      if (event.message.stopReason === 'aborted') {
+        return { type: 'cancelled', runId: state.runId, sequence: state.sequence++ };
+      }
+      if (event.message.stopReason === 'error') {
+        return toFailedRuntimeEvent(piProtocolFailure(event.message), state.runId, state.sequence++);
+      }
+    }
     const content = assistantContent(event.message);
     if (content) state.output += content;
     return undefined;
