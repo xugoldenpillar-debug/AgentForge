@@ -1,3 +1,21 @@
 import { Suspense } from 'react';
 import { ArenaApp } from '@/components/arena-app';
-export default function Page(){return <Suspense fallback={<div style={{padding:40,color:'#c4ef79'}}>Initializing the forge...</div>}><ArenaApp/></Suspense>;}
+
+function AppFallback() {
+  return (
+    <div className="loading-state" aria-label="AgentForge">
+      <div className="flex items-center gap-2">
+        <span className="spinner" />
+        <span>AgentForge</span>
+      </div>
+    </div>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<AppFallback />}>
+      <ArenaApp />
+    </Suspense>
+  );
+}

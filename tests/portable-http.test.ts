@@ -61,6 +61,7 @@ test('Native HTTP: the portable runtime never silently substitutes demo for a re
 test('Native HTTP: source files, hidden fixtures and data files are not static assets',async()=>{
  for(const path of ['/.env','/src/server/fixtures.ts','/.data/portable/database.json','/portable/server.ts','/package.json'])assert.equal((await request(path)).status,404,path);
  const asset=await request('/portable-app.js');assert.equal(asset.status,200);assert.match(asset.headers.get('content-security-policy')||'',/default-src 'self'/);assert(!((await asset.text()).includes('FLAG{AGENT_FORGE}')));
+ const localeAsset=await request('/locale-messages.js');assert.equal(localeAsset.status,200);assert.equal(localeAsset.headers.get('content-type'),'text/javascript; charset=utf-8');const localeSource=await localeAsset.text();assert.match(localeSource,/window\.AgentForgeSharedMessages=/);for(const field of ['messages','literalMap','systemContent','errorMessageKeys'])assert(localeSource.includes(`\"${field}\"`),`locale payload should include ${field}`);assert(!localeSource.includes('FLAG{AGENT_FORGE}'));
  const rejected=await new Promise<number>((resolve,reject)=>{const req=rawRequest(base+'/api/arena/boot',{headers:{Host:'attacker.invalid'}},res=>{res.resume();resolve(res.statusCode!);});req.on('error',reject);req.end();});assert.equal(rejected,403);
 });
 test('Native HTTP: restart preserves accounts, sessions, builds, results and encrypted providers',async()=>{

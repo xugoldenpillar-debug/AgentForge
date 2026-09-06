@@ -1,3 +1,4 @@
+import type { ErrorCode } from './errors.ts';
 export type NodeKind = 'input' | 'prompt' | 'model' | 'skill' | 'tool' | 'validator' | 'output';
 export type SkillId = 'structured' | 'reflection' | 'concise' | 'extract' | 'safety' | 'retry';
 export type ToolId = 'calculator' | 'json-validator' | 'text-search' | 'date-parser' | 'string-matcher';
@@ -61,4 +62,4 @@ export interface Repository {
   lease(key: string, ttlMs: number): Promise<string | null>;
   release(key: string, token: string): Promise<void>;
 }
-export type RunEvent = { type: 'start'; total: number; tier: Tier } | { type: 'trace'; caseNumber: number; trace: Trace } | { type: 'case'; result: CaseResult } | { type: 'progress'; completed: number; total: number } | { type: 'complete'; runId: string; summary: RunSummary; submissionId: string | null } | { type: 'error'; message: string };
+export type RunEvent = { type: 'start'; total: number; tier: Tier } | { type: 'trace'; caseNumber: number; trace: Trace } | { type: 'case'; result: CaseResult } | { type: 'progress'; completed: number; total: number } | { type: 'complete'; runId: string; summary: RunSummary; submissionId: string | null } | { type: 'error'; code?: ErrorCode; message: string };

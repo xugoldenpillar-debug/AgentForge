@@ -1,5 +1,5 @@
 import type { Config, NodeKind, Workflow } from '../../shared/types.ts';
-import { ensure } from '../../shared/errors.ts';
+import { ensure, ERROR_CODES, withErrorCode } from '../../shared/errors.ts';
 import { SKILLS, TOOLS } from '../../shared/catalog.ts';
 const KINDS = new Set(['input','prompt','model','skill','tool','validator','output']);
 const fields: Record<NodeKind,string[]> = {
@@ -8,6 +8,9 @@ const fields: Record<NodeKind,string[]> = {
 };
 const plain = (x:unknown): x is Record<string,unknown> => !!x && typeof x==='object' && !Array.isArray(x) && (Object.getPrototypeOf(x)===Object.prototype || Object.getPrototypeOf(x)===null);
 export function validateWorkflow(value: unknown): Workflow {
+  return withErrorCode(ERROR_CODES.INVALID_WORKFLOW, () => validateWorkflowInternal(value));
+}
+function validateWorkflowInternal(value: unknown): Workflow {
   ensure(plain(value)&&Array.isArray(value.nodes)&&Array.isArray(value.edges),'Workflow must contain nodes and edges.');
   ensure(value.nodes.length>=3&&value.nodes.length<=24,'Use 3 to 24 nodes.');
   ensure(value.edges.length<=64,'Use at most 64 connections.');
@@ -73,6 +76,9 @@ export function validateWorkflow(value: unknown): Workflow {
   return workflow;
 }
 export function topologicalOrder(w:Workflow): string[] {
+  return withErrorCode(ERROR_CODES.INVALID_WORKFLOW, () => topologicalOrderInternal(w));
+}
+function topologicalOrderInternal(w:Workflow): string[] {
   const degree=new Map(w.nodes.map(n=>[n.id,0]));
   for(const e of w.edges) {ensure(degree.has(e.source)&&degree.has(e.target),'Missing connected node.');degree.set(e.target,degree.get(e.target)!+1);}
   const queue=w.nodes.filter(n=>degree.get(n.id)===0).map(n=>n.id).sort(), order:string[]=[];
@@ -80,6 +86,9 @@ export function topologicalOrder(w:Workflow): string[] {
   ensure(order.length===w.nodes.length,'Workflow contains a cycle.');return order;
 }
 export function validateSchemaDefinition(s:Record<string,unknown>,depth=0):void {
+  withErrorCode(ERROR_CODES.INVALID_WORKFLOW, () => validateSchemaDefinitionInternal(s, depth));
+}
+function validateSchemaDefinitionInternal(s:Record<string,unknown>,depth=0):void {
   ensure(depth<=8,'Schema nesting exceeds 8 levels.');
   const allowed=new Set(['type','properties','required','additionalProperties','items','enum','description']);
   ensure(Object.keys(s).every(k=>allowed.has(k)),'Unsupported JSON Schema keyword. Supported: type, properties, required, additionalProperties, items, enum, description.');
