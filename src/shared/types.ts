@@ -23,7 +23,11 @@ export interface Problem {
   constraints: Constraints; reward: number; worldBoss: boolean; status: 'active' | 'pending';
   authorId: string | null; createdAt: string;
 }
-export interface User { id: string; name: string; email: string; emailVerified: boolean; image: string | null; createdAt: string; updatedAt: string; elo: number; reputation: number; isSeed: boolean }
+export interface User {
+  id: string; name: string; email: string; emailVerified: boolean; image: string | null;
+  createdAt: string; updatedAt: string; elo: number; reputation: number; isSeed: boolean;
+  piRuntimeAccess?: 'applied' | 'invited' | null;
+}
 export interface Build { id: string; problemId: string; userId: string; title: string; visibility: 'public' | 'private'; currentVersionId: string; parentBuildId: string | null; createdAt: string; updatedAt: string }
 export interface BuildVersion { id: string; buildId: string; revision: number; title: string; visibility: 'public' | 'private'; createdAt: string }
 export interface StoredNode extends WorkflowNode { versionId: string }
@@ -33,7 +37,14 @@ export interface Trace { nodeId: string; kind: NodeKind; label: string; state: '
 export interface CaseResult extends Metrics { caseId: string; category: Category; passed: boolean; secure: boolean; failureType: string | null; input?: string; expected?: unknown; actual?: string; trace?: Trace[] }
 export interface Score { total: number; accuracy: number; robustness: number; security: number; efficiency: number; elegance: number; grades: Record<string, string> }
 export interface RunSummary { passed: number; total: number; failures: Record<string, number>; metrics: Metrics; score: Score; tier: Tier }
-export interface Run { id: string; buildId: string; versionId: string; problemId: string; userId: string; kind: RunKind; tier: Tier; status: 'running' | 'completed' | 'failed'; summary: RunSummary | null; createdAt: string }
+export interface Run {
+  id: string; buildId: string; versionId: string; problemId: string; userId: string;
+  kind: RunKind; tier: Tier; status: 'running' | 'completed' | 'failed';
+  summary: RunSummary | null; createdAt: string;
+  runtimeKind?: 'dag' | 'pi' | null;
+  adapterVersion?: string | null;
+  policyVersion?: string | null;
+}
 export interface RunCase extends CaseResult { id: string; runId: string }
 export interface Submission { id: string; runId: string; buildId: string; versionId: string; userId: string; problemId: string; tier: Tier; score: number; accuracy: number; robustness: number; security: number; efficiency: number; elegance: number; tokens: number; cost: number | null; latency: number; nodes: number; model: string; createdAt: string }
 export interface Credential { id: string; userId: string; name: string; baseUrl: string; modelId: string; ciphertext: string; lastFour: string; inputPrice: number | null; outputPrice: number | null; createdAt: string }

@@ -33,6 +33,7 @@ jobs:
           MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
       - run: pnpm db
       - run: pnpm test
+      - run: pnpm test:pi-runtime
       - run: pnpm test:provider-sdk
       - run: pnpm typecheck
       - run: pnpm build

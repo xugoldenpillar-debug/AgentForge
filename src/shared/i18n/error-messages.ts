@@ -30,6 +30,8 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, MessageKey> = {
   [ERROR_CODES.BUDGET_EXCEEDED]: 'errors.budgetExceeded',
   [ERROR_CODES.RUN_ALREADY_ACTIVE]: 'errors.runAlreadyActive',
   [ERROR_CODES.RUN_CANCELLED]: 'errors.runCancelled',
+  [ERROR_CODES.RUNTIME_UNAVAILABLE]: 'errors.runtimeUnavailable',
+  [ERROR_CODES.RUNTIME_POLICY_DENIED]: 'errors.runtimePolicyDenied',
   [ERROR_CODES.ENDPOINT_NOT_FOUND]: 'errors.endpointNotFound',
   [ERROR_CODES.UNKNOWN_ERROR]: 'errors.generic',
   [ERROR_CODES.INTERNAL_SERVER_ERROR]: 'errors.generic'

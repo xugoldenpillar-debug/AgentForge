@@ -62,3 +62,9 @@ See [project design map](../specs/README.md), [evaluation foundation](../specs/e
 The target keeps one Next.js application with independent Node workers. PostgreSQL owns business state and evidence; Redis/BullMQ coordinates delivery. Competitive Run and component SelfTestRun remain distinct records under common evaluation jobs/attempts. Verified execution reuses this foundation while retaining its separate private model gateway, Ticket/Profile/Season/Receipt gates. Pi is an optional execution adapter, not an alternative web application or a security sandbox.
 
 Public caching may be eventually consistent; permissions, credential revocation, execution eligibility and budget are authoritative checks. Queue waiting time is distinct from execution latency used for scoring. Component self-test detail retention does not override Gateway audit retention. See the design map for scope and cross-branch dependencies; no historical Portable data is deleted by this design.
+
+## Optional Pi adapter — current vs target
+
+Target: a second task runtime behind the same platform adapter boundary, default off, never a sandbox and never mixed into competitive leaderboards.
+
+Current: optional Pi adapter behind `PI_RUNTIME_ENABLED` (exact string `true`; default `false`). Competitive `ArenaService.run` goes through the DAG adapter onto the same `executeWorkflow`; new `runs` rows store nullable DAG identity and are not backfilled. Pi is not a sandbox, has no public UI selector, and does not write competitive submissions. Bridge A reuses official Flash safe fetch; Bridge B stays unavailable. Invited/public enablement is still off.

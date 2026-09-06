@@ -10,6 +10,11 @@ from `drizzle/`, and neither repeatedly executes the target `src/db/schema.sql`.
   matching tables and rows are retained; it does not infer or fix arbitrary schema drift.
 - `0002_accounts_issuer.sql` adds the nullable Better Auth issuer column to older
   accounts tables without altering existing credentials, account identifiers or sessions.
+- `0003_runs_runtime_identity.sql` adds nullable `runtime_kind`, `adapter_version`,
+  and `policy_version` on `runs`. New DAG runs record identity; existing rows stay
+  unlabeled and are not backfilled as `dag` or `pi`.
+- `0004_users_pi_runtime_access.sql` adds nullable `pi_runtime_access` on `users`
+  (`applied` / `invited`) for the on-page Pi self-test invite flow.
 - `schema_migrations` records version, filename, SHA-256 checksum and application time.
   The runner rejects missing, renamed, edited, or retroactively inserted applied files.
 - A pinned postgres.js transaction takes `pg_advisory_xact_lock` before creating or

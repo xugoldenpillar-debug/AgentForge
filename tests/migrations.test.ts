@@ -49,9 +49,10 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
+  assert.match(migrations[2].sql, /ADD COLUMN IF NOT EXISTS runtime_kind TEXT/);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -137,11 +138,25 @@ test('Phase 0 frozen baseline equals target without ledger and legacy plus issue
   const target = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
   const ledgerMarker = '-- Runner-owned history.';
   assert.equal(target.split(ledgerMarker).length, 2);
-  assert.equal(migrations[0].sql.trim(), target.split(ledgerMarker)[0].trim());
+  const baseline = migrations[0].sql.trim();
+  const targetHead = target.split(ledgerMarker)[0];
+  assert.match(targetHead, /"runtime_kind" TEXT/);
+  assert.match(targetHead, /"pi_runtime_access" TEXT/);
+  assert.equal(baseline.includes('runtime_kind'), false);
+  assert.equal(baseline.includes('pi_runtime_access'), false);
+  assert.equal(
+    targetHead
+      .replace(/\n  "runtime_kind" TEXT,\n  "adapter_version" TEXT,\n  "policy_version" TEXT,/, '')
+      .replace(/,\n  "pi_runtime_access" TEXT/, '')
+      .trim(),
+    baseline
+  );
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();
   assert.equal(alter, 'ALTER TABLE public.accounts ADD COLUMN IF NOT EXISTS issuer TEXT;');
+  assert.match(migrations[2].sql, /ADD COLUMN IF NOT EXISTS runtime_kind TEXT/);
+  assert.match(migrations[3].sql, /ADD COLUMN IF NOT EXISTS pi_runtime_access TEXT/);
 });
 
 test('rejects transaction control before opening a transaction, even in conservative guard contexts', async () => {

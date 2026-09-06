@@ -12,6 +12,7 @@ export const user = pgTable("users", {
   elo: integer("elo").notNull().default(1000),
   reputation: integer("reputation").notNull().default(0),
   isSeed: boolean("is_seed").notNull().default(false),
+  piRuntimeAccess: text("pi_runtime_access"),
 });
 
 export const session = pgTable("sessions", {
@@ -156,6 +157,9 @@ export const runs = pgTable("runs", {
   tier: text("tier").notNull(),
   status: text("status").notNull(),
   summary: jsonb("summary"),
+  runtimeKind: text("runtime_kind"),
+  adapterVersion: text("adapter_version"),
+  policyVersion: text("policy_version"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 });
 

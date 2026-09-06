@@ -13,6 +13,7 @@ export function getService(){
     allowedHosts:(process.env.PROVIDER_ALLOWED_HOSTS||'api.openai.com,openrouter.ai').split(',').map(s=>s.trim()).filter(Boolean),
     githubEnabled:!!(process.env.GITHUB_CLIENT_ID&&process.env.GITHUB_CLIENT_SECRET),platform,
     createRealProvider:byokProvider,createPlatformProvider:platform?()=>gatewayProvider(process.env.AI_GATEWAY_API_KEY!,platform):undefined,
-    maxRunCost:Number(process.env.RUN_MAX_TOTAL_COST||2.5),maxCases:Number(process.env.RUN_MAX_CASES||50)
+    maxRunCost:Number(process.env.RUN_MAX_TOTAL_COST||2.5),maxCases:Number(process.env.RUN_MAX_CASES||50),
+    env:process.env
   });
 }

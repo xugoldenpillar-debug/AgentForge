@@ -1,0 +1,248 @@
+import { AppError, ERROR_CODES, ensure } from '../../../shared/errors.ts';
+import { resolveOfficialProviderOffering } from '../../../lib/ai/provider-registry.ts';
+import type { ControlledStreamChunk, ControlledStreamFn } from './stream-fn.ts';
+
+export type BridgeAWire = {
+  method: string;
+  pathname: string;
+  model: unknown;
+  thinking: unknown;
+  maxTokens: unknown;
+  stream: unknown;
+  toolCount: number;
+};
+
+export type BridgeAConfig = {
+  apiKey: string;
+  baseUrl: string;
+  modelId: string;
+  maxTokens: number;
+  temperature?: number;
+  providerFetch?: typeof fetch;
+  onWire?: (wire: BridgeAWire) => void;
+};
+
+const UNAVAILABLE = 'This runtime is not available in the current environment.';
+const FLASH_MAX_TOKENS = 128;
+
+function officialBaseUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new AppError(
+      'Unsupported official DeepSeek endpoint.',
+      400,
+      ERROR_CODES.PROVIDER_CONFIGURATION_INVALID
+    );
+  }
+  ensure(
+    url.hostname === 'api.deepseek.com'
+      && url.protocol === 'https:'
+      && !url.username && !url.password && !url.search && !url.hash
+      && (!url.port || url.port === '443')
+      && ['/', '/v1', '/v1/'].includes(url.pathname),
+    'Unsupported official DeepSeek endpoint.',
+    400,
+    ERROR_CODES.PROVIDER_CONFIGURATION_INVALID
+  );
+  return 'https://api.deepseek.com';
+}
+
+function textFromContent(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((part) => {
+      if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') {
+        return part.text;
+      }
+      return '';
+    })
+    .join('');
+}
+
+function openaiMessages(context: unknown): Array<Record<string, unknown>> {
+  const record = context && typeof context === 'object' ? context as Record<string, unknown> : {};
+  const messages: Array<Record<string, unknown>> = [];
+  const systemPrompt = typeof record.systemPrompt === 'string' ? record.systemPrompt : '';
+  if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
+  const incoming = Array.isArray(record.messages) ? record.messages : [];
+  for (const item of incoming) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    if (row.role === 'user') {
+      messages.push({ role: 'user', content: textFromContent(row.content) });
+    } else if (row.role === 'assistant') {
+      messages.push({ role: 'assistant', content: textFromContent(row.content) });
+    } else if (row.role === 'toolResult') {
+      messages.push({
+        role: 'tool',
+        tool_call_id: row.toolCallId,
+        content: textFromContent(row.content)
+      });
+    }
+  }
+  if (messages.length === 0) {
+    throw new AppError(UNAVAILABLE, 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+  return messages;
+}
+
+async function readSseText(
+  response: Response,
+  signal?: AbortSignal
+): Promise<{ text: string; usage?: { inputTokens: number; outputTokens: number; reasoningTokens: number } }> {
+  ensure(response.body !== null, 'Official provider returned invalid token usage.', 502, ERROR_CODES.PROVIDER_RESPONSE_INVALID);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let text = '';
+  let usage: { inputTokens: number; outputTokens: number; reasoningTokens: number } | undefined;
+  while (true) {
+    if (signal?.aborted) {
+      await reader.cancel().catch(() => undefined);
+      return { text, usage };
+    }
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const data = trimmed.slice(5).trim();
+      if (!data || data === '[DONE]') continue;
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(data) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const choices = Array.isArray(parsed.choices) ? parsed.choices : [];
+      for (const choice of choices) {
+        if (!choice || typeof choice !== 'object') continue;
+        const delta = (choice as { delta?: { content?: unknown } }).delta;
+        if (delta && typeof delta.content === 'string') text += delta.content;
+      }
+      const rawUsage = parsed.usage;
+      if (rawUsage && typeof rawUsage === 'object') {
+        const row = rawUsage as Record<string, unknown>;
+        const details = row.completion_tokens_details && typeof row.completion_tokens_details === 'object'
+          ? row.completion_tokens_details as Record<string, unknown>
+          : {};
+        usage = {
+          inputTokens: Number(row.prompt_tokens),
+          outputTokens: Number(row.completion_tokens),
+          reasoningTokens: Number(details.reasoning_tokens ?? 0)
+        };
+      }
+    }
+  }
+  return { text, usage };
+}
+
+/**
+ * Bridge A: Pi streamFn adapted onto AgentForge model egress.
+ * Reuses official Flash URL policy, safe fetch, timeout, size cap, thinking=disabled, and usage checks.
+ */
+export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamFn {
+  if (!config) {
+    throw new AppError(UNAVAILABLE, 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+  const baseUrl = officialBaseUrl(config.baseUrl);
+  resolveOfficialProviderOffering({
+    providerId: 'deepseek',
+    modelId: config.modelId,
+    thinking: false
+  });
+  const maxTokens = Math.min(Math.max(16, Math.floor(config.maxTokens)), FLASH_MAX_TOKENS);
+
+  return async function bridgeAStream(_model, context, options) {
+    const providerFetch = config.providerFetch ?? (
+      await import('../../../lib/ai/safe-fetch.ts')
+    ).safeProviderFetch(baseUrl);
+    const messages = openaiMessages(context);
+    const body = {
+      model: config.modelId,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      max_tokens: maxTokens,
+      temperature: config.temperature ?? 0,
+      thinking: { type: 'disabled' }
+    };
+    config.onWire?.({
+      method: 'POST',
+      pathname: '/chat/completions',
+      model: body.model,
+      thinking: body.thinking,
+      maxTokens: body.max_tokens,
+      stream: body.stream,
+      toolCount: 0
+    });
+
+    const timeout = AbortSignal.timeout(30_000);
+    const signal = options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    let response: Response;
+    try {
+      response = await providerFetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${config.apiKey}`,
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(body),
+        signal
+      });
+    } catch (error) {
+      if (options?.signal?.aborted) {
+        return (async function* aborted(): AsyncGenerator<ControlledStreamChunk> {
+          yield { type: 'aborted' };
+        })();
+      }
+      if (error instanceof AppError) throw error;
+      throw new AppError(
+        'Model request failed. Check the provider, model, network and account balance.',
+        502,
+        ERROR_CODES.PROVIDER_REQUEST_FAILED
+      );
+    }
+
+    if (!response.ok) {
+      throw new AppError(
+        'Model request failed. Check the provider, model, network and account balance.',
+        502,
+        ERROR_CODES.PROVIDER_REQUEST_FAILED
+      );
+    }
+
+    const streamed = await readSseText(response, options?.signal);
+    if (options?.signal?.aborted) {
+      return (async function* aborted(): AsyncGenerator<ControlledStreamChunk> {
+        yield { type: 'aborted' };
+      })();
+    }
+    const usage = streamed.usage;
+    ensure(
+      usage !== undefined
+        && Number.isSafeInteger(usage.inputTokens) && usage.inputTokens >= 0
+        && Number.isSafeInteger(usage.outputTokens) && usage.outputTokens >= 0,
+      'Official provider returned invalid token usage.',
+      502,
+      ERROR_CODES.PROVIDER_RESPONSE_INVALID
+    );
+    ensure(
+      usage.reasoningTokens === 0,
+      'Official non-thinking response contained reasoning usage.',
+      502,
+      ERROR_CODES.PROVIDER_RESPONSE_INVALID
+    );
+
+    return (async function* chunks(): AsyncGenerator<ControlledStreamChunk> {
+      if (streamed.text) yield { type: 'text_delta', text: streamed.text };
+      yield { type: 'usage', inputTokens: usage.inputTokens, outputTokens: usage.outputTokens };
+    })();
+  };
+}

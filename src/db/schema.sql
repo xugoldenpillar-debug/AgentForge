@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS "users" (
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
   "elo" INTEGER NOT NULL DEFAULT 1000,
   "reputation" INTEGER NOT NULL DEFAULT 0,
-  "is_seed" BOOLEAN NOT NULL DEFAULT false
+  "is_seed" BOOLEAN NOT NULL DEFAULT false,
+  "pi_runtime_access" TEXT
 );
 CREATE TABLE IF NOT EXISTS "sessions" (
   "id" TEXT PRIMARY KEY,
@@ -145,6 +146,9 @@ CREATE TABLE IF NOT EXISTS "runs" (
   "tier" TEXT NOT NULL,
   "status" TEXT NOT NULL,
   "summary" JSONB,
+  "runtime_kind" TEXT,
+  "adapter_version" TEXT,
+  "policy_version" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS "run_cases" (

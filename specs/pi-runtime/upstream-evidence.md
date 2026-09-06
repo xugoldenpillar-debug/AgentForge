@@ -25,7 +25,8 @@
 
 - `packages/agent` 清单名称为 **`@earendil-works/pi-agent-core`**；`packages/coding-agent` 为 **`@earendil-works/pi-coding-agent`**。两者仓库清单版本均为 **`0.85.1`**，均声明 ESM、Node **`>=22.19.0`**、`license: MIT`，repository 指向新仓库。不得继续将旧 scope 当作本快照包名。[S4, S5]
 - 根 LICENSE 为 MIT，版权行是 2025 Mario Zechner。此处仅记录许可证事实；没有完成所有传递依赖许可证清点。[S6]
-- **未验证**：npm dist-tag/latest、实际发布 tarball、签名或来源证明、release 与清单版本是否一致、旧包是否继续发布或兼容。`0.85.1` 是本次仓库快照版本，不宣称为 npm 最新可安装版本。
+- **未验证（git 文档快照当时）**：npm dist-tag/latest、实际发布 tarball、签名或来源证明、release 与清单版本是否一致、旧包是否继续发布或兼容。`0.85.1` 是本次仓库快照版本，不宣称为 npm 最新可安装版本。
+- **PI0 补充（2026-09-06）**：registry 与 tarball 冻结记录见 [pi0-freeze.md](./pi0-freeze.md)。npm `latest` 当时即为 `@earendil-works/pi-agent-core@0.85.1`（tarball shasum / integrity 已与本机下载哈希对照）。npm `gitHead` 为 `d981de1229ef899957bbe968bc8dcda02a21f477`（`Release v0.85.1`），比本文件的 `main` 快照 `9767ba…` 少 4 个后续提交。旧 scope `@mariozechner/*` 仍发布但停在 0.73.1 / 0.70.6，禁止当作本产物。npm 签名与 SLSA attestation **仅观察到元数据，未做密码学核验**。PI0 不是安全验收。
 
 ### 2.2 pi-agent-core 嵌入与工具循环
 

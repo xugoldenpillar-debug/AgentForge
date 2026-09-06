@@ -121,7 +121,7 @@ pnpm build
 pnpm test:smoke
 ```
 
-`pnpm test` 与上面的 Node 测试命令等价。生产构建 smoke 先 `pnpm build`，再另开终端 `pnpm start`。
+`pnpm test` 与上面的 Node 测试命令等价，已覆盖 runtime 合约、DAG adapter、fake Pi 和 Bridge A 离线测试。`.env.example` 中 `PI_RUNTIME_ENABLED=false`，只有精确字符串 `true` 才开启。`pnpm test:pi-runtime` 在 CI 中运行，使用钉死的 `@earendil-works/pi-agent-core@0.85.1`，无付费调用。官方 Flash 样例仅 `PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live`。生产构建 smoke 先 `pnpm build`，再另开终端 `pnpm start`。
 
 测试环境与正式环境使用同一套 Next.js 应用。仅隔离测试环境设置
 `APP_ENV=test` 和 `DEMO_MODE=true`；默认不启用模拟模型。初始化仅补齐业务目录，
