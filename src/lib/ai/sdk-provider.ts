@@ -5,7 +5,7 @@ import type { AIProvider, AIRequest, AIResult } from './types';
 import type { Credential } from '../../shared/types';
 import type { Pricing } from '../scoring';
 import { calculateCost } from '../scoring';
-import { AppError, ensure } from '../../shared/errors';
+import { AppError, ensure, ERROR_CODES } from '../../shared/errors';
 import { safeProviderFetch } from './safe-fetch';
 import { sdkTools } from './sdk-tools';
 class SDKProvider implements AIProvider {
@@ -14,7 +14,7 @@ class SDKProvider implements AIProvider {
   async execute(r:AIRequest):Promise<AIResult>{
     const start=performance.now();let calls=0;
     try{
-      const tools=sdkTools(r.tools,()=>{ensure(calls<r.remainingToolCalls,'Tool-call budget exceeded.');calls++;});
+      const tools=sdkTools(r.tools,()=>{ensure(calls<r.remainingToolCalls,'Tool-call budget exceeded.',400,ERROR_CODES.BUDGET_EXCEEDED);calls++;});
       const result=await generateText({
         model:this.model(r.model),system:r.systemPrompt,prompt:r.userPrompt,
         tools,maxOutputTokens:r.maxTokens,temperature:r.temperature,maxRetries:0,
@@ -25,10 +25,10 @@ class SDKProvider implements AIProvider {
           const used=steps.reduce((n,s)=>n+(s.usage.inputTokens||0)+(s.usage.outputTokens||0),0);
           const inputUpper=Buffer.byteLength(JSON.stringify(messages)+r.systemPrompt,'utf8')+(r.tools.length?1200:0);
           const maxOutputTokens=Math.min(r.maxTokens,r.remainingTokens-used-inputUpper);
-          ensure(maxOutputTokens>=16,'Energy budget exceeded between model steps.');
+          ensure(maxOutputTokens>=16,'Energy budget exceeded between model steps.',400,ERROR_CODES.BUDGET_EXCEEDED);
           const spent=steps.reduce((n,s)=>n+(calculateCost(s.usage.inputTokens||0,s.usage.outputTokens||0,this.pricing)||0),0);
           const reserve=calculateCost(inputUpper,maxOutputTokens,this.pricing);
-          ensure(reserve===null||reserve+spent<=r.remainingCost,'Cost budget exceeded between model steps.');
+          ensure(reserve===null||reserve+spent<=r.remainingCost,'Cost budget exceeded between model steps.',400,ERROR_CODES.BUDGET_EXCEEDED);
           return {maxOutputTokens,...(calls>=r.remainingToolCalls?{activeTools:[]}: {})};
         }
       });
@@ -38,7 +38,7 @@ class SDKProvider implements AIProvider {
       const reasoningTokens=Math.min(outputTokens,usage.outputTokenDetails?.reasoningTokens??usage.reasoningTokens??0);
       const text=this.secret?result.text.replaceAll(this.secret,'[credential redacted]'):result.text;
       return {text,inputTokens,outputTokens,reasoningTokens,toolCalls:calls,latency:performance.now()-start,cost:estimated?null:calculateCost(inputTokens,outputTokens,this.pricing),estimated};
-    }catch(error){if(error instanceof AppError)throw error;throw new AppError('Model request failed. Check the provider, model, network and account balance.',502);}
+    }catch(error){if(error instanceof AppError)throw error;throw new AppError('Model request failed. Check the provider, model, network and account balance.',502,ERROR_CODES.PROVIDER_REQUEST_FAILED);}
   }
 }
 export function byokProvider(credential:Credential,key:string):AIProvider {
