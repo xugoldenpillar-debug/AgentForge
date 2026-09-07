@@ -2,7 +2,7 @@
 
 # PI3 Flash sample — AgentForge optional Pi Runtime
 
-- Date: 2026-09-06T13:25:37.712Z
+- Date: 2026-09-07T11:06:39.169Z
 - Authorization: local test token already stored as BYOK credential; one Bridge A sample.
 - Not a production, Verified, or leaderboard acceptance.
 
@@ -22,6 +22,6 @@
 - Output chars: 2
 - Input tokens: 14
 - Output tokens: 1
-- Elapsed ms: 824
+- Elapsed ms: 436
 - Retry: none
 - Competitive submission: none
