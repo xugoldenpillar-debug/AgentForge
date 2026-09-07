@@ -1,3 +1,5 @@
+> **2026-09-07 Artifact Arena spec:** [Documentation-only verification](verification/artifact-arena-spec-2026-09-07.md). No application, sandbox, browser or paid-model acceptance is implied; future gates are in the linked spec.
+
 > **历史验证记录 / Historical verification record：** 本文记录 2026-09-05 的一次验证及其后补充链接，不代表当前进程、端口、数据库、日志目录或生产环境状态。Portable 结果只属于退役运行时；当前应用只有 Next.js。请以 [当前合并交付评审](PI-MAIN-INTEGRATION-REVIEW.md) 和各 dated verification 文档中的边界为准。
 
 > **2026-09-06 live BYOK update:** [Application Flash evidence](verification/deepseek-app-live-2026-09-06.md) records one authorized real public run; it is not Verified or production acceptance. The offline SDK suite is historical evidence only.

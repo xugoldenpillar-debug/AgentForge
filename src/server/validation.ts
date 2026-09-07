@@ -1,5 +1,7 @@
 import { z } from 'zod';
-import { validateBuildEnvelope, privateAgentDraft } from './agent-drafts.ts';
+import { isConfiguredAgentBuild } from '../shared/agent-build-contract.ts';
+import { validateBuildEnvelope, parsePrivateAgentDefinition, privateAgentDraft } from './agent-drafts.ts';
+import type { AgentBuildResolver } from './agent-build-resolver.ts';
 import { AppError, ERROR_CODES } from '../shared/errors.ts';
 
 const id = z.string().min(1).max(160);
@@ -23,6 +25,27 @@ const publicationReview = z.object({
   checks: z.array(short).max(32).optional(),
 }).strict();
 
+const workPublication = z.object({
+  bundleId: id.optional(),
+  creationRunId: id.optional(),
+  expectedSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  expectedManifestDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),
+  title: z.string().min(1).max(160),
+  description: z.string().min(1).max(2_000),
+  entryPath: z.string().min(1).max(512),
+  publicArtifactIds: z.array(id).min(1).max(128),
+}).strict();
+const publicationWithdraw = z.object({ expectedRevision: revision }).strict();
+const workPublicationReview = z.object({
+  expectedStatus: z.enum(['pending', 'published', 'rejected', 'withdrawn', 'taken-down']),
+  expectedRevision: revision,
+  decision: z.enum(['approve', 'reject', 'take-down']),
+  reason: z.string().min(2).max(2_000),
+}).strict();
+const showcaseEntry = z.object({ publicationId: id, roundId: short, comparatorKey: short, policyVersion: short }).strict();
+const showcaseBallot = z.object({ roundId: short, comparatorKey: short, policyVersion: short, idempotencyKey }).strict();
+const showcaseVote = z.object({ ballotId: id.optional(), choice: z.enum(['a', 'b', 'tie', 'skip']), idempotencyKey }).strict();
+
 const schemas: Record<string, z.ZodType> = {
 
   providers: z.object({ name: z.string().min(1).max(60), baseUrl: z.url().max(300), modelId: short, apiKey: z.string().min(16).max(512), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
@@ -39,6 +62,22 @@ const schemas: Record<string, z.ZodType> = {
   'components/:id/versions': freeze,
   'publication-requests': publicationRequest,
   'admin/publication-requests/:id/reviews': publicationReview,
+  'showcase/publications': workPublication,
+  'showcase/publications/:id/withdraw': publicationWithdraw,
+  'showcase/publications/:id/review': workPublicationReview,
+  'showcase/entries': showcaseEntry,
+  'showcase/entries/:id/withdraw': z.object({}).strict(),
+  'showcase/ballots': showcaseBallot,
+  'showcase/votes': showcaseVote,
+  'showcase/ballots/:id/votes': z.object({ choice: z.enum(['a', 'b', 'tie', 'skip']), idempotencyKey }).strict(),
+  'work-publications': workPublication,
+  'work-publications/:id/withdraw': publicationWithdraw,
+  'work-publications/:id/review': workPublicationReview,
+  'showcase-entries': showcaseEntry,
+  'showcase-entries/:id/withdraw': z.object({}).strict(),
+  'showcase-ballots': showcaseBallot,
+  'showcase-votes': showcaseVote,
+  'showcase-ballots/:id/votes': z.object({ choice: z.enum(['a', 'b', 'tie', 'skip']), idempotencyKey }).strict(),
 };
 
 function schemaFor(path: string): z.ZodType | undefined {
@@ -49,13 +88,33 @@ function schemaFor(path: string): z.ZodType | undefined {
   if (parts.length === 3 && parts[0] === 'components' && parts[2] === 'draft') return schemas['components/:id/draft'];
   if (parts.length === 3 && parts[0] === 'components' && parts[2] === 'versions') return schemas['components/:id/versions'];
   if (parts.length === 4 && parts[0] === 'admin' && parts[1] === 'publication-requests' && parts[3] === 'reviews') return schemas['admin/publication-requests/:id/reviews'];
+  if (parts.length === 4 && parts[0] === 'showcase' && parts[1] === 'publications' && parts[3] === 'withdraw') return schemas['showcase/publications/:id/withdraw'];
+  if (parts.length === 4 && parts[0] === 'showcase' && parts[1] === 'publications' && parts[3] === 'review') return schemas['showcase/publications/:id/review'];
+  if (parts.length === 4 && parts[0] === 'showcase' && parts[1] === 'entries' && parts[3] === 'withdraw') return schemas['showcase/entries/:id/withdraw'];
+  if (parts.length === 4 && parts[0] === 'showcase' && parts[1] === 'ballots' && parts[3] === 'votes') return schemas['showcase/ballots/:id/votes'];
+  if (parts.length === 3 && parts[0] === 'work-publications' && parts[2] === 'withdraw') return schemas['work-publications/:id/withdraw'];
+  if (parts.length === 3 && parts[0] === 'work-publications' && parts[2] === 'review') return schemas['work-publications/:id/review'];
+  if (parts.length === 3 && parts[0] === 'showcase-entries' && parts[2] === 'withdraw') return schemas['showcase-entries/:id/withdraw'];
+  if (parts.length === 3 && parts[0] === 'showcase-ballots' && parts[2] === 'votes') return schemas['showcase-ballots/:id/votes'];
   return undefined;
 }
 
-export function validateBody(path: string, body: Record<string, unknown>): void {
+export interface ValidationOptions {
+  readonly agentBuildResolver?: AgentBuildResolver;
+}
+
+export function validateBody(path: string, body: Record<string, unknown>, options: ValidationOptions = {}): void {
   if (path === 'builds') {
     const mode = validateBuildEnvelope(body);
-    if (mode === 'agent') privateAgentDraft(body.agentDefinition, body.visibility);
+    if (mode === 'agent') {
+      const definition = parsePrivateAgentDefinition(body.agentDefinition, body.visibility);
+      // Keep the old HTTP rejection when no authoritative resolver is wired.
+      // With one present, validation remains structural; service methods still
+      // resolve again before every save/read/Fork operation.
+      if (isConfiguredAgentBuild(definition) && !options.agentBuildResolver) {
+        privateAgentDraft(body.agentDefinition, body.visibility);
+      }
+    }
     else if (!z.object({ nodes: z.array(z.unknown()).min(3).max(24), edges: z.array(z.unknown()).max(64) }).strict().safeParse(body.workflow).success) {
       throw new AppError('Invalid workflow.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     }

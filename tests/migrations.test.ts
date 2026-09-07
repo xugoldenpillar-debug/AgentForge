@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadMigrations, parseMigration, runMigrations, runMigrationCommand } from '../scripts/migration-runner.ts';
 import type { MigrationDatabase } from '../scripts/migration-runner.ts';
+import { getTableConfig, PgDialect } from 'drizzle-orm/pg-core';
+import { artifacts } from '../src/db/schema.ts';
 
 function fakeDatabase() {
   let rows: Record<string, unknown>[] = [];
@@ -49,7 +51,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
@@ -58,8 +60,35 @@ test('migration files are frozen, ordered and checksummed independently of targe
   assert.match(migrations[4].sql, /CREATE TABLE IF NOT EXISTS "component_attachment_contents"/);
   assert.match(migrations[4].sql, /octet_length\("content"\) <= 262144/);
   assert.match(migrations[5].sql, /CREATE TABLE IF NOT EXISTS public\.evaluation_jobs/);
+  assert.match(migrations[9].sql, /CREATE TABLE IF NOT EXISTS public\.environment_templates/);
+  assert.match(migrations[9].sql, /CREATE TABLE IF NOT EXISTS public\.artifact_bundles/);
+  assert.match(migrations[9].sql, /CREATE TABLE IF NOT EXISTS public\.artifacts/);
+  assert.equal(migrations[10].name, '0011_artifact_arena_showcase.sql');
+  assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.work_publications/);
+  assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.showcase_entries/);
+  assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.showcase_ballots/);
+  assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.showcase_votes/);
+  assert.match(migrations[10].sql, /showcase_entries_active_owner_partition_unique/);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
+});
+
+test('Artifact Arena Drizzle checks preserve the migration regex semantics', () => {
+  const dialect = new PgDialect();
+  const checks = getTableConfig(artifacts).checks
+    .map(check => dialect.sqlToQuery(check.value).sql);
+  const findCheck = (column: string) => checks.find(check => check.includes(`\"artifacts\".\"${column}\"`));
+  const pathCheck = findCheck('path');
+  const storageKeyCheck = findCheck('storage_key');
+  const objectVersionCheck = findCheck('object_version');
+  assert.ok(pathCheck);
+  assert.ok(storageKeyCheck);
+  assert.ok(objectVersionCheck);
+  assert.ok(pathCheck.includes('|\\\\\\\\|'), pathCheck);
+  assert.ok(pathCheck.includes('(^|/)\\\\.\\\\.?(/|$)'), pathCheck);
+  assert.ok(storageKeyCheck.includes('|\\\\\\\\|'), storageKeyCheck);
+  assert.ok(objectVersionCheck.includes('|\\.\\.)'), objectVersionCheck);
+  assert.ok(!objectVersionCheck.includes('|..)'), objectVersionCheck);
 });
 
 test('loader rejects malformed SQL filenames and empty directories', async () => {
@@ -143,14 +172,21 @@ test('versioned migrations match the fresh schema phases and preserve legacy upg
   const target = await readFile(new URL('../src/db/schema.sql', import.meta.url), 'utf8');
   const communityMarker = '-- Community component library data foundation.';
   const foundationMarker = '-- Durable evaluation foundation.';
+  const artifactMarker = '-- Artifact Arena foundation. Immutable version rows keep execution and object references auditable.';
   const ledgerMarker = '-- Runner-owned history.';
+  const showcaseMarker = '-- Durable Artifact Arena showcase and pairwise voting records.';
   const [baseline, communityAndAfter] = target.split(communityMarker);
   assert.ok(communityAndAfter, 'fresh schema must include the community foundation phase');
-  const [communityAndFoundation, ledgerAndAfter] = communityAndAfter.split(ledgerMarker);
+  const [communityAndFoundation, artifactAndAfter] = communityAndAfter.split(artifactMarker);
+  assert.ok(artifactAndAfter, 'fresh schema must include the Artifact Arena foundation phase');
+  const [artifactAndLedger, ledgerAndAfter] = artifactAndAfter.split(ledgerMarker);
   assert.ok(ledgerAndAfter, 'fresh schema must include the runner-owned history phase');
-  const [, foundationAndLedger] = communityAndFoundation.split(foundationMarker);
-  assert.ok(foundationAndLedger, 'fresh schema must include the evaluation foundation phase');
-  const [foundation] = foundationAndLedger.split(ledgerMarker);
+  const [artifact, showcaseAndAfter] = artifactAndLedger.split(showcaseMarker);
+  assert.ok(showcaseAndAfter, 'fresh schema must include the showcase foundation phase');
+  const [showcase] = showcaseAndAfter.split(ledgerMarker);
+  const [, foundationAndAfter] = communityAndFoundation.split(foundationMarker);
+  assert.ok(foundationAndAfter, 'fresh schema must include the evaluation foundation phase');
+  const [foundation] = foundationAndAfter.split(artifactMarker);
   const legacyBaseline = baseline
     .replace(/\n  "runtime_kind" TEXT,\n  "adapter_version" TEXT,\n  "policy_version" TEXT,/, '')
     .replace(/,\n  "pi_runtime_access" TEXT/, '')
@@ -160,6 +196,8 @@ test('versioned migrations match the fresh schema phases and preserve legacy upg
   assert.equal(migrations[0].sql.trim(), legacyBaseline.trim());
   const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '');
   assert.equal(migrations[5].sql.trim(), freshFoundation.trim());
+  assert.equal(migrations[9].sql.trim(), `${artifactMarker}${artifact}`.trim());
+  assert.equal(migrations[10].sql.trim(), `${showcaseMarker}${showcase}`.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();

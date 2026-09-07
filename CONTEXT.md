@@ -169,9 +169,43 @@ _Avoid_: Model API adapter, tool permission
 ## Evaluation execution
 
 **Evaluation Job**:
-An accepted request for a frozen evaluation providing challenge feedback, a competitive result, Author Self-Test evidence or Platform Component Evaluation evidence. Its purpose determines authority, budget ownership and permitted evidence; completion does not itself grant certification.
+An accepted request for a frozen evaluation providing challenge feedback, a competitive result, Author Self-Test evidence, Platform Component Evaluation evidence or Creation Run evidence. Its purpose determines authority, budget ownership and permitted evidence; completion does not itself grant certification.
 _Avoid_: Publication Review, Submission, email task
 
 **Execution Budget Reservation**:
 A temporary allocation of approved execution allowance that prevents concurrent evaluations from exceeding that allowance. It is not a purchased balance or a reservation of a Verification Ticket.
 _Avoid_: Wallet balance, payment, Credit Reservation
+
+## Artifact creation and showcases
+
+**Environment Template**:
+A versioned description of the approved resources and capabilities available to a Build. Selecting or composing a template requests capabilities; it does not grant execution permission.
+_Avoid_: Runtime, model provider, permission grant
+
+**Creation Brief**:
+A builder's own task and approved inputs for a work, distinct from a platform Challenge and its evaluation suite.
+_Avoid_: Hidden case, component self-test
+
+**Creation Run**:
+An execution of a frozen Build against a Creation Brief, producing private creation evidence. It does not itself produce a competitive Submission or certification.
+_Avoid_: Author Self-Test, Verified Run
+
+**Artifact Bundle**:
+A sealed set of output files from one execution attempt and output scope. It is the work's result, not the Build's instructions or permission to publish them.
+_Avoid_: Build Version, mutable workspace, public release
+
+**Work Publication**:
+An author's reviewed release of selected files from a fixed Artifact Bundle for viewing. Publishing the result does not grant access to or permission to fork private instructions and dependencies.
+_Avoid_: Component Publication Request, competitive Submission
+
+**Showcase Entry**:
+A Work Publication admitted to a particular public challenge selection round. It receives community preference evidence, distinct from a hidden competitive Submission.
+_Avoid_: Verified Submission, platform component evaluation
+
+**Community Preference**:
+The audience's recorded choices between eligible works within a stated selection policy. It is distinct from deterministic functional correctness and model trust certification.
+_Avoid_: Model benchmark score, Verified score, Elo
+
+**Artifact Arena implementation status (2026-09-07)**:
+The current worktree contains partial contracts, migration/schema work, domain seams, fail-closed availability behavior and Agent Builder/preview foundations for these terms. A non-executing approved-environment compiler/validator and immutable runtime permission snapshot seam now exist; authoritative catalog resolution wiring, approved sandbox/runtime admission, CreationRun execution, durable Artifact/Showcase/Voting persistence, real sandbox/Pi execution, hidden Agent judging and production opening remain unavailable until their corresponding AA-V and operational gates have real evidence.
+_Avoid_: treating the glossary, contract tests, in-memory providers, HTTP 503 behavior or a successful build as production acceptance

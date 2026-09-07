@@ -609,6 +609,225 @@ CREATE TABLE IF NOT EXISTS public.evaluation_outbox (
 CREATE INDEX IF NOT EXISTS evaluation_outbox_pending_idx ON public.evaluation_outbox(status, available_at, id);
 CREATE INDEX IF NOT EXISTS evaluation_outbox_job_idx ON public.evaluation_outbox(job_id, created_at, id);
 
+-- Artifact Arena foundation. Immutable version rows keep execution and object references auditable.
+CREATE TABLE IF NOT EXISTS public.environment_templates (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT REFERENCES public.users(id) ON DELETE RESTRICT,
+  scope TEXT NOT NULL DEFAULT 'platform',
+  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+  description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 2000),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK ((scope = 'platform' AND owner_id IS NULL) OR (scope = 'private' AND owner_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS environment_templates_owner_idx ON public.environment_templates(owner_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.environment_template_versions (
+  id TEXT PRIMARY KEY,
+  template_id TEXT NOT NULL REFERENCES public.environment_templates(id) ON DELETE RESTRICT,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  runtime_kind TEXT NOT NULL CHECK (runtime_kind = 'pi'),
+  runtime_adapter_version TEXT NOT NULL,
+  runtime_policy_version TEXT NOT NULL,
+  capabilities JSONB NOT NULL CHECK (jsonb_typeof(capabilities) = 'array'),
+  limits JSONB NOT NULL CHECK (jsonb_typeof(limits) = 'object'),
+  artifact_policy JSONB NOT NULL CHECK (jsonb_typeof(artifact_policy) = 'object'),
+  content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS environment_template_versions_template_idx ON public.environment_template_versions(template_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.creation_briefs (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS creation_briefs_owner_idx ON public.creation_briefs(owner_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.creation_brief_versions (
+  id TEXT PRIMARY KEY,
+  brief_id TEXT NOT NULL REFERENCES public.creation_briefs(id) ON DELETE RESTRICT,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 120),
+  instructions TEXT NOT NULL CHECK (length(instructions) BETWEEN 1 AND 16384),
+  input_attachments JSONB NOT NULL CHECK (jsonb_typeof(input_attachments) = 'array'),
+  output_policy JSONB NOT NULL CHECK (jsonb_typeof(output_policy) = 'object'),
+  content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (brief_id, version_number)
+);
+CREATE INDEX IF NOT EXISTS creation_brief_versions_owner_idx ON public.creation_brief_versions(owner_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.creation_runs (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  build_id TEXT NOT NULL REFERENCES public.builds(id) ON DELETE RESTRICT,
+  build_version_id TEXT NOT NULL REFERENCES public.build_versions(id) ON DELETE RESTRICT,
+  brief_id TEXT NOT NULL REFERENCES public.creation_briefs(id) ON DELETE RESTRICT,
+  brief_version_id TEXT NOT NULL REFERENCES public.creation_brief_versions(id) ON DELETE RESTRICT,
+  environment_template_id TEXT NOT NULL REFERENCES public.environment_templates(id) ON DELETE RESTRICT,
+  environment_template_version_id TEXT NOT NULL REFERENCES public.environment_template_versions(id) ON DELETE RESTRICT,
+  evaluation_job_id TEXT UNIQUE REFERENCES public.evaluation_jobs(id) ON DELETE RESTRICT,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'incomplete')),
+  context JSONB NOT NULL CHECK (jsonb_typeof(context) = 'object' AND context->>'kind' = 'creation' AND (context->>'schemaVersion')::INTEGER = 1),
+  context_digest TEXT NOT NULL CHECK (context_digest ~ '^sha256:[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at TIMESTAMPTZ,
+  completed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS creation_runs_owner_created_idx ON public.creation_runs(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS creation_runs_brief_version_idx ON public.creation_runs(brief_version_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS creation_runs_status_idx ON public.creation_runs(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.artifact_bundles (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  creation_run_id TEXT REFERENCES public.creation_runs(id) ON DELETE RESTRICT,
+  run_id TEXT REFERENCES public.runs(id) ON DELETE RESTRICT,
+  attempt_id TEXT NOT NULL REFERENCES public.evaluation_attempts(id) ON DELETE RESTRICT,
+  output_slot TEXT NOT NULL CHECK (length(output_slot) BETWEEN 1 AND 80),
+  status TEXT NOT NULL DEFAULT 'collecting' CHECK (status IN ('collecting', 'sealed', 'rejected')),
+  snapshot_digest TEXT NOT NULL CHECK (snapshot_digest ~ '^sha256:[0-9a-f]{64}$'),
+  manifest_digest TEXT NOT NULL CHECK (manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+  manifest JSONB NOT NULL CHECK (jsonb_typeof(manifest) = 'object'),
+  sealed_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (attempt_id, output_slot),
+  CHECK ((creation_run_id IS NOT NULL AND run_id IS NULL) OR (creation_run_id IS NULL AND run_id IS NOT NULL)),
+  CHECK (status <> 'sealed' OR sealed_at IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS artifact_bundles_owner_created_idx ON public.artifact_bundles(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS artifact_bundles_creation_run_idx ON public.artifact_bundles(creation_run_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS artifact_bundles_run_idx ON public.artifact_bundles(run_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.artifacts (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  bundle_id TEXT NOT NULL REFERENCES public.artifact_bundles(id) ON DELETE RESTRICT,
+  path TEXT NOT NULL CHECK (length(path) BETWEEN 1 AND 240 AND path !~ E'(^/|/$|\\\\|:|(^|/)\\.\\.?(/|$))'),
+  media_type TEXT NOT NULL CHECK (media_type IN ('text/html', 'text/markdown', 'text/plain', 'text/csv', 'text/css', 'text/javascript', 'application/json', 'application/pdf', 'image/svg+xml', 'image/png', 'image/jpeg', 'image/webp', 'audio/mpeg', 'video/mp4')),
+  detected_media_type TEXT CHECK (detected_media_type IS NULL OR detected_media_type IN ('text/html', 'text/markdown', 'text/plain', 'text/csv', 'text/css', 'text/javascript', 'application/json', 'application/pdf', 'image/svg+xml', 'image/png', 'image/jpeg', 'image/webp', 'audio/mpeg', 'video/mp4')),
+  size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 8388608),
+  sha256 TEXT NOT NULL CHECK (sha256 ~ '^sha256:[0-9a-f]{64}$'),
+  storage_key TEXT NOT NULL CHECK (length(storage_key) BETWEEN 1 AND 512 AND storage_key !~ E'(^/|/$|\\\\|:|(^|/)\\.\\.?(/|$))'),
+  object_version TEXT NOT NULL CHECK (length(object_version) BETWEEN 1 AND 160 AND object_version !~ E'(^latest$|^current$|^head$|^main$|^master$|\\.\\.)'),
+  visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (bundle_id, path)
+);
+CREATE INDEX IF NOT EXISTS artifacts_owner_created_idx ON public.artifacts(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS artifacts_bundle_idx ON public.artifacts(bundle_id, path);
+
+
+-- Durable Artifact Arena showcase and pairwise voting records.
+-- Public rows point at immutable artifact digests; object URLs and file bytes stay out of PostgreSQL.
+CREATE TABLE IF NOT EXISTS public.work_publications (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  source_bundle_id TEXT NOT NULL REFERENCES public.artifact_bundles(id) ON DELETE RESTRICT,
+  source_snapshot_digest TEXT NOT NULL CHECK (source_snapshot_digest ~ '^sha256:[0-9a-f]{64}$'),
+  source_manifest_digest TEXT NOT NULL CHECK (source_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+  source_attempt_fence TEXT NOT NULL CHECK (length(source_attempt_fence) BETWEEN 1 AND 160),
+  release_digest TEXT NOT NULL CHECK (release_digest ~ '^sha256:[0-9a-f]{64}$'),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 120),
+  description TEXT NOT NULL CHECK (length(description) BETWEEN 1 AND 2000),
+  entry_path TEXT NOT NULL CHECK (length(entry_path) BETWEEN 1 AND 240 AND entry_path !~ E'(^/|/$|\\|:|(^|/)\\.\\.?(/|$))'),
+  files JSONB NOT NULL CHECK (jsonb_typeof(files) = 'array' AND jsonb_array_length(files) BETWEEN 1 AND 200),
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'published', 'rejected', 'withdrawn', 'taken-down')),
+  revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_at TIMESTAMPTZ,
+  withdrawn_at TIMESTAMPTZ,
+  CHECK (status <> 'withdrawn' OR withdrawn_at IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS work_publications_owner_created_idx ON public.work_publications(owner_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS work_publications_status_created_idx ON public.work_publications(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.showcase_entries (
+  id TEXT PRIMARY KEY,
+  owner_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  publication_id TEXT NOT NULL REFERENCES public.work_publications(id) ON DELETE RESTRICT,
+  round_id TEXT NOT NULL CHECK (length(round_id) BETWEEN 1 AND 160),
+  comparator_key TEXT NOT NULL CHECK (length(comparator_key) BETWEEN 1 AND 160),
+  policy_version TEXT NOT NULL CHECK (length(policy_version) BETWEEN 1 AND 100),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'withdrawn')),
+  publication_release_digest TEXT NOT NULL CHECK (publication_release_digest ~ '^sha256:[0-9a-f]{64}$'),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  withdrawn_at TIMESTAMPTZ,
+  UNIQUE (publication_id, round_id, comparator_key, policy_version),
+  CHECK (status <> 'withdrawn' OR withdrawn_at IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS showcase_entries_partition_idx ON public.showcase_entries(round_id, comparator_key, policy_version, status, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS showcase_entries_active_owner_partition_unique
+  ON public.showcase_entries(owner_id, round_id, comparator_key, policy_version)
+  WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS public.showcase_ballots (
+  id TEXT PRIMARY KEY,
+  voter_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  round_id TEXT NOT NULL CHECK (length(round_id) BETWEEN 1 AND 160),
+  comparator_key TEXT NOT NULL CHECK (length(comparator_key) BETWEEN 1 AND 160),
+  policy_version TEXT NOT NULL CHECK (length(policy_version) BETWEEN 1 AND 100),
+  entry_a_id TEXT NOT NULL REFERENCES public.showcase_entries(id) ON DELETE RESTRICT,
+  entry_b_id TEXT NOT NULL REFERENCES public.showcase_entries(id) ON DELETE RESTRICT,
+  pair_key TEXT NOT NULL CHECK (length(pair_key) BETWEEN 1 AND 600),
+  request_digest TEXT NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+  idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+  issued_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'cast', 'expired')),
+  cast_vote_id TEXT,
+  UNIQUE (voter_id, round_id, comparator_key, policy_version, pair_key),
+  UNIQUE (voter_id, idempotency_key),
+  CHECK (entry_a_id <> entry_b_id),
+  CHECK (expires_at > issued_at),
+  CHECK ((status = 'cast' AND cast_vote_id IS NOT NULL) OR (status IN ('open', 'expired') AND cast_vote_id IS NULL))
+);
+CREATE INDEX IF NOT EXISTS showcase_ballots_partition_idx ON public.showcase_ballots(voter_id, round_id, comparator_key, policy_version, issued_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.showcase_votes (
+  id TEXT PRIMARY KEY,
+  ballot_id TEXT NOT NULL UNIQUE REFERENCES public.showcase_ballots(id) ON DELETE RESTRICT,
+  voter_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  round_id TEXT NOT NULL CHECK (length(round_id) BETWEEN 1 AND 160),
+  comparator_key TEXT NOT NULL CHECK (length(comparator_key) BETWEEN 1 AND 160),
+  policy_version TEXT NOT NULL CHECK (length(policy_version) BETWEEN 1 AND 100),
+  entry_a_id TEXT NOT NULL REFERENCES public.showcase_entries(id) ON DELETE RESTRICT,
+  entry_b_id TEXT NOT NULL REFERENCES public.showcase_entries(id) ON DELETE RESTRICT,
+  pair_key TEXT NOT NULL CHECK (length(pair_key) BETWEEN 1 AND 600),
+  choice TEXT NOT NULL CHECK (choice IN ('a', 'b', 'tie', 'skip')),
+  idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 200),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  validity TEXT NOT NULL DEFAULT 'accepted' CHECK (validity IN ('accepted', 'excluded')),
+  exclusion_reason TEXT,
+  UNIQUE (voter_id, round_id, comparator_key, policy_version, pair_key),
+  UNIQUE (voter_id, idempotency_key),
+  CHECK (entry_a_id <> entry_b_id),
+  CHECK ((validity = 'accepted' AND exclusion_reason IS NULL) OR (validity = 'excluded' AND exclusion_reason IS NOT NULL AND length(exclusion_reason) BETWEEN 1 AND 500))
+);
+CREATE INDEX IF NOT EXISTS showcase_votes_partition_idx ON public.showcase_votes(round_id, comparator_key, policy_version, created_at DESC);
+CREATE INDEX IF NOT EXISTS showcase_votes_entry_idx ON public.showcase_votes(entry_a_id, entry_b_id, validity, created_at DESC);
+
+-- Shared durable audit stream for publication and voting actions.
+CREATE TABLE IF NOT EXISTS public.showcase_audit_events (
+  id TEXT PRIMARY KEY,
+  action TEXT NOT NULL CHECK (action IN ('work-publication.requested', 'work-publication.reviewed', 'work-publication.withdrawn', 'showcase-entry.created', 'showcase-entry.withdrawn', 'showcase-ballot.issued', 'showcase-vote.recorded')),
+  actor_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+  publication_id TEXT REFERENCES public.work_publications(id) ON DELETE RESTRICT,
+  entity_id TEXT,
+  occurred_at TIMESTAMPTZ NOT NULL,
+  metadata JSONB NOT NULL CHECK (jsonb_typeof(metadata) = 'object')
+);
+CREATE INDEX IF NOT EXISTS showcase_audit_publication_idx ON public.showcase_audit_events(publication_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS showcase_audit_entity_idx ON public.showcase_audit_events(entity_id, occurred_at DESC);
 
 -- Runner-owned history. Version SQL remains the immutable source of upgrades.
 CREATE TABLE IF NOT EXISTS public.schema_migrations (

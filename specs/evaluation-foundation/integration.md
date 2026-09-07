@@ -1,6 +1,6 @@
 # 评测基础与组件库：跨分支交付边界
 
-日期：2026-09-06；当前 EF 代码状态补充见 [`docs/PI-MAIN-INTEGRATION-REVIEW.md`](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。本文件保留跨分支设计边界；已落地的 EF 基础代码不等于社区/Verified 联合接入完成，也不代表其他分支已同步。
+日期：2026-09-06；当前 EF 代码状态补充见 [`docs/PI-MAIN-INTEGRATION-REVIEW.md`](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。本文件保留跨分支设计边界；已落地的 EF 基础代码不等于社区/Verified/Artifact Arena 联合接入完成，也不代表其他分支已同步。
 
 | 归属 | 负责内容 |
 | --- | --- |
@@ -33,3 +33,8 @@
 ## 联合验收
 
 自测不生成竞技成绩／奖励；跨入口用户并发为一；同上游额度不被队列数放大；草稿变化不影响排队快照；排队期间撤销能生效；中断不重复付费；重置后旧会话失效；明细清理后证据正确标记。所有项需要实现后的实际证据，不提前打勾。
+
+
+## Artifact Arena 联合工作包（2026-09-07）
+
+公共 EF 已有实现，新增 Agent challenge 接入见 [AA-T3](../artifact-arena/tasks.md)，creation 用途/association/消息/快照/Build 上下文的版本扩展见 [AA-T6](../artifact-arena/tasks.md)。Q19 唯一业务关联、Q23 总名额和不确定费用停止规则不变。作品发布/ShowcaseEntry/投票归作品领域，不进入 EF 新队列或改写竞技 Submission。

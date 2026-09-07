@@ -4,7 +4,7 @@
 
 ## 1. 范围与结论 / Scope and conclusion
 
-B1 和受限 B2 已交付：Agent Build 可以保存私有、未配置的声明式草稿，支持不可变版本、并发保存保护、历史读取和精确版本 Fork。B3 的编辑器、引用授权、公开发布和执行能力仍未交付。
+B1 和受限 B2 已交付：Agent Build 可以保存私有、未配置的声明式草稿，支持不可变版本、并发保存保护、历史读取和精确版本 Fork。当前另有 Agent Builder 基础 UI、画布和本地 fixture preview；B3 的完整持久化交互、引用授权、公开发布和执行能力仍未交付。
 
 本文件保留 Agent mode 的接口、安全和后续接入边界。当前 EF（Evaluation Foundation）已经提供 Job/Attempt/Invocation、Outbox、BullMQ/Worker、幂等、租约、取消和恢复基础；Agent 不得自行创建另一套调度器。Agent-specific execution、SelfTestRun、沙箱和竞技闭环必须经过共同 Gate 后才能开放。
 
@@ -57,7 +57,7 @@ Provider lane 的分类和解析现在共用 `classifyProviderLane`。任一价�
 
 ### B3：编辑器与发布 / Editor and publishing
 
-- [ ] Agent 编辑器、历史选择、保存冲突、加载/空/错误状态及桌面/窄屏可访问性验收。
+- [ ] Agent Builder 基础 UI、历史选择、保存冲突、加载/空/错误状态及桌面/窄屏可访问性完整验收（基础画布与 fixture preview 已存在）。
 - [ ] Component/ComponentVersion/Release/UsageReference 的权威解析、digest、读权限、许可、撤回/撤销和公开依赖检查。
 - [ ] Agent definition 的安全 DTO、公开发布、凭据重新绑定和跨用户 Fork 的完整端到端验证。
 
@@ -69,7 +69,7 @@ Provider lane 的分类和解析现在共用 `classifyProviderLane`。任一价�
 
 ### D：沙箱与 artifacts / Sandbox and artifacts
 
-- [ ] Python 或其他执行环境的真实隔离、镜像/digest、资源配额、默认禁网、无宿主 shell 和停止确认。
+- [ ] SandboxProvider/collector/manifest/preview 契约已有；仍需完成 Python 或其他执行环境的真实隔离、镜像/digest、资源配额、默认禁网、无宿主 shell 和停止确认。
 - [ ] 路径穿越、symlink/hardlink、竞态替换、超额输出、artifact 封存/下载/预览、XSS/CSV 公式/远程资源和隐藏内容泄露验证。
 - [ ] 独立 judge、失败与基础设施故障区分，以及可审计的不可变产物摘要。
 
@@ -98,3 +98,11 @@ Provider lane 的分类和解析现在共用 `classifyProviderLane`。任一价�
 - [ ] 只有在共同 EF、权限、预算、撤销、沙箱和隐私 Gate 全部有实际证据后，才开放 Agent 执行或公开发布；真实模型、付费服务和生产操作仍需单独授权。
 
 参考：[Agent mode README](README.md)、[Agent design](design.md)、[Evaluation Foundation](../evaluation-foundation/README.md)、[community implementation](../community-component-library/implementation.md)、[当前合并交付评审](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。
+
+## Artifact Arena current slice (2026-09-07)
+
+Artifact Arena extends this mode rather than creating a second Agent runtime. Contracts,
+additive migrations, owner-aware environment compilation, artifact collection/preview,
+Showcase/Voting domain seams and fail-closed HTTP are present with tests. A real isolated
+sandbox provider, object storage, production resolver wiring, EF/Pi execution, browser
+security and public opening remain separate AA-T0–T10 gates.

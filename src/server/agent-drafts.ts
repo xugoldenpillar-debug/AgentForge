@@ -1,18 +1,112 @@
-import { parseAgentBuildDefinition } from '../shared/agent-build-contract.ts';
+import { parseAgentBuildDefinition, isConfiguredAgentBuild } from '../shared/agent-build-contract.ts';
 import { digestAgentBuildDefinition } from '../lib/agent-build/digest.ts';
-import { ensure, ERROR_CODES } from '../shared/errors.ts';
+import { AppError, ensure, ERROR_CODES } from '../shared/errors.ts';
+import type { AgentBuildDefinition } from '../shared/agent-build-contract.ts';
+import type { AgentBuildResolutionRequest, AgentBuildResolver } from './agent-build-resolver.ts';
 import type { BuildVersion } from '../shared/types.ts';
 
-/** No catalog/Profile authorization exists yet. Hashes are identities, not grants. */
-export function privateAgentDraft(input: unknown, visibility: unknown) {
+export interface PersistedAgentDraft {
+  readonly agentDefinition: AgentBuildDefinition;
+  readonly definitionDigest: string;
+}
+
+function privateAgentDefinition(input: unknown, visibility: unknown): AgentBuildDefinition {
   const definition = parseAgentBuildDefinition(input);
-  ensure(visibility === 'private' && !definition.modelSelection &&
-    !definition.profileRef && !definition.environmentRef && !definition.outputContractRef &&
-    !definition.runtimeSelection && definition.skillRefs.length === 0 &&
-    definition.requestedCapabilities.length === 0,
-  'Only unconfigured private Agent drafts are supported; dependency authorization is unavailable.',
-  400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+  ensure(visibility === 'private', 'Only private Agent Builds are supported.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+  return definition;
+}
+
+/** No catalog/Profile authorization exists yet. Hashes are identities, not grants. */
+export function privateAgentDraft(input: unknown, visibility: unknown): PersistedAgentDraft {
+  const definition = parseAgentBuildDefinition(input);
+  ensure(visibility === 'private' && !isConfiguredAgentBuild(definition),
+    'Only unconfigured private Agent drafts are supported; dependency authorization is unavailable.',
+    400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
   return { agentDefinition: definition, definitionDigest: digestAgentBuildDefinition(definition) };
+}
+
+/** Structural/private validation used before the injected resolver runs. */
+export function parsePrivateAgentDefinition(input: unknown, visibility: unknown): AgentBuildDefinition {
+  return privateAgentDefinition(input, visibility);
+}
+
+function resolverFailure(): AppError {
+  return new AppError(
+    'Configured Agent dependencies could not be resolved.',
+    503,
+    ERROR_CODES.RUNTIME_UNAVAILABLE
+  );
+}
+
+async function resolveConfiguredDefinition(
+  definition: AgentBuildDefinition,
+  request: Omit<AgentBuildResolutionRequest, 'definition'>,
+  resolver: AgentBuildResolver | undefined
+): Promise<PersistedAgentDraft> {
+  if (!isConfiguredAgentBuild(definition)) {
+    return { agentDefinition: definition, definitionDigest: digestAgentBuildDefinition(definition) };
+  }
+  if (!resolver) throw resolverFailure();
+
+  let resolution;
+  try {
+    resolution = await resolver.resolve({ ...request, definition });
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw resolverFailure();
+  }
+
+  let resolved: AgentBuildDefinition;
+  try {
+    resolved = parseAgentBuildDefinition(resolution?.definition);
+  } catch {
+    throw resolverFailure();
+  }
+  // Save may translate a client-facing reference into a server-canonical
+  // identity. Read/Fork must not rewrite an immutable historical version when
+  // the catalog or resolver changes; they may only re-authorize the stored
+  // canonical definition.
+  if (request.operation !== 'save' && digestAgentBuildDefinition(resolved) !== digestAgentBuildDefinition(definition)) {
+    throw resolverFailure();
+  }
+  // A resolver may canonicalize approved identities, but it may not rewrite
+  // user instructions, add capabilities, or silently turn the request into an
+  // unconfigured draft.
+  const samePresence = (left: AgentBuildDefinition, right: AgentBuildDefinition): boolean =>
+    Boolean(left.modelSelection) === Boolean(right.modelSelection) &&
+    Boolean(left.outputContractRef) === Boolean(right.outputContractRef) &&
+    Boolean(left.profileRef) === Boolean(right.profileRef) &&
+    Boolean(left.environmentRef) === Boolean(right.environmentRef) &&
+    Boolean(left.runtimeSelection) === Boolean(right.runtimeSelection) &&
+    left.skillRefs.length === right.skillRefs.length &&
+    left.requestedCapabilities.length === right.requestedCapabilities.length;
+  if (!isConfiguredAgentBuild(resolved) || resolved.instructions !== definition.instructions || !samePresence(definition, resolved)) {
+    throw resolverFailure();
+  }
+  return { agentDefinition: resolved, definitionDigest: digestAgentBuildDefinition(resolved) };
+}
+
+export async function resolveAgentDraft(
+  input: unknown,
+  visibility: unknown,
+  request: Omit<AgentBuildResolutionRequest, 'definition'>,
+  resolver?: AgentBuildResolver
+): Promise<PersistedAgentDraft> {
+  return resolveConfiguredDefinition(parsePrivateAgentDefinition(input, visibility), request, resolver);
+}
+
+export async function resolvePersistedAgentDraft(
+  input: unknown,
+  storedDigest: unknown,
+  request: Omit<AgentBuildResolutionRequest, 'definition'>,
+  resolver?: AgentBuildResolver
+): Promise<PersistedAgentDraft> {
+  const definition = parsePrivateAgentDefinition(input, 'private');
+  const digest = digestAgentBuildDefinition(definition);
+  ensure(storedDigest === digest,
+    'Stored Agent definition integrity could not be verified.',
+    409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+  return resolveConfiguredDefinition(definition, request, resolver);
 }
 
 export function versionMetadata(version: BuildVersion) {

@@ -66,6 +66,31 @@ export type AgentBuildRuntimeSelection = Readonly<
 /** Separate from Workflow and RunDefinition; no implicit conversion to an executable task. */
 export type AgentBuildDefinition = AgentBuildDefinitionV1;
 
+/** A configuration gate is additive to B1 parsing; B2 still owns the private draft policy. */
+export interface ConfiguredAgentBuildRequirements {
+  readonly requireModel?: boolean;
+  readonly requireEnvironment?: boolean;
+  readonly requireOutputContract?: boolean;
+  readonly requireRuntime?: boolean;
+}
+
+/**
+ * A configuration is executable-relevant when it names any dependency,
+ * capability, environment, output contract, profile, or runtime. This is a
+ * structural classification only; it does not grant or resolve anything.
+ */
+export function isConfiguredAgentBuild(definition: AgentBuildDefinition): boolean {
+  return Boolean(
+    definition.modelSelection ||
+    definition.skillRefs.length > 0 ||
+    definition.requestedCapabilities.length > 0 ||
+    definition.outputContractRef ||
+    definition.profileRef ||
+    definition.environmentRef ||
+    definition.runtimeSelection
+  );
+}
+
 const TOOLS: ReadonlySet<ToolId> = new Set([
   'calculator', 'json-validator', 'text-search', 'date-parser', 'string-matcher'
 ]);
@@ -151,7 +176,7 @@ function optionalPinned(record: Record<string, unknown>, key: string): AgentBuil
   return !Object.hasOwn(record, key) || record[key] === null ? null : pinned(record[key]);
 }
 
-function runtimeSelection(value: unknown): AgentBuildRuntimeSelection {
+export function parseAgentBuildRuntimeSelection(value: unknown): AgentBuildRuntimeSelection {
   const runtime = object(value, ['kind', 'adapterVersion', 'policyVersion']);
   if (runtime.kind !== 'pi') reject();
   return Object.freeze({
@@ -174,7 +199,7 @@ function skill(value: unknown): AgentBuildSkillRef {
   return Object.freeze({ kind: 'declarative', componentId: id(ref.componentId), versionId: id(ref.versionId), contentDigest: digest(ref.contentDigest) });
 }
 
-function capability(value: unknown): AgentBuildCapabilityRef {
+export function parseAgentBuildCapabilityRef(value: unknown): AgentBuildCapabilityRef {
   const ref = object(value, ['kind', 'toolId', 'versionId', 'contentDigest'], ['serviceId']);
   const toolId = id(ref.toolId);
   const versionId = id(ref.versionId);
@@ -188,8 +213,26 @@ function capability(value: unknown): AgentBuildCapabilityRef {
   return reject();
 }
 
-function capabilityIdentity(ref: AgentBuildCapabilityRef): string {
+export function agentBuildCapabilityIdentity(ref: AgentBuildCapabilityRef): string {
   return ref.kind === 'tool' ? `tool:${ref.toolId}` : `mcp-read:${ref.serviceId}:${ref.toolId}`;
+}
+
+/**
+ * Includes the pinned version and digest so capability intersection cannot
+ * silently accept a stale or substituted implementation.
+ */
+export function agentBuildCapabilityReferenceIdentity(ref: AgentBuildCapabilityRef): string {
+  return `${agentBuildCapabilityIdentity(ref)}:${ref.versionId}:${ref.contentDigest}`;
+}
+
+function capabilityIdentity(ref: AgentBuildCapabilityRef): string {
+  return agentBuildCapabilityIdentity(ref);
+}
+
+/** Parse one capability at a public boundary without changing B2 draft policy. */
+export function parseAgentBuildCapability(value: unknown): AgentBuildCapabilityRef {
+  inspectJson(value);
+  return parseAgentBuildCapabilityRef(value);
 }
 
 /**
@@ -222,7 +265,7 @@ export function parseAgentBuildDefinition(input: unknown): AgentBuildDefinition 
   if (typeof value.instructions !== 'string' || value.instructions.length > AGENT_BUILD_LIMITS.maxInstructionsChars ||
     /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value.instructions)) reject();
   const skills = list(Object.hasOwn(value, 'skillRefs') ? value.skillRefs : [], AGENT_BUILD_LIMITS.maxSkills, skill, (ref) => ref.componentId);
-  const capabilities = list(Object.hasOwn(value, 'requestedCapabilities') ? value.requestedCapabilities : [], AGENT_BUILD_LIMITS.maxCapabilities, capability, capabilityIdentity);
+  const capabilities = list(Object.hasOwn(value, 'requestedCapabilities') ? value.requestedCapabilities : [], AGENT_BUILD_LIMITS.maxCapabilities, parseAgentBuildCapabilityRef, capabilityIdentity);
   capabilities.sort((a, b) => capabilityIdentity(a) < capabilityIdentity(b) ? -1 : 1);
   const result: AgentBuildDefinition = Object.freeze({
     mode: 'agent',
@@ -236,8 +279,28 @@ export function parseAgentBuildDefinition(input: unknown): AgentBuildDefinition 
     environmentRef: optionalPinned(value, 'environmentRef'),
     runtimeSelection: !Object.hasOwn(value, 'runtimeSelection') || value.runtimeSelection === null
       ? null
-      : runtimeSelection(value.runtimeSelection)
+      : parseAgentBuildRuntimeSelection(value.runtimeSelection)
   });
   if (new TextEncoder().encode(JSON.stringify(result)).length > AGENT_BUILD_LIMITS.maxSerializedBytes) reject();
   return result;
+}
+
+
+/**
+ * Additive configuration validation for T1/T3 callers. This function does not
+ * authorize catalog references, resolve credentials, or alter privateAgentDraft.
+ * Callers must perform owner, release and capability authorization separately.
+ */
+export function validateConfiguredAgentBuild(
+  input: unknown,
+  visibility: unknown,
+  requirements: ConfiguredAgentBuildRequirements = {}
+): AgentBuildDefinition {
+  const definition = parseAgentBuildDefinition(input);
+  if (visibility !== 'private') reject();
+  if (requirements.requireModel && !definition.modelSelection) reject();
+  if (requirements.requireEnvironment && !definition.environmentRef) reject();
+  if (requirements.requireOutputContract && !definition.outputContractRef) reject();
+  if (requirements.requireRuntime && !definition.runtimeSelection) reject();
+  return definition;
 }

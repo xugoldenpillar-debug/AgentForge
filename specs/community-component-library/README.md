@@ -1,7 +1,7 @@
 # 社区组件库与可扩展 Agent 运行时：开发入口
 
 - 状态日期：2026-09-07
-- 当前状态：社区组件库的基础模型、权限/审计切片和设计草案已存在；SelfTestRun 联合接入、真实自测、审核发布、撤回/撤销和公开导出仍未完成。发布阻塞决策见下文。
+- 当前状态：社区组件库的基础模型、权限/审计切片和设计草案已存在；SelfTestRun 联合接入、真实自测、审核发布、撤回/撤销和公开导出仍未完成。已存在的契约/目录/版本服务切片不等于完整公开产品或许可 Gate。发布阻塞决策见下文。
 
 ## 阅读顺序
 
@@ -30,6 +30,11 @@
 
 ## 可靠执行基础补充（2026-09-06）
 
-[基础设计](../evaluation-foundation/README.md) 记录 Q1–Q25 已确认方向；Evaluation Foundation 的 Job/Attempt/Invocation、Outbox、Worker 等代码基础已落地，但 T5 的 SelfTestRun 联合接入、容量/预算运营和完整取消/恢复验收仍未完成。T5 不另建自测执行器；T9 仍属后续精选效果评测，不是上架审核。
+[基础设计](../evaluation-foundation/README.md) 记录 Q1–Q25 已确认方向；公共 EF/Outbox/Worker 已有代码，不代表组件自测接入和所有运维 Gate 已完成。T5 依赖统一持久化调度、幂等、容量/预算和取消协议，不另建自测执行器。T9 仍属后续精选效果评测，不是上架审核。
 
 全项目依赖、职责和实现状态见 [设计地图](../README.md)。
+
+
+## 作品领域的 Skill 接入
+
+[Artifact Arena](../artifact-arena/README.md) 的 T1 复用本组件版本、许可、撤销与执行准入，不另建 Pi Skill 市场。上传声明式 Skill 不执行其脚本；作品发布与组件 Publication Request 是不同业务记录。自由问题走新的 creation EF 用途，不放宽 Q15 的作者官方凭据自测规则。

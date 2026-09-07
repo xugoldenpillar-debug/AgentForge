@@ -147,4 +147,9 @@ Pi 稳定性、启动时间、峰值内存、依赖规模需测量后记录；�
 
 当前：Bridge A、身份列、flag、幂等助手有代码；[PI3 样本](pi3-flash-sample.md) 与 [PI4 测量](pi4-measurement.md) 是历史单次证据。幂等助手不是持久化 Job/Attempt/Outbox，import 时间/RSS 不是长期容量或故障验收；因此不能宣称 PI0–PI4 全部门禁通过。公共用户选择器仍关闭；受邀开放还需共享执行/费用 Gate 和相应实际验证。任何 Gate 失败不静默降级；关闭 Pi 不删除历史记录，不影响 DAG 运行。沙箱脚本／MCP 的执行 Gate 另立，Pi 验收通过不等于这两项已获准。
 
-Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，独立 Worker 已有 EF 基础实现但尚未完成生产部署；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
+Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，公共 EF 独立 Worker 已有代码，Pi/Agent 联合接入仍待实现；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
+
+
+## Artifact Arena 接入（2026-09-07，目标）
+
+[AA-T3](../artifact-arena/tasks.md) 将 Pi 接入既有 EF 与受控沙箱 broker；不使用 coding-agent CLI，不新建付费队列，不以移除旧 self-test 的 EF 拒绝来代替集成。静态作品预览与 Python 工程轨见 [范围](../artifact-arena/requirements.md)。当前不产生竞技 Submission；未来仅在 AA-T8、原 Pi/Profile/trust Gate 通过后允许合资格 Agent 隐藏评测，不与 DAG 默认混榜。旧 PI0–PI4/Bridge A 样本和限制不因此扩大。

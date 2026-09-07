@@ -1,6 +1,6 @@
 # Agent mode design（候选契约，未发布）
 
-本页最初为设计提案；后续单独授权的 B1 纯定义契约已实现，范围见下。B2 于 2026-09-07 扩展既有 BuildVersion 与 ForkRelation，并新增 0005_agent_build_drafts.sql；没有新增表、依赖或运行许可。五份契约仍须与 [EF 联合冻结](../evaluation-foundation/integration.md) 和 [社区版本](../community-component-library/implementation.md) 协调；B1 本地契约与下述 B2 草稿 HTTP 为已实现范围；其余执行协议仍是候选。职责不新建 EvaluationProfile、AgentJob、AgentQueue 或 AgentBudget。
+本页最初为设计提案；后续单独授权的 B1 纯定义契约已实现，范围见下。B2 于 2026-09-07 扩展既有 BuildVersion 与 ForkRelation，对应当前主序列 0009_agent_build_drafts.sql（Pi 原 0005 保留于历史台账）；没有新增表、依赖或运行许可。五份契约仍须与 [EF 联合冻结](../evaluation-foundation/integration.md) 和 [社区版本](../community-component-library/implementation.md) 协调；B1 本地契约与下述 B2 草稿 HTTP 为已实现范围；其余执行协议仍是候选。职责不新建 EvaluationProfile、AgentJob、AgentQueue 或 AgentBudget。
 
 ## 1. Agent Build contract
 
@@ -68,7 +68,7 @@ B2 已实现的是下述受限草稿子集；后文配置引用/公开发布和�
 4. 将已检验的字节复制到平台控制的不可变对象版本，再核验摘要和字节数；通过 Attempt fence 原子登记唯一 manifest。失联旧 Worker 不能封存/覆盖新状态。重试收集只针对已经稳定持久化的字节，不触发模型重跑。
 5. 封存后撤去写权限，judge 读取内容寻址的只读副本，验证 manifest/快照/对象摘要绑定。存储版本化或同等不可变性需实测；无法保证封存不变性则未完成，不接受暂存文件为成绩。
 
-下载/预览每次按 Run 所有权、可见性、分类与撤销核权，隐藏产物包括文件名/输入/输出永不通过用户 API 下载。短期、单对象下载授权不可变成永久公开 URL，不以缓存权限或知道 ID 作为准入。安全预览仅有界转义文本/结构化表格，禁执行 HTML/JS/SVG/Markdown 内嵌 HTML/远程资源；附件使用安全类型、nosniff/attachment、隔离 origin/CSP。CSV 预览/导出防公式执行，展示派生副本不改变 judge 的封存原件。错误、日志、事件及文件元数据沿同一隐藏投影规则脱敏。
+下载/预览每次按 Run 所有权、可见性、分类与撤销核权，隐藏产物包括文件名/输入/输出永不通过用户 API 下载。短期、单对象下载授权不可变成永久公开 URL，不以缓存权限或知道 ID 作为准入。安全预览按 [Artifact Arena S3/S4](../artifact-arena/security.md) 增加独立域静态 HTML/CSS、受限 SVG 图片和 Markdown；主站仍仅安全渲染，禁执行作品 JS/MDX/Markdown 内嵌 HTML/远程资源。未通过该 Gate 时回退有界转义文本/表格，不宽松放行；附件使用安全类型、nosniff/attachment、隔离 origin/CSP。CSV 预览/导出防公式执行，展示派生副本不改变 judge 的封存原件。错误、日志、事件及文件元数据沿同一隐藏投影规则脱敏。
 
 ## 5. Evaluation result contract
 
@@ -92,3 +92,7 @@ Agent Scoring 需在现有 Benchmark Profile 中固定任务正确性、鲁棒�
 执行占用/心跳/fencing、取消确认、调用预占/结算全由 EF 负责。调用前持久化 Invocation 意图；结果不确定时停止自动执行、保留核查状态及审计，不把预占当花费或全部释放。已发生调用后的故障不自动续跑付费步骤或拼接成绩；新重跑需新操作和费用同意。模型前安全恢复与全部结果落库后的幂等收尾是例外边界，不是无限恢复许可。停止沙箱须确认；无法确认则维持待核查占用/状态，不提前声称取消成功。
 
 仅提出 additive 兼容策略：为 BuildVersion 扩展模式定义和引用，为 Run 增补可空快照/manifest/结果关联，复用 EF 表；不分配迁移编号或改已有 checksum。旧 DAG 图、BuildVersion、Run/Submission、Portable 历史全部保留；历史缺失版本/Attempt/manifest 标记 unknown/not recorded，不伪造回填。先双读旧/新合法结构再逐步允许新写，旧客户端遇到 Agent 模式应明确不支持而非解析为 DAG；关闭 feature flag 禁新执行而不删历史。具体列/外键/约束与回滚窗口待联合冻结，迁移须空库/升级/重复/并发/原数据保留及认证验证。
+
+## 2026-09-07 作品协议扩展
+
+以上五契约继续用于 Agent 的授权与证据；[作品集成设计](../artifact-arena/design.md) 明确新增 ArtifactBundle/WorkPublication/ShowcaseEntry、creation EF v2 输入与构建上下文。章节 5 的 Run/Submission 指隐藏竞技结果，并非自由创作/公开投票的通用记录。章节 2 的 Suite 身份仅用于 challenge 分支；creation 不伪造 Suite。沙箱/封存/隐藏投影仍必须满足上述安全条件。B1 定义版本不因外层创建上下文自动改写，已有历史保持可读。

@@ -40,7 +40,7 @@ for isolated test databases only, including when testing a production build loca
 `NODE_ENV` does not opt in. Never deploy with the test environment configuration.
 
 Optional Pi runtime stays off unless `PI_RUNTIME_ENABLED` is the exact string `true`
-(`.env.example` defaults to `false`). Contributors do not install Pi; Node `<22.19.0`
+(`.env.example` defaults to `false`). The pinned Pi core is installed by the normal project dependency install but stays disabled; Node `<22.19.0`
 refuses Pi while the app `engines.node` remains `>=22.16.0`. This is an offline PoC,
 not a user-selectable runtime, sandbox, or competitive Run path.
 
@@ -127,7 +127,7 @@ your working credential database. Browser verification targets the real React UI
 
 ```text
 src/app/                 Next.js routes, auth and arena HTTP endpoints
-src/components/          Shared React UI, complete arena pages, shadcn button
+src/components/          Shared React UI and existing arena pages, shadcn button
 src/features/builder/    React Flow canvas, Zustand state, editor/runner
 src/lib/ai/              Provider contract, real SDK adapter, demo, registered tools
 src/lib/workflow/        DAG validation and real executor
@@ -148,7 +148,7 @@ Hidden inputs, expected values and per-case outputs never leave the arena API on
 
 The checked-in fixtures and fixed Secret Keeper secret are for a **local, inspectable MVP**, not a confidential contest benchmark. Replace them with server-private, separately versioned tests/secrets before hosting a real competition. Secret checks catch several obvious encodings but do not prove a general non-disclosure property. Safety Guard is a bounded injection heuristic, not a comprehensive security system.
 
-Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox or agent marketplace payments. The durable evaluation Worker foundation exists behind explicit outbox configuration, but production deployment and the complete community/Verified integrations remain unfinished. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. Request-bound execution remains available when the durable scheduler is not configured. Not a multi-tenant production certification.
+Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox or agent marketplace payments. A durable evaluation Worker/Outbox implementation now exists; Agent/Pi sandbox execution is not integrated or enabled. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. The legacy request-bound path remains limited by request duration; the configured EF outbox path uses independent workers. Neither path currently enables Agent artifact execution. See `docs/evaluation-worker-operations.md` for worker operations and gates. Not a multi-tenant production certification.
 
 See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Retired Portable screenshots under `docs/screenshots/` are historical only.
 
@@ -160,12 +160,26 @@ Before extending AgentForge, read:
 - `CONTRIBUTING.md` — local development, Git branches/commits/PRs, database changes and the test matrix.
 - `.github/pull_request_template.md` — change scope, evidence, compatibility and review checklist.
 
-The repository tracks `pnpm-lock.yaml` and CI uses frozen installation; lint/format scripts are not configured. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
+The repository tracks `pnpm-lock.yaml`; use the `packageManager` version and CI frozen installation; lint/format scripts are not configured. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
 
 ## Design and implementation roadmap
 
 See [the project design map](specs/README.md) for the aligned evaluation foundation,
 community component library, Verified Gateway, optional Pi and future vendor SDK plans.
-These are staged designs, not a claim that durable queues, budget settlement, email
-verification or community publishing are already implemented. Current runtime behavior
+These are staged designs: shared durable queue/worker code exists, while each purpose,
+budget settlement, email verification and community publishing gate needs its own evidence. Current runtime behavior
 and verified evidence remain documented separately above.
+
+## Artifact Arena roadmap (2026-09-07)
+
+[Artifact Arena executable spec](specs/artifact-arena/README.md) adds Agent-generated
+works, isolated HTML/Markdown/SVG previews, public showcase voting and a later
+approved-environment canvas. It extends existing Agent Build/EF/community boundaries,
+not a second application. The current worktree contains partial contract, migration,
+domain-seam, fail-closed HTTP and Agent Builder UI slices for AA-T0–T10; it does not
+contain the durable/isolated/browser/production implementation needed to open them.
+Work publications and showcase entries are distinct from hidden competitive Submissions.
+Static visual tasks are the first user-facing sample; Python CSV/JSON/report remains the
+deterministic engineering track. See the [current status and evidence](docs/verification/artifact-arena-spec-2026-09-07.md);
+contract tests and a successful build are not production sandbox, model, browser or
+public-voting acceptance.

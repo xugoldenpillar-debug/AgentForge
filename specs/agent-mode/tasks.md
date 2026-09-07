@@ -1,13 +1,13 @@
 # Agent mode tasks / Gates
 
-Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. The lane finding is fixed and closed. B3 Agent UI and C-F execution/sandbox work remain undelivered. Checked items apply only to their stated scope; test counts below are historical verification records and do not describe the current runtime or production state.
+Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. The lane finding is fixed and closed. B3 Agent Builder UI is partially implemented; C-F execution/sandbox work remain undelivered. Checked items apply only to their stated scope; test counts below are historical verification records and do not describe the current runtime or production state.
 
 | 阶段 | 交付 | 当前状态与前置 |
 | --- | --- | --- |
 | A fixes | Pi 文档矛盾纠偏、首批 Agent 设计；Pi 代码边界与证据另见 `specs/pi-runtime/` | 本文件仅维护范围与 Gate，不重复宣称代码或生产验收 |
-| B Build | Agent persistence / versioning / Fork | B1 and B2 private unconfigured drafts delivered; lane finding independently closed. B3 UI, reference authorization and public publishing remain unavailable. |
+| B Build | Agent persistence / versioning / Fork | B1 and B2 private unconfigured drafts delivered; lane finding independently closed. B3 UI foundation exists, but reference authorization and public publishing remain unavailable. |
 | C reliable execution | 复用 EF Job/Attempt/Outbox Worker/取消/容量/费用 | Agent-specific integration 未实现；EF foundation 已有代码，不另建 Agent 调度器 |
-| D sandbox/artifacts | Python 隔离、collector、manifest、下载/安全预览、独立 judge | 未实现；供应商、镜像/限制、费用与数据边界验证后才可开放 |
+| D sandbox/artifacts | 固定环境隔离、collector、manifest、多格式静态预览、独立 judge | collector/manifest/preview 契约和测试实现存在；真实隔离 provider、对象存储、TOCTOU、独立预览域与浏览器安全 Gate 未完成 |
 | E competitive loop | Run → Submission → Score → Leaderboard → Fork | 未实现；C/D 与现有 Profile/lane/评分 Gate 联合通过 |
 | F extensions | 批准的只读 MCP、可执行 Skill、厂商 SDK/更多语言或多 Agent | 后续独立准入；不因 B–E 通过自动授权 |
 
@@ -35,7 +35,7 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 - [x] Historical verification record: related 41 passed, full 198 passed, Pi 23 passed / 1 skipped, typecheck/build and isolated Next/Auth smoke successful. The record is not a current runtime or production deployment result; earlier migration matrix and overlapping PostgreSQL CAS evidence remains separately attributed.
 - [x] Historical focused draft test: `node --experimental-strip-types --test tests/agent-drafts.test.ts` yielded 8 passed / 0 failed; the in-memory probe reproduced the lane regression without model calls or shared services.
 - [x] Workflow hunt platform pricing lane regression fixed using a shared pure classifier. Historical focused test `node --experimental-strip-types --test tests/provider-lane.test.ts tests/agent-drafts.test.ts` yielded 23 passed / 0 failed / 0 skipped (15 lane + 8 drafts), including Agent rejection before provider construction. Finding closed; provider authorization remains separate.
-- [ ] B3：实际 Agent 编辑器、历史/冲突交互及完整桌面/窄屏验证。当前没有 Agent UI 通过证据；历史浏览器记录不能替代当前验收。
+- [ ] B3：Agent Builder 基础 UI、画布和本地 fixture preview 已存在；完整保存、历史/冲突交互及桌面/窄屏浏览器验证仍未完成。历史浏览器记录不能替代当前验收。
 - [ ] 权威组件/Profile 解析、真实 digest/许可/撤回/撤销、公开发布、凭据重新绑定与执行联合准入。
 
 精确 API、资源及证据限制见 [integration](integration.md)。历史 B1 测试数不是当前 B2 验证结果。
@@ -80,3 +80,10 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 4. 隐藏产物保留/删除与审计策略；不能拿 Q22 自测 30 天替代。许可名单、MCP 身份与数据边界沿原准入 Gate。
 
 这些是技术调查/后续范围决策，不撤销 Q1–Q25，也不要求凭空选限额或立即购买服务。遇到新的产品取舍再请用户确认。
+
+
+## Artifact Arena implementation split
+
+AA-T0–T10 is the executable follow-up for the partial B3/C/D/E slices above. It keeps
+Agent Build, execution runtime and trust lane separate; it does not mark real sandbox,
+production storage, hidden judge, public voting or the Agent leaderboard as delivered.
