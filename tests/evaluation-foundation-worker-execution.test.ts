@@ -511,3 +511,50 @@ async function competitiveFixture(options: {
     queue: new InMemoryEvaluationQueue(),
   };
 }
+
+test('Agent draft enqueue fails before provider, job, outbox and invocation side effects', async () => {
+  const fixture = await competitiveFixture();
+  const agent = await fixture.service.saveBuild(fixture.user.id, {
+    mode: 'agent', problemId: 'messy-json', title: 'Unexecutable draft', visibility: 'private',
+    agentDefinition: { mode: 'agent', definitionSchemaVersion: 1, instructions: 'Private instructions' },
+  });
+  const before = {
+    jobs: await fixture.repo.read('evaluationJobs'),
+    outbox: await fixture.repo.read('evaluationOutbox'),
+    invocations: await fixture.repo.read('evaluationInvocations'),
+  };
+  await assert.rejects(fixture.service.scheduleCompetitiveRun(fixture.user.id, {
+    buildId: agent.id, kind: 'hidden', idempotencyKey: 'agent-must-not-enqueue',
+  }), { code: 'RUNTIME_POLICY_DENIED' });
+  assert.deepEqual(await fixture.repo.read('evaluationJobs'), before.jobs);
+  assert.deepEqual(await fixture.repo.read('evaluationOutbox'), before.outbox);
+  assert.deepEqual(await fixture.repo.read('evaluationInvocations'), before.invocations);
+});
+
+test('worker fails closed for a frozen Agent version before any invocation', async () => {
+  const fixture = await competitiveFixture();
+  const accepted = await fixture.service.scheduleCompetitiveRun(fixture.user.id, {
+    buildId: fixture.build.id, kind: 'hidden', idempotencyKey: 'frozen-agent-denial',
+  });
+  // Fault-inject a persisted incompatible version. Retain DAG nodes to prove that
+  // validation is of the frozen mode, not merely the presence of runnable nodes.
+  await fixture.repo.update('buildVersions', { id: accepted.run.versionId }, { mode: 'agent' });
+  await executeScheduledCompetitiveJob(fixture, accepted.job.id);
+  assert.equal((await fixture.evaluationRepository.get(accepted.job.id))?.failure?.code, 'RUNTIME_POLICY_DENIED');
+  assert.equal((await fixture.repo.read('evaluationInvocations', {jobId: accepted.job.id})).length, 0);
+  assert.equal((await fixture.repo.read('evaluationUsageRecords', {jobId: accepted.job.id})).length, 0);
+  assert.equal((await fixture.repo.read('submissions', {runId: accepted.run.id})).length, 0);
+});
+
+test('a queued DAG executes its frozen version even if the current pointer later names an Agent', async () => {
+  const fixture = await competitiveFixture();
+  const accepted = await fixture.service.scheduleCompetitiveRun(fixture.user.id, {
+    buildId: fixture.build.id, kind: 'hidden', idempotencyKey: 'frozen-dag-remains-valid',
+  });
+  const original = (await fixture.repo.read('buildVersions', {id: accepted.run.versionId}))[0];
+  await fixture.repo.insert('buildVersions', [{...original, id: 'future-agent-version', revision: original.revision + 1, mode: 'agent'}]);
+  await fixture.repo.update('builds', {id: fixture.build.id}, {currentVersionId: 'future-agent-version'});
+  await executeScheduledCompetitiveJob(fixture, accepted.job.id);
+  assert.equal((await fixture.evaluationRepository.get(accepted.job.id))?.state, 'completed');
+  assert.ok((await fixture.repo.read('evaluationInvocations', {jobId: accepted.job.id})).length > 0);
+});

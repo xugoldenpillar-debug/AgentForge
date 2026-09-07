@@ -12,6 +12,8 @@
     "src/lib/judge/**/*.ts",
     "src/lib/scoring/**/*.ts",
     "src/lib/crypto/**/*.ts",
+    "src/lib/runtime/**/*.ts",
+    "src/shared/runtime-contract.ts",
     "src/lib/ai/demo.ts",
     "src/lib/ai/types.ts",
     "src/lib/ai/tools-core.ts",

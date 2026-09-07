@@ -17,6 +17,7 @@ import {
   useToast,
 } from '@/components/common';
 import { Button } from '@/components/ui/button';
+import { PiSelfTestEntry } from '@/components/pi-self-test';
 import { ApiError, api, consumeRun, post } from '@/lib/client-api';
 import { validateWorkflow } from '@/lib/workflow/validate';
 import { JSON_SCHEMA, NODE_LABELS, ROUTES, SKILLS, TOOLS } from '@/shared/catalog';
@@ -557,6 +558,7 @@ export function BuilderPage() {
           </select>
           <Button variant="ghost" size="icon" title={t('builder.exportWorkflow')} onClick={exportJson}><Icon name="Download" /></Button>
           <Button variant="outline" disabled={saving || running} onClick={() => save().catch((reason) => setError(displayError(reason, t)))}><Icon name="Save" size={14} />{saving ? t('builder.saving') : t('builder.save')}</Button>
+          <PiSelfTestEntry />
           {running ? <Button variant="outline" onClick={() => controller.current?.abort()}><Icon name="X" />{t('builder.cancel')}</Button> : <Button variant="outline" onClick={() => run('public')}><Icon name="Play" size={14} />{t('builder.runPublic')}</Button>}
           <Button disabled={running || saving} onClick={() => run('hidden')}><Icon name="Send" size={14} />{t('builder.submit')}</Button>
         </div>

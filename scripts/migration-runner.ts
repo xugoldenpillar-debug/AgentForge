@@ -1,3 +1,5 @@
+import { assertHistoricalSchema } from './migration-schema.ts';
+import { selectMigrationHistory, assertPendingHistoryObjectsAbsent, assertGoldenMigrationSources } from './migration-history.ts';
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 
@@ -48,7 +50,9 @@ export async function loadMigrations(directory: URL = migrationDirectory): Promi
     if (!entry.isFile()) throw new Error(`Migration is not a regular file: ${entry.name}`);
     return parseMigration(entry.name, await readFile(new URL(entry.name, directory), 'utf8'));
   }));
-  return validateMigrations(migrations);
+  const ordered = validateMigrations(migrations);
+  if (directory.href === migrationDirectory.href) await assertGoldenMigrationSources(ordered);
+  return ordered;
 }
 
 function validateMigrations(migrations: readonly Migration[]): Migration[] {
@@ -67,7 +71,7 @@ function validateMigrations(migrations: readonly Migration[]): Migration[] {
 }
 
 export async function runMigrations(database: MigrationDatabase, migrations: readonly Migration[]) {
-  const ordered = validateMigrations(migrations);
+  const canonical = validateMigrations(migrations);
   // One pinned transaction makes the complete batch atomic and releases the lock on
   // both rollback and commit. Never run BEGIN or session locks on pooled queries.
   return database.transaction(async transaction => {
@@ -82,6 +86,8 @@ export async function runMigrations(database: MigrationDatabase, migrations: rea
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )`);
     const applied = await transaction.query('SELECT version, name, checksum FROM public.schema_migrations ORDER BY version');
+    const ordered = await selectMigrationHistory(canonical, applied);
+    const isPiHistory = ordered !== canonical;
     // Applied history must be an exact prefix, including files from newer releases.
     // Fail closed on deletion, renaming, modification, or retroactive insertion.
     for (const [index, row] of applied.entries()) {
@@ -90,8 +96,19 @@ export async function runMigrations(database: MigrationDatabase, migrations: rea
         throw new Error('Migration history mismatch; restore the original files and append a new migration.');
       }
     }
+    // Restrict catalog validation to the frozen integration release, not custom
+    // migration test doubles or unrelated caller-provided migration sequences.
+    const frozenRelease = canonical.length >= 9 && canonical[0].name === '0001_initial_schema.sql';
+    if (frozenRelease) {
+      await assertGoldenMigrationSources(canonical);
+      await assertHistoricalSchema(transaction, ordered.slice(0, applied.length));
+    }
     const newlyApplied: string[] = [];
     for (const migration of ordered.slice(applied.length)) {
+      if ((isPiHistory && Number(migration.version) <= 9) ||
+          (!isPiHistory && frozenRelease && migration.version >= '0003' && migration.version <= '0009')) {
+        await assertPendingHistoryObjectsAbsent(transaction, migration);
+      }
       await transaction.query(migration.sql);
       await transaction.query(
         'INSERT INTO public.schema_migrations (version, name, checksum) VALUES ($1, $2, $3)',
@@ -99,6 +116,7 @@ export async function runMigrations(database: MigrationDatabase, migrations: rea
       );
       newlyApplied.push(migration.name);
     }
+    if (frozenRelease) await assertHistoricalSchema(transaction, ordered);
     return { applied: newlyApplied, skipped: applied.length };
   });
 }

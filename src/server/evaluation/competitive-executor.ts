@@ -264,6 +264,10 @@ export class CompetitiveEvaluationExecutor implements EvaluationAttemptExecutor 
     if (!version || version.buildId !== run.buildId || version.id !== run.versionId) {
       return { ok: false, failure: { code: 'EVALUATION_BUILD_VERSION_CHANGED', retryable: false } };
     }
+    // Authorize the frozen version, never the mutable current Build pointer.
+    if ((version.mode ?? 'workflow') !== 'workflow') {
+      return { ok: false, failure: { code: ERROR_CODES.RUNTIME_POLICY_DENIED, retryable: false } };
+    }
     const build = (await this.repository.read('builds', { id: run.buildId, userId: run.userId }))[0];
     if (!build || build.currentVersionId === '') {
       return { ok: false, failure: { code: 'EVALUATION_BUILD_NOT_FOUND', retryable: false } };

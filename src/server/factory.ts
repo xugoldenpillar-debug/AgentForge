@@ -42,6 +42,7 @@ export function getService(): ArenaService {
     maxRunCost: Number(process.env.RUN_MAX_TOTAL_COST || 2.5),
     maxCases: Number(process.env.RUN_MAX_CASES || 50),
     competitiveRunScheduler,
+    env: process.env,
   });
 }
 

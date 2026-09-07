@@ -1,3 +1,4 @@
+import { createDurableOutboxCompetitiveRunScheduler } from '../src/server/evaluation/runtime.ts';
 import { pathToFileURL } from 'node:url';
 import { database } from '../src/db/index.ts';
 import { DrizzleRepository } from '../src/db/repository.ts';
@@ -100,6 +101,35 @@ function createQueueOptions(config: ProductionWorkerConfig): BullMqEvaluationQue
   };
 }
 
+/** Shared by the real entrypoint and the isolated PostgreSQL completion gate. */
+export function createProductionWorkerService(
+  repository: Repository,
+  config: ProductionWorkerConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): ArenaService {
+  const platform = config.platformApiKey && config.platformModel
+    ? {
+        model: config.platformModel,
+        inputPrice: config.platformInputPrice,
+        outputPrice: config.platformOutputPrice,
+      }
+    : undefined;
+  return new ArenaService(repository, {
+    demoMode: testModelsEnabled(env),
+    encryptionKey: config.encryptionKey,
+    allowedHosts: config.allowedHosts,
+    platform,
+    createRealProvider: byokProvider,
+    createPlatformProvider: platform
+      ? () => gatewayProvider(config.platformApiKey!, platform)
+      : undefined,
+    maxRunCost: config.maxRunCost,
+    maxCases: config.maxCases,
+    env,
+    competitiveRunScheduler: createDurableOutboxCompetitiveRunScheduler(repository),
+  });
+}
+
 async function run(): Promise<void> {
   const config = readConfig();
   const db = database();
@@ -111,25 +141,7 @@ async function run(): Promise<void> {
   await db.sql`SELECT 1`;
   await repository.read('evaluationJobs', {});
 
-  const platform = config.platformApiKey && config.platformModel
-    ? {
-        model: config.platformModel,
-        inputPrice: config.platformInputPrice,
-        outputPrice: config.platformOutputPrice,
-      }
-    : undefined;
-  const service = new ArenaService(repository, {
-    demoMode: testModelsEnabled(process.env),
-    encryptionKey: config.encryptionKey,
-    allowedHosts: config.allowedHosts,
-    platform,
-    createRealProvider: byokProvider,
-    createPlatformProvider: platform
-      ? () => gatewayProvider(config.platformApiKey!, platform)
-      : undefined,
-    maxRunCost: config.maxRunCost,
-    maxCases: config.maxCases,
-  });
+  const service = createProductionWorkerService(repository, config);
   const reconciliation = new PostgresEvaluationReconciliationStore(repository);
   const controller = new AbortController();
   const queues: BullMqEvaluationQueue[] = [];

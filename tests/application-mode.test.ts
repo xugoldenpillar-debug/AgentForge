@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { testModelsEnabled } from '../src/server/environment.ts';
+import {
+  nodeMeetsPiEngine,
+  piRuntimeEnabled,
+  resolvePiRuntimeGate,
+  testModelsEnabled,
+} from '../src/server/environment.ts';
 import { seedCore } from '../src/server/seed-core.ts';
 import { ArenaService } from '../src/server/service.ts';
 import { MemoryRepository } from './helpers/memory-repository.ts';
@@ -15,6 +20,40 @@ test('test models require explicit test environment and opt-in', () => {
   }
   assert.equal(testModelsEnabled({ APP_ENV: 'test' }), false);
   assert.equal(testModelsEnabled({ APP_ENV: 'test', DEMO_MODE: 'true' }), true);
+});
+
+test('Pi runtime flag is the exact string true and ignores DEMO_MODE', () => {
+  assert.equal(piRuntimeEnabled({}), false);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: undefined }), false);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: 'TRUE' }), false);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: '1' }), false);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: 'yes' }), false);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: 'true' }), true);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: 'true', DEMO_MODE: 'false' }), true);
+  assert.equal(piRuntimeEnabled({ PI_RUNTIME_ENABLED: 'TRUE', DEMO_MODE: 'true' }), false);
+  assert.equal(piRuntimeEnabled({ DEMO_MODE: 'true', APP_ENV: 'test' }), false);
+});
+
+test('Pi runtime Node engine compares against 22.19.0 without raising the app baseline', () => {
+  assert.equal(nodeMeetsPiEngine('22.16.0'), false);
+  assert.equal(nodeMeetsPiEngine('22.18.9'), false);
+  assert.equal(nodeMeetsPiEngine('22.19.0'), true);
+  assert.equal(nodeMeetsPiEngine('v22.19.0'), true);
+  assert.equal(nodeMeetsPiEngine('22.19.1'), true);
+  assert.equal(nodeMeetsPiEngine('23.0.0'), true);
+
+  assert.deepEqual(resolvePiRuntimeGate({}, '22.19.0'), { ok: false, reason: 'flag_off' });
+  assert.deepEqual(resolvePiRuntimeGate({ PI_RUNTIME_ENABLED: 'TRUE' }, '22.19.0'), { ok: false, reason: 'flag_off' });
+  assert.deepEqual(resolvePiRuntimeGate({ PI_RUNTIME_ENABLED: '1', DEMO_MODE: 'true' }, '22.19.0'), { ok: false, reason: 'flag_off' });
+  assert.deepEqual(
+    resolvePiRuntimeGate({ PI_RUNTIME_ENABLED: 'true' }, '22.16.0'),
+    { ok: false, reason: 'node_engine' }
+  );
+  assert.deepEqual(resolvePiRuntimeGate({ PI_RUNTIME_ENABLED: 'true' }, '22.19.0'), { ok: true });
+  assert.deepEqual(
+    resolvePiRuntimeGate({ PI_RUNTIME_ENABLED: 'true', DEMO_MODE: 'false', APP_ENV: 'production' }, 'v22.19.0'),
+    { ok: true }
+  );
 });
 
 test('reference initialization is idempotent, repairs partial catalogs and preserves existing records', async () => {

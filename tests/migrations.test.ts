@@ -49,7 +49,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
@@ -151,7 +151,13 @@ test('versioned migrations match the fresh schema phases and preserve legacy upg
   const [, foundationAndLedger] = communityAndFoundation.split(foundationMarker);
   assert.ok(foundationAndLedger, 'fresh schema must include the evaluation foundation phase');
   const [foundation] = foundationAndLedger.split(ledgerMarker);
-  assert.equal(migrations[0].sql.trim(), baseline.trim());
+  const legacyBaseline = baseline
+    .replace(/\n  "runtime_kind" TEXT,\n  "adapter_version" TEXT,\n  "policy_version" TEXT,/, '')
+    .replace(/,\n  "pi_runtime_access" TEXT/, '')
+    .replace(/\n  "mode" TEXT NOT NULL DEFAULT 'workflow',\n  "agent_definition" JSONB,\n  "definition_digest" TEXT,/, '')
+    .replace(/,\n  CONSTRAINT build_versions_mode_payload CHECK \([\s\S]*?\n  \)/, '')
+    .replace(/\n  "source_version_id" TEXT REFERENCES "build_versions"\("id"\),/, '');
+  assert.equal(migrations[0].sql.trim(), legacyBaseline.trim());
   const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '');
   assert.equal(migrations[5].sql.trim(), freshFoundation.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');

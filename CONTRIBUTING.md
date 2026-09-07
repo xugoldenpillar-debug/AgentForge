@@ -121,7 +121,7 @@ pnpm build
 pnpm test:smoke
 ```
 
-`pnpm test` 与上面的 Node 测试命令等价。生产构建 smoke 先 `pnpm build`，再另开终端 `pnpm start`。
+`pnpm test` 与上面的 Node 测试命令等价，已覆盖 runtime 合约、DAG adapter、fake Pi 和 Bridge A 离线测试。`.env.example` 中 `PI_RUNTIME_ENABLED=false`，只有精确字符串 `true` 才开启。`pnpm test:pi-runtime` 在 CI 中运行，使用钉死的 `@earendil-works/pi-agent-core@0.85.1`，无付费调用。官方 Flash 样例仅 `PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live`。生产构建 smoke 先 `pnpm build`，再另开终端 `pnpm start`。
 
 测试环境与正式环境使用同一套 Next.js 应用。仅隔离测试环境设置
 `APP_ENV=test` 和 `DEMO_MODE=true`；默认不启用模拟模型。初始化仅补齐业务目录，
@@ -141,11 +141,9 @@ pnpm test:smoke
 
 每次结构变更同时维护 SQL 和 Drizzle 定义，并为旧库设计升级路径。`CREATE TABLE IF NOT EXISTS` 不能补字段，旧库的 `accounts.issuer` 由版本迁移 `0002_accounts_issuer.sql` 补齐，真实认证仍需单独 smoke。不要通过删除开发数据来掩盖迁移问题。
 
-仓库当前无 `pnpm-lock.yaml`，CI 使用 `pnpm install --no-frozen-lockfile`，依赖尚未完全锁定。下一次依赖治理应：
+仓库已跟踪 `pnpm-lock.yaml`，CI 使用 `pnpm install --frozen-lockfile`。使用 `pnpm@10.15.1`；跨分支先语义合并 package 清单，再以已有锁文件为基线重新生成并做冻结安装验证，不删除锁文件或顺带升级无关依赖。
 
-1. 使用项目指定 pnpm 生成锁文件。
-2. 验证安装、测试、类型检查、构建和数据库/认证集成。
-3. 提交锁文件并将 CI 安装改为 `--frozen-lockfile`。
+真实评测持久化/队列 Gate：显式设置本地 `MIGRATION_TEST_DATABASE_URL` 和 `REDIS_URL` 后执行 `pnpm test:evaluation-db`。该测试只创建并清理自己的 UUID 数据库和隔离队列；不使用真实模型。
 
 尚无 lint/format 脚本；新增工具需同步 package scripts、CI 和文档，不要只写检查口号。
 

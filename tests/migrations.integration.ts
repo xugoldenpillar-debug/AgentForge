@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));
@@ -76,7 +76,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     const snapshot = async () => {
       const results: Record<string, unknown> = {};
       for (const table of ['users', 'accounts', 'sessions', 'provider_credentials', 'builds', 'build_versions', 'runs', 'submissions']) {
-        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' AS row FROM public.${table} t ORDER BY id`);
+        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' - 'runtime_kind' - 'adapter_version' - 'policy_version' - 'pi_runtime_access' - 'mode' - 'agent_definition' - 'definition_digest' AS row FROM public.${table} t ORDER BY id`);
       }
       return JSON.stringify(results);
     };

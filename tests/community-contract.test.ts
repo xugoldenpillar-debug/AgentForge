@@ -135,14 +135,14 @@ test('accepts instruction-skill name, instruction, and an explicit text-only ref
 });
 
 test('rejects sparse arrays in strict definition collections', () => {
-  const examples = [];
+  const examples: unknown[] = [];
   examples.length = 1;
   assertDomainError(
     () => parseWorkflowRecipe(recipe({ examples })),
     ERROR_CODES.COMPONENT_DEFINITION_INVALID
   );
 
-  const references = [];
+  const references: unknown[] = [];
   references.length = 1;
   assertDomainError(
     () => parseInstructionSkill(instruction({ references })),
@@ -203,6 +203,7 @@ test('public projection includes only selected public material and redacts sensi
   } as unknown as PublicComponentProjectionSource;
 
   const projected = projectPublicComponent(source);
+  assert(projected.kind === 'instruction-skill');
   assert.deepEqual(projected.references.map((reference) => reference.path), ['references/guide.txt']);
   assert.deepEqual(projected.examples, []);
   assert.equal('credentials' in projected, false);

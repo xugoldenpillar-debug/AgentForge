@@ -39,6 +39,11 @@ Normal environments default to `APP_ENV=development`, `DEMO_MODE=false`. Even an
 for isolated test databases only, including when testing a production build locally.
 `NODE_ENV` does not opt in. Never deploy with the test environment configuration.
 
+Optional Pi runtime stays off unless `PI_RUNTIME_ENABLED` is the exact string `true`
+(`.env.example` defaults to `false`). Contributors do not install Pi; Node `<22.19.0`
+refuses Pi while the app `engines.node` remains `>=22.16.0`. This is an offline PoC,
+not a user-selectable runtime, sandbox, or competitive Run path.
+
 Database initialization inserts only reference challenges, cases, skills, tools and
 badges. It neither generates fake activity nor overwrites existing catalog records.
 No standard account is created. Register your account and configure Providers.
@@ -96,8 +101,19 @@ pnpm build
 pnpm db:migrate
 pnpm db:seed                 # reference catalog only
 pnpm test:migrations         # explicit isolated PostgreSQL target required
+pnpm test:evaluation-db      # isolated PostgreSQL + Redis; real worker completion gate
 pnpm test:smoke              # running isolated Next.js test server required
+node scripts/pi0-probe.mjs   # registry identity; does not mutate the app
+pnpm test:pi-runtime         # real SDK, fake stream; no paid calls
+# PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live   # authorized Flash sample only
 ```
+
+`pnpm test` includes runtime contract, DAG adapter, fake Pi, and Bridge A offline tests.
+`pnpm test:pi-runtime` is in CI and still makes no paid calls.
+Pi self-test fails closed when EF/outbox is configured; its status reports unavailable.
+Only standalone explicit test-mode Demo is supported until shared durable admission and
+accounting exist. Private Agent B1/B2 drafts cannot execute; B3 is not enabled.
+See `docs/MIGRATIONS.md` for immutable main/Pi ledger compatibility.
 
 For full-stack smoke, set `APP_ENV=test` and `DEMO_MODE=true` on the target Next.js
 process and point it at a disposable database. Smoke checks this mode before creating

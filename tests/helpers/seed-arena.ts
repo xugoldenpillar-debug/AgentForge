@@ -21,7 +21,7 @@ export async function seedTestArena(repo:Repository,demoUser?:User):Promise<void
       workflow.nodes=workflow.nodes.map((n,j)=>({...n,x:50+j*240,y:160}));
       workflow.edges=workflow.nodes.slice(1).map((n,j)=>({id:`edge-${j}`,source:workflow.nodes[j].id,target:n.id}));
       await tx.insert('builds',[{id,problemId:problem.id,userId:user.id,title:titles[i],visibility:'public',currentVersionId:versionId,parentBuildId:null,createdAt:now,updatedAt:now}]);
-      await tx.insert('buildVersions',[{id:versionId,buildId:id,revision:1,title:titles[i],visibility:'public',createdAt:now}]);
+      await tx.insert('buildVersions',[{mode:'workflow',agentDefinition:null,definitionDigest:null,id:versionId,buildId:id,revision:1,title:titles[i],visibility:'public',createdAt:now}]);
       await tx.insert('workflowNodes',workflow.nodes.map(n=>({...n,versionId})));await tx.insert('workflowEdges',workflow.edges.map(e=>({...e,versionId})));
       await tx.insert('buildSkills',[{id:`seed-bs-${i}`,versionId,skillId:skill}]);
       const tests=TEST_CASES.filter(t=>t.problemId===problem.id&&t.visibility==='hidden');

@@ -1,3 +1,4 @@
+import type { AgentBuildDefinition } from './agent-build-contract.ts';
 import type { ErrorCode } from './error-core.ts';
 import type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
 export type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
@@ -27,9 +28,24 @@ export interface Problem {
   constraints: Constraints; reward: number; worldBoss: boolean; status: 'active' | 'pending';
   authorId: string | null; createdAt: string;
 }
-export interface User { id: string; name: string; email: string; emailVerified: boolean; image: string | null; createdAt: string; updatedAt: string; elo: number; reputation: number; isSeed: boolean }
+export interface User {
+  id: string; name: string; email: string; emailVerified: boolean; image: string | null;
+  createdAt: string; updatedAt: string; elo: number; reputation: number; isSeed: boolean;
+  piRuntimeAccess?: 'applied' | 'invited' | null;
+}
 export interface Build { id: string; problemId: string; userId: string; title: string; visibility: 'public' | 'private'; currentVersionId: string; parentBuildId: string | null; createdAt: string; updatedAt: string }
-export interface BuildVersion { id: string; buildId: string; revision: number; title: string; visibility: 'public' | 'private'; createdAt: string }
+export interface BuildVersion {
+  id: string;
+  buildId: string;
+  revision: number;
+  title: string;
+  visibility: 'public' | 'private';
+  createdAt: string;
+  /** Missing only in legacy in-memory fixtures; PostgreSQL defaults to workflow. */
+  mode?: 'workflow' | 'agent';
+  agentDefinition?: AgentBuildDefinition | null;
+  definitionDigest?: string | null;
+}
 export interface StoredNode extends WorkflowNode { versionId: string }
 export interface StoredEdge extends WorkflowEdge { versionId: string }
 export interface Metrics { inputTokens: number; outputTokens: number; reasoningTokens: number; toolCalls: number; latency: number; cost: number | null; estimated: boolean }
@@ -37,7 +53,14 @@ export interface Trace { nodeId: string; kind: NodeKind; label: string; state: '
 export interface CaseResult extends Metrics { caseId: string; category: Category; passed: boolean; secure: boolean; failureType: string | null; input?: string; expected?: unknown; actual?: string; trace?: Trace[] }
 export interface Score { total: number; accuracy: number; robustness: number; security: number; efficiency: number; elegance: number; grades: Record<string, string> }
 export interface RunSummary { passed: number; total: number; failures: Record<string, number>; metrics: Metrics; score: Score; tier: Tier }
-export interface Run { id: string; buildId: string; versionId: string; problemId: string; userId: string; kind: RunKind; tier: Tier; status: 'running' | 'completed' | 'failed'; summary: RunSummary | null; createdAt: string }
+export interface Run {
+  id: string; buildId: string; versionId: string; problemId: string; userId: string;
+  kind: RunKind; tier: Tier; status: 'running' | 'completed' | 'failed';
+  summary: RunSummary | null; createdAt: string;
+  runtimeKind?: 'dag' | 'pi' | null;
+  adapterVersion?: string | null;
+  policyVersion?: string | null;
+}
 export interface RunCase extends CaseResult { id: string; runId: string }
 export interface Submission { id: string; runId: string; buildId: string; versionId: string; userId: string; problemId: string; tier: Tier; score: number; accuracy: number; robustness: number; security: number; efficiency: number; elegance: number; tokens: number; cost: number | null; latency: number; nodes: number; model: string; createdAt: string }
 export interface Credential { id: string; userId: string; name: string; baseUrl: string; modelId: string; ciphertext: string; lastFour: string; inputPrice: number | null; outputPrice: number | null; createdAt: string }
@@ -45,7 +68,7 @@ export interface FailureCase { id: string; problemId: string; buildId: string; v
 export interface Reputation { id: string; userId: string; points: number; reason: string; referenceId: string; createdAt: string }
 export interface Badge { id: string; name: string; description: string; icon: string }
 export interface UserBadge { id: string; userId: string; badgeId: string; createdAt: string }
-export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string }
+export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string; sourceVersionId?: string | null }
 export type EvaluationAssociationKind = 'competitive-run' | 'self-test-run' | 'component-evaluation';
 export type EvaluationOutboxStatus = 'pending' | 'leased' | 'published' | 'dead-letter';
 export interface EvaluationJobRow {

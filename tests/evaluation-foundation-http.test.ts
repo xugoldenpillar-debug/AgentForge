@@ -316,7 +316,9 @@ test('cancellation is a request first, is idempotent, and cannot turn a complete
     origin: ORIGIN,
     validateBody,
   });
-  assert.equal((await jsonResponse(afterConfirmation)).job.state, 'cancelled');
+  const confirmedJob = (await jsonResponse(afterConfirmation)).job;
+  assert(confirmedJob !== null && typeof confirmedJob === 'object' && 'state' in confirmedJob);
+  assert.equal(confirmedJob.state, 'cancelled');
 });
 
 test('completion wins a cancellation race and unknown work is never projected as successful', async () => {

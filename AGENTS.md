@@ -131,7 +131,7 @@ pnpm test:smoke
 
 ## 9. 当前工程缺口（不是已完成能力）
 
-- 仓库尚未提交 `pnpm-lock.yaml`，CI 当前使用 `--no-frozen-lockfile`。后续应以 `packageManager` 指定的 pnpm 生成并验证锁文件，再在同一 PR 将 CI 切到 `--frozen-lockfile`。
+- 仓库已跟踪 `pnpm-lock.yaml`；使用 `packageManager` 指定的 pnpm，CI 执行 `--frozen-lockfile`。依赖变更必须语义合并清单后重新生成并验证锁文件，禁止删除锁文件绕过冲突。
 - 尚未配置 lint/format 命令。版本化迁移已有实现；真实 PostgreSQL Gate 须以本次 `pnpm test:migrations` 结果为准，不得以单元测试替代。
 - 旧库的 `accounts.issuer` 由 `0002_accounts_issuer.sql` 以可重复执行的 nullable ADD COLUMN 补齐；升级后仍需验证真实注册/登录。
 - GitHub 分支保护是远端设置，本文件和 PR 模板不会自动启用。

@@ -62,3 +62,43 @@ See [project design map](../specs/README.md), [evaluation foundation](../specs/e
 The target keeps one Next.js application with independent Node workers. PostgreSQL owns business state and evidence; Redis/BullMQ coordinates delivery. Competitive Run and component SelfTestRun remain distinct records under common evaluation jobs/attempts. Verified execution reuses this foundation while retaining its separate private model gateway, Ticket/Profile/Season/Receipt gates. Pi is an optional execution adapter, not an alternative web application or a security sandbox.
 
 Public caching may be eventually consistent; permissions, credential revocation, execution eligibility and budget are authoritative checks. Queue waiting time is distinct from execution latency used for scoring. Component self-test detail retention does not override Gateway audit retention. See the design map for scope and cross-branch dependencies; no historical Portable data is deleted by this design.
+
+## Optional Pi adapter — current vs target
+
+Target: a second task runtime behind the same platform adapter boundary, default off, never a sandbox and never mixed into competitive leaderboards.
+
+Current: optional Pi adapter behind `PI_RUNTIME_ENABLED` (exact string `true`; default `false`). Competitive `ArenaService.run` goes through the DAG adapter onto the same `executeWorkflow`; new `runs` rows store nullable DAG identity and are not backfilled. Pi is not a sandbox, has no public UI selector, and does not write competitive submissions. Bridge A reuses official Flash safe fetch; Bridge B stays unavailable. Invited/public enablement is still off.
+
+## Pi/main integration safety boundary
+
+Private Agent B1/B2 drafts coexist with community components and durable evaluation,
+without enabling B3 or sandbox execution. Both competitive enqueue and the worker inspect
+the selected **immutable BuildVersion mode** before provider or invocation work. A current
+Build pointer changing later does not invalidate a queued Workflow version. Existing
+community/private projections and exact-version Fork ACLs remain authoritative.
+
+Pi demo self-test is allowed only with explicit `APP_ENV=test`, `DEMO_MODE=true`,
+invitation/flag/engine gates, and **no EF scheduler configured**. With an EF scheduler
+(or outbox environment setting), both status and execution fail closed, even for Demo:
+the legacy lease is not shared durable admission, and checking for active jobs first
+would not make it atomic. Real credential self-test now fails
+closed with `RUNTIME_UNAVAILABLE` before credential lookup/decryption, execution lease,
+adapter construction or network calls: the request-bound Pi bridge has not been wired
+to shared EF reservations, quotas and usage receipts. Offline real-SDK tests are not
+production self-test admission. The main EF worker retains its existing executor/outbox
+and evidence path; it is not silently relabeled as the PoC DAG adapter.
+
+The durable Run adapter recovers only an exact PostgreSQL `runs_pkey` insertion race.
+It rereads the same user's Run, validates immutable identity and uses the committed
+winner's timestamp in the snapshot digest. Other database errors and mismatched
+idempotency requests are not swallowed. A real DB/BullMQ regression covers this race.
+
+New EF competitive Runs identify runtime kind `dag`, but adapter/policy identity stays
+null: their existing frozen EF policy snapshot is authoritative, not `poc-dag-v1` or
+`poc-t4-v1`. Existing rows are not backfilled.
+
+The independent production worker uses the same durable competitive completion
+adapter as the web scheduler. `createProductionWorkerService` is exercised by the real
+PostgreSQL/BullMQ gate: a worker with only model execution options cannot finalize a
+Run/Submission and would conservatively leave an unknown Job after usage was recorded.
+The integration fixes that composition without replaying or deleting unknown work.

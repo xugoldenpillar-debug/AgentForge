@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS "users" (
   "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
   "elo" INTEGER NOT NULL DEFAULT 1000,
   "reputation" INTEGER NOT NULL DEFAULT 0,
-  "is_seed" BOOLEAN NOT NULL DEFAULT false
+  "is_seed" BOOLEAN NOT NULL DEFAULT false,
+  "pi_runtime_access" TEXT
 );
 CREATE TABLE IF NOT EXISTS "sessions" (
   "id" TEXT PRIMARY KEY,
@@ -86,11 +87,20 @@ CREATE TABLE IF NOT EXISTS "builds" (
 CREATE TABLE IF NOT EXISTS "build_versions" (
   "id" TEXT PRIMARY KEY,
   "build_id" TEXT NOT NULL REFERENCES "builds"("id") ON DELETE CASCADE,
+  "mode" TEXT NOT NULL DEFAULT 'workflow',
+  "agent_definition" JSONB,
+  "definition_digest" TEXT,
   "revision" INTEGER NOT NULL,
   "title" TEXT NOT NULL,
   "visibility" TEXT NOT NULL,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE ("build_id", "revision")
+  UNIQUE ("build_id", "revision"),
+  CONSTRAINT build_versions_mode_payload CHECK (
+    (mode = 'workflow' AND agent_definition IS NULL AND definition_digest IS NULL)
+    OR (mode = 'agent' AND visibility = 'private' AND agent_definition IS NOT NULL
+      AND COALESCE(agent_definition->>'mode' = 'agent', false) AND COALESCE(agent_definition->>'definitionSchemaVersion' = '1', false)
+      AND definition_digest IS NOT NULL AND definition_digest ~ '^sha256:[0-9a-f]{64}$')
+  )
 );
 CREATE TABLE IF NOT EXISTS "workflow_nodes" (
   "id" TEXT NOT NULL,
@@ -145,6 +155,9 @@ CREATE TABLE IF NOT EXISTS "runs" (
   "tier" TEXT NOT NULL,
   "status" TEXT NOT NULL,
   "summary" JSONB,
+  "runtime_kind" TEXT,
+  "adapter_version" TEXT,
+  "policy_version" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS "run_cases" (
@@ -237,6 +250,7 @@ CREATE TABLE IF NOT EXISTS "user_badges" (
   UNIQUE ("user_id", "badge_id")
 );
 CREATE TABLE IF NOT EXISTS "fork_relations" (
+  "source_version_id" TEXT REFERENCES "build_versions"("id"),
   "id" TEXT PRIMARY KEY,
   "parent_build_id" TEXT NOT NULL REFERENCES "builds"("id") ON DELETE CASCADE,
   "child_build_id" TEXT NOT NULL UNIQUE REFERENCES "builds"("id") ON DELETE CASCADE,

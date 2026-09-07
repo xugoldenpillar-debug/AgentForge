@@ -291,3 +291,50 @@ export async function pollEvaluation(
     delay = Math.min(maxDelay, delay * 2);
   }
 }
+
+export async function consumePiSelfTest(
+  body: unknown,
+  onEvent: (event: Record<string, unknown>) => void,
+  signal: AbortSignal
+): Promise<void> {
+  const response = await fetch('/api/arena/pi-self-test', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal
+  });
+  if (!response.ok) {
+    const data = await readPayload(response);
+    throw normalizeApiError(data, 'Pi self-test failed.', response.status);
+  }
+  if (!response.body) throw new ApiError('No execution stream was returned.', 502, 'INTERNAL_SERVER_ERROR');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let split: number;
+    while ((split = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, split);
+      buffer = buffer.slice(split + 1);
+      if (!line.trim()) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        throw new ApiError('Run stream returned invalid data.', 502, 'INTERNAL_SERVER_ERROR');
+      }
+      if (!isRecord(parsed)) throw new ApiError('Run stream returned invalid data.', 502, 'INTERNAL_SERVER_ERROR');
+      if (parsed.type === 'error') throw normalizeApiError({ error: parsed }, 'Pi self-test failed.', 502);
+      onEvent(parsed);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const parsed = JSON.parse(buffer) as Record<string, unknown>;
+    if (parsed.type === 'error') throw normalizeApiError({ error: parsed }, 'Pi self-test failed.', 502);
+    onEvent(parsed);
+  }
+}

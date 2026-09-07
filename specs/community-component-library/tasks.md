@@ -61,13 +61,13 @@ T5 可仅使用 DAG 完成；Pi 不必进入首版发布。T6 依赖角色和审
 - 追踪：R2、R3、R5、R8、R15。
 
 ### T4：平台运行时接口 + 可选 Pi PoC
-- [ ] 定义安全 Context／Event，现有 DAG adapter 无行为变化。
-- [ ] 新运行记录运行时身份；旧数据不伪造精确版本。
-- [ ] 冻结 Pi 版本并完成 PI0–PI2；服务端可选加载、不进入浏览器打包路径。
-- [ ] Feature Flag 默认关闭；没有默认宿主工具、配置发现或网络旁路。
-- [ ] 明确 DAG 图和 Pi 单 Agent 定义不同，不自动转换执行语义。
-- Gate：原有回归通过；离线测试证实工具、模型桥接、隔离、限制和错误映射。
-- 追踪：R12、R13、R15。PI3/PI4 可独立后续 PR，不阻塞 T5 DAG 路径。
+- [x] 定义安全 Context／Event，现有 DAG adapter 无行为变化。（`src/shared/runtime-contract.ts`、`src/lib/runtime/dag-adapter.ts`、`tests/runtime-contract.test.ts`、`tests/runtime-dag.test.ts`。`ArenaService.run`／`hunt` 经 DAG adapter 调用同一 `executeWorkflow`，公开 trace 仍即时转发。）
+- [x] 新运行记录运行时身份；旧数据不伪造精确版本。（`0007_runs_runtime_identity.sql`（Pi 原历史为 0003）为可空 `runtime_kind`／`adapter_version`／`policy_version`。新竞技 run 写 `dag`；旧行不回填。Pi 不写 `submissions`。）
+- [x] 冻结 Pi 版本并完成 PI0–PI2；服务端可选加载、不进入浏览器打包路径。（PI0：`@earendil-works/pi-agent-core@0.85.1` 精确钉在 dependencies。PI1/PI2：fake 适配器 + `tests/runtime-pi-fake.test.ts`。`load.ts` 动态 import 字符串 specifier。`pnpm test:pi-runtime` 在 CI，无付费调用。PI3 Bridge A 走官方 Flash 安全出口；Bridge B 仍不可用。公共 UI 选择器未做。）
+- [x] Feature Flag 默认关闭；没有默认宿主工具、配置发现或网络旁路。（`PI_RUNTIME_ENABLED` 必须等于 `'true'`；`.env.example` 默认 `false`。coding-agent 工具名、`resourceLoader`／宿主目录发现被拒绝；fake `streamFn` 不 `fetch`。）
+- [x] 明确 DAG 图和 Pi 单 Agent 定义不同，不自动转换执行语义。（`RunDefinition` 为互斥联合；合约测试拒绝互相套用；Pi adapter 拒绝 DAG 定义且不回退。）
+- Gate：离线测试覆盖工具允许列表、隔离、预算、取消、错误脱敏；Bridge A 离线 wire 测试 + 可选 `PI_RUNTIME_LIVE` Flash 样例。无公共 UI、无混榜。
+- 追踪：R12、R13、R15。PI3 Bridge A 和 PI4 部分实现/历史样本已存在；不代表完整发布 Gate 通过，本次代码工作包回报 test 155 passed、Pi SDK 20 passed / 1 skipped、typecheck/build passed（非本文件作者重跑，非生产验收）。见 [Pi 当前状态与剩余 Gate](../pi-runtime/design.md)。后续验收不阻塞 T5 DAG 设计路径；T5 开放仍依赖 EF。
 
 ### T5：组件自测
 - [ ] 自测独立业务入口／记录，复用执行与评分算法，不创建竞技 Submission／声望。
@@ -117,10 +117,12 @@ T5 可仅使用 DAG 完成；Pi 不必进入首版发布。T6 依赖角色和审
 
 每个 PR 更新验证文档与对应勾选项，记录实际命令、版本、结果、未执行原因。
 已存在命令：`pnpm test`、`pnpm test:provider-sdk`、`pnpm typecheck`、`pnpm build`、`pnpm test:migrations`、`pnpm test:smoke`。后两项需要专用测试数据库／运行中的本地服务，不能默默指向生产。
-新增测试脚本必须同 PR 写入 package scripts 与 CI；原生测试不得引入 Pi 安装依赖。
+`pnpm test` 覆盖 runtime 合约／DAG adapter／fake Pi／Bridge A 离线测试。`pnpm test:pi-runtime` 在 CI，使用已钉版本的 `pi-agent-core`，仍无付费调用。`PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live` 才打官方 Flash 样例，不进 CI。
 真实付费验证与生产部署始终另行取得范围、费用和环境授权。本设计不继承历史 Flash 测试的无限调用许可。
 
 ## 未来独立工作流
+
+[Agent Build 首批设计](../agent-mode/README.md) 提供五份候选契约与 A–F 阶段；未实现、不授权全量实施，不改变 T5 独立 SelfTestRun 或既有 Profile/队列/预算归属。
 
 - 可执行 Skill：隔离、依赖构建、解包安全、资源／网络限制、执行准入、撤销 Gate。
 - 只读 MCP：服务身份、工具权限、用户数据与凭据、网络／版本漂移 Gate。

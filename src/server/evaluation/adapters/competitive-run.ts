@@ -134,7 +134,6 @@ export class CompetitiveRunAdapter {
     const runId = input.runId ?? deterministicRunId(input.userId, input.idempotencyKey, this.createId);
     let run = (await this.repository.read('runs', { id: runId, userId: input.userId }))[0];
     const capturedAt = input.capturedAt ?? run?.createdAt ?? this.now();
-    const snapshot = createSnapshot(input, capturedAt);
     const association: EvaluationAssociation = {
       kind: 'competitive-run',
       runId: asOpaqueId<'run'>(runId),
@@ -153,12 +152,28 @@ export class CompetitiveRunAdapter {
         status: 'running',
         summary: null,
         createdAt: capturedAt,
+        runtimeKind: 'dag',
+        // EF executes its own durable path, not the PoC adapter/policy versions.
+        adapterVersion: null,
+        policyVersion: null,
       };
-      await this.repository.insert('runs', [run]);
+      try {
+        await this.repository.insert('runs', [run]);
+      } catch (error) {
+        // Concurrent identical requests can both observe an absent Run. Recover
+        // only the exact Run PK race; all other storage failures remain failures.
+        if (!isRunPrimaryKeyConflict(error)) throw error;
+        const winner = (await this.repository.read('runs', {id: runId, userId: input.userId}))[0];
+        if (!winner) throw error;
+        assertSameRun(winner, input);
+        run = winner;
+      }
     } else {
       assertSameRun(run, input);
     }
 
+    // The committed winner owns capturedAt, which is part of the snapshot digest.
+    const snapshot = createSnapshot(input, input.capturedAt ?? run.createdAt);
     let job: CreateEvaluationJobResult;
     try {
       job = await this.scheduler.createJob({
@@ -353,4 +368,14 @@ async function persistRunCases(
   const existing = new Set((await tx.read('runCases', { runId })).map((row) => row.caseId));
   const fresh = results.filter((result) => !existing.has(result.caseId));
   if (fresh.length > 0) await tx.insert('runCases', fresh.map((result) => ({ ...result, id: createId(), runId })));
+}
+
+function isRunPrimaryKeyConflict(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 3 && current && typeof current === 'object'; depth++) {
+    const record = current as Record<string, unknown>;
+    if (record.code === '23505' && record.constraint_name === 'runs_pkey' && record.table_name === 'runs') return true;
+    current = record.cause;
+  }
+  return false;
 }

@@ -17,6 +17,12 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U agentforge -d agentforge"
           --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -25,14 +31,24 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm run setup
       - name: Isolated PostgreSQL migration matrix
         run: pnpm test:migrations
         env:
           MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+      - name: Agent draft PostgreSQL CAS and persistence
+        run: pnpm exec tsx --test tests/agent-drafts.integration.ts
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+      - name: Real PostgreSQL and BullMQ evaluation gate
+        run: pnpm test:evaluation-db
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+          REDIS_URL: redis://127.0.0.1:6379
       - run: pnpm db
       - run: pnpm test
+      - run: pnpm test:pi-runtime
       - run: pnpm test:provider-sdk
       - run: pnpm typecheck
       - run: pnpm build
