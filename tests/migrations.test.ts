@@ -51,7 +51,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);

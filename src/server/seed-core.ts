@@ -1,3 +1,4 @@
+import { seedAnimationChallenges } from './animation-challenges.ts';
 import type { Repository, TableName, Tables } from '../shared/types.ts';
 import { SKILLS, TOOLS, BADGES } from '../shared/catalog.ts';
 import { PROBLEMS, TEST_CASES } from './fixtures.ts';
@@ -15,5 +16,6 @@ export async function seedCore(repo: Repository): Promise<void> {
     await insertMissing('skills', SKILLS);
     await insertMissing('tools', TOOLS);
     await insertMissing('badges', BADGES);
+    await seedAnimationChallenges(tx);
   });
 }

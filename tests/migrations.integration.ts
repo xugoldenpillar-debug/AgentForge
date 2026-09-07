@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));
@@ -65,6 +65,8 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       'showcase_ballots',
       'showcase_votes',
       'showcase_audit_events',
+      'animation_challenges',
+      'animation_challenge_versions',
     ];
     const freshTables = await sql`
       SELECT table_name
@@ -74,6 +76,24 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       ORDER BY table_name
     `;
     assert.deepEqual(freshTables.map(row => row.table_name), [...durableTables].sort());
+    const { ANIMATION_CHALLENGES, ANIMATION_CHALLENGE_VERSIONS } = await import('../src/server/animation-challenges.ts');
+    for (const challenge of ANIMATION_CHALLENGES) {
+      await sql`INSERT INTO animation_challenges(id, slug, position, status)
+        VALUES (${challenge.id}, ${challenge.slug}, ${challenge.position}, ${challenge.status})`;
+    }
+    for (const version of ANIMATION_CHALLENGE_VERSIONS) {
+      await sql`INSERT INTO animation_challenge_versions
+        (id, challenge_id, version_number, title, title_en, instructions, instructions_en, output_policy_version, content_digest)
+        VALUES (${version.id}, ${version.challengeId}, ${version.versionNumber}, ${version.title},
+          ${version.titleEn}, ${version.instructions}, ${version.instructionsEn}, ${version.outputPolicyVersion}, ${version.contentDigest})`;
+    }
+    const catalogBefore = await sql`SELECT * FROM animation_challenge_versions ORDER BY id`;
+    // Replaying this additive DDL preserves both versions and all original bytes.
+    await sql.unsafe(migrations.at(-1)!.sql);
+    assert.deepEqual(await sql`SELECT * FROM animation_challenge_versions ORDER BY id`, catalogBefore);
+    await assert.rejects(sql`INSERT INTO animation_challenges(id, slug, position, status)
+      VALUES ('duplicate-slug', 'pelican-bike', 3, 'published')`, { code: '23505' });
+    await assert.rejects(sql`DELETE FROM animation_challenges WHERE slug = 'pelican-bike'`, { code: '23503' });
     // Destructive reset is confined to the database created above.
     await sql.unsafe('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
     await sql.unsafe(await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8'));

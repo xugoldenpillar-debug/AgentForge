@@ -183,3 +183,15 @@ Static visual tasks are the first user-facing sample; Python CSV/JSON/report rem
 deterministic engineering track. See the [current status and evidence](docs/verification/artifact-arena-spec-2026-09-07.md);
 contract tests and a successful build are not production sandbox, model, browser or
 public-voting acceptance.
+
+### Two animation challenges: implementation in progress
+
+The [two-challenge launch specification](specs/artifact-arena/launch/README.md) targets
+SVG animations of a pelican on a bicycle and Qin Shi Huang on a polar bear.
+Migration 0012 and reference seed now persist their original prompts, English
+translations and version digests. `GET /api/arena/animation-challenges` lists
+published catalog entries with execution explicitly unavailable. This is catalog
+publication only, not a working animation-creation product. See the
+[implementation map and unresolved release parameters](specs/artifact-arena/launch/implementation-status.md).
+
+Current slice verification: [2026-09-07 isolated checks](docs/verification/animation-launch-df6c-2026-09-07.md).

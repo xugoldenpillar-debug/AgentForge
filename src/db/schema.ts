@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, boolean, integer, doublePrecision, jsonb, timestamp, primaryKey, uniqueIndex, index, check } from "drizzle-orm/pg-core";
+import { pgTable, text, boolean, integer, doublePrecision, jsonb, timestamp, primaryKey, unique, uniqueIndex, index, check } from "drizzle-orm/pg-core";
 
 export const user = pgTable("users", {
   id: text("id").primaryKey(),
@@ -917,7 +917,41 @@ export const showcaseAuditEvents = pgTable("showcase_audit_events", {
   check("showcase_audit_metadata_check", sql`jsonb_typeof(${t.metadata}) = 'object'`),
 ]);
 
+export const animationChallenges = pgTable("animation_challenges", {
+  id: text("id").primaryKey(),
+  slug: text("slug").notNull().unique(),
+  position: integer("position").notNull(),
+  status: text("status").notNull(),
+}, (t) => [
+  check("animation_challenges_position_check", sql`${t.position} > 0`),
+  check("animation_challenges_status_check", sql`${t.status} IN ('draft', 'published', 'retired')`),
+]);
+
+// Application writes are insert-only; seed rejects changes to existing versions.
+export const animationChallengeVersions = pgTable("animation_challenge_versions", {
+  id: text("id").primaryKey(),
+  challengeId: text("challenge_id").notNull().references(() => animationChallenges.id, { onDelete: "restrict" }),
+  versionNumber: integer("version_number").notNull(),
+  title: text("title").notNull(),
+  titleEn: text("title_en").notNull(),
+  instructions: text("instructions").notNull(),
+  instructionsEn: text("instructions_en").notNull(),
+  outputPolicyVersion: text("output_policy_version").notNull(),
+  contentDigest: text("content_digest").notNull(),
+}, (t) => [
+  unique("animation_challenge_versions_challenge_id_version_number_key").on(t.challengeId, t.versionNumber),
+  check("animation_challenge_versions_version_number_check", sql`${t.versionNumber} > 0`),
+  check("animation_challenge_versions_title_check", sql`length(${t.title}) BETWEEN 1 AND 120`),
+  check("animation_challenge_versions_title_en_check", sql`length(${t.titleEn}) BETWEEN 1 AND 120`),
+  check("animation_challenge_versions_instructions_check", sql`length(${t.instructions}) BETWEEN 1 AND 16384`),
+  check("animation_challenge_versions_instructions_en_check", sql`length(${t.instructionsEn}) BETWEEN 1 AND 16384`),
+  check("animation_challenge_versions_output_policy_version_check", sql`${t.outputPolicyVersion} = 'svg-animation-v1'`),
+  check("animation_challenge_versions_content_digest_check", sql`${t.contentDigest} ~ '^sha256:[a-f0-9]{64}$'`),
+]);
+
 export const tableRegistry = {
+  animationChallenges,
+  animationChallengeVersions,
   users: user,
   problems,
   testCases,

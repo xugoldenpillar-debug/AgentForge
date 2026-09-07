@@ -1,3 +1,4 @@
+import type { AnimationChallenge, AnimationChallengeVersion } from './animation-challenge.ts';
 import type { AgentBuildDefinition } from './agent-build-contract.ts';
 import type {
   ArtifactBundleStatus,
@@ -505,6 +506,8 @@ export type TestRun = ComponentTestRun;
 export type Review = PublicationReview;
 export type Release = ComponentRelease;
 export interface Tables {
+  animationChallenges: AnimationChallenge;
+  animationChallengeVersions: AnimationChallengeVersion;
   users: User; problems: Problem; testCases: TestCase; builds: Build; buildVersions: BuildVersion;
   workflowNodes: StoredNode; workflowEdges: StoredEdge; skills: CatalogSkill; tools: CatalogTool;
   buildSkills: {id: string; versionId: string; skillId: SkillId}; buildTools: {id: string; versionId: string; toolId: ToolId};

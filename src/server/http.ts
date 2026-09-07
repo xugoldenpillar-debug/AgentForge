@@ -1,3 +1,4 @@
+import { listAnimationChallenges } from './animation-challenges.ts';
 import { AppError, ensure, ERROR_CODES, safeError } from '../shared/errors.ts';
 import {
   EVALUATION_WORKER_MESSAGE_VERSION,
@@ -442,6 +443,9 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         const row = (await service.repo.read('evaluationJobs', { businessRecordId: path[1], associationKind: 'competitive-run' }))[0];
         ensure(row && row.userId === uid, 'Evaluation not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
         return json(await evaluationStatus(service, uid, row));
+      }
+      if (path[0] === 'animation-challenges' && path.length === 1) {
+        return json(await listAnimationChallenges(service.repo));
       }
       if (path[0] === 'boot') return json(await service.boot());
       if (path[0] === 'overview') return json(await service.overview());
