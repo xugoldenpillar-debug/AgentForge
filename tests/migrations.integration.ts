@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));
@@ -89,7 +89,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     }
     const catalogBefore = await sql`SELECT * FROM animation_challenge_versions ORDER BY id`;
     // Replaying this additive DDL preserves both versions and all original bytes.
-    await sql.unsafe(migrations.at(-1)!.sql);
+    await sql.unsafe(migrations.find(migration => migration.version === '0012')!.sql);
     assert.deepEqual(await sql`SELECT * FROM animation_challenge_versions ORDER BY id`, catalogBefore);
     await assert.rejects(sql`INSERT INTO animation_challenges(id, slug, position, status)
       VALUES ('duplicate-slug', 'pelican-bike', 3, 'published')`, { code: '23505' });
@@ -101,7 +101,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     const snapshot = async () => {
       const results: Record<string, unknown> = {};
       for (const table of ['users', 'accounts', 'sessions', 'provider_credentials', 'builds', 'build_versions', 'runs', 'submissions']) {
-        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' - 'runtime_kind' - 'adapter_version' - 'policy_version' - 'pi_runtime_access' - 'mode' - 'agent_definition' - 'definition_digest' AS row FROM public.${table} t ORDER BY id`);
+        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' - 'runtime_kind' - 'adapter_version' - 'policy_version' - 'pi_runtime_access' - 'mode' - 'agent_definition' - 'definition_digest' - 'protocol' AS row FROM public.${table} t ORDER BY id`);
       }
       return JSON.stringify(results);
     };
@@ -111,6 +111,12 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     const concurrent = await Promise.all([runMigrations(database, migrations), runMigrations(database, migrations)]);
     assert.deepEqual(concurrent.map(result => result.applied.length).sort(), [0, expectedMigrationCount]);
     assert.equal(await snapshot(), before);
+    const legacyProtocols = await connection`SELECT protocol FROM provider_credentials`;
+    assert.ok(legacyProtocols.length > 0);
+    assert.ok(legacyProtocols.every(row => row.protocol === 'openai-chat'));
+    await assert.rejects(connection`UPDATE provider_credentials SET protocol = 'auto'`, { code: '23514' });
+    await connection.unsafe(migrations.find(migration => migration.version === '0013')!.sql);
+    assert.deepEqual(await connection`SELECT protocol FROM provider_credentials`, legacyProtocols);
     assert.deepEqual(await connection.unsafe(`SELECT id, problem_id, user_id, title, visibility, current_version_id, parent_build_id, created_at, updated_at FROM public.builds WHERE id = 'migration-build'`), legacyBuildBefore);
     assert.deepEqual(await connection.unsafe(`SELECT id, build_id, revision, title, visibility, created_at FROM public.build_versions WHERE id = 'migration-version'`), legacyBuildVersionBefore);
     assert.equal((await runMigrations(database, migrations)).skipped, expectedMigrationCount);

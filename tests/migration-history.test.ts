@@ -31,7 +31,7 @@ test('only exact Pi prefixes select the audited alternate sequence; ledger input
     assert.deepEqual(selected.slice(5).map(row => row.name), [
       '0006_community_component_library.sql', '0007_community_audit_events.sql',
       '0008_component_attachment_contents.sql', '0009_evaluation_foundation.sql',
-      '0010_artifact_arena_foundation.sql', '0011_artifact_arena_showcase.sql', '0012_animation_challenge_catalog.sql',
+      '0010_artifact_arena_foundation.sql', '0011_artifact_arena_showcase.sql', '0012_animation_challenge_catalog.sql', '0013_provider_protocol.sql', '0014_creation_evaluation.sql',
     ]);
     assert.equal(selected[5].checksum, canonical[2].checksum);
     assert.equal(selected.filter(row => row.sql.includes('ADD CONSTRAINT build_versions_mode_payload')).length, 1);

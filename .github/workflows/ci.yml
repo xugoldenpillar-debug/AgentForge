@@ -51,6 +51,7 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
       - run: pnpm db
       - run: pnpm test
+      - run: pnpm test:deploy
       - run: pnpm test:pi-runtime
       - run: pnpm test:provider-sdk
       - run: pnpm typecheck

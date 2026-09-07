@@ -61,6 +61,7 @@ export interface CreationRunRecordInput {
   readonly buildVersionId: string;
   readonly briefId: string;
   readonly briefVersionId: string;
+  readonly challengeVersionId?: string | null;
   readonly environmentTemplateId: string;
   readonly environmentTemplateVersionId: string;
   readonly evaluationJobId?: string | null;
@@ -89,6 +90,9 @@ export function toCreationRunRow(input: CreationRunRecordInput): CreationRun {
     buildVersionId: recordId(input.buildVersionId, 'creation run build version id'),
     briefId: recordId(input.briefId, 'creation run brief id'),
     briefVersionId: recordId(input.briefVersionId, 'creation run brief version id'),
+    challengeVersionId: input.challengeVersionId === undefined || input.challengeVersionId === null
+      ? null
+      : recordId(input.challengeVersionId, 'creation challenge version id'),
     environmentTemplateId: recordId(input.environmentTemplateId, 'creation run environment template id'),
     environmentTemplateVersionId: recordId(input.environmentTemplateVersionId, 'creation run environment template version id'),
     evaluationJobId: input.evaluationJobId === undefined || input.evaluationJobId === null

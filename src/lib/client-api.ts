@@ -146,10 +146,10 @@ export type EvaluationAttemptState =
 export interface EvaluationStatus {
   job: {
     id: string;
-    purpose: 'competitive' | 'author-self-test' | 'component-evaluation';
+    purpose: 'competitive' | 'author-self-test' | 'component-evaluation' | 'creation';
     state: EvaluationJobState;
     association: {
-      kind: 'competitive-run' | 'self-test-run' | 'component-evaluation';
+      kind: 'competitive-run' | 'self-test-run' | 'component-evaluation' | 'creation-run';
       runId?: string;
       visibility?: 'public' | 'hidden';
       businessRecordId?: string;
@@ -157,7 +157,7 @@ export interface EvaluationStatus {
     snapshot: {
       schemaVersion: number;
       buildVersionId: string;
-      testSuiteVersionId: string;
+      testSuiteVersionId: string | null;
       runtimeAdapter: string;
       modelOfferingId: string | null;
       policyVersion: string;

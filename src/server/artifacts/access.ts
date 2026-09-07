@@ -53,6 +53,28 @@ export interface ArtifactStorageAdapter {
   read(request: ArtifactStorageReadRequest): Promise<ArtifactStorageReadResult>;
 }
 
+export interface ArtifactStorageWriteRequest {
+  readonly ownerId: string;
+  readonly bundleId: string;
+  readonly artifactId: string;
+  readonly storageKey: string;
+  readonly objectVersion: string;
+  readonly bytes: Uint8Array;
+}
+
+export interface ArtifactStorageWriteResult {
+  readonly storageKey: string;
+  readonly objectVersion: string;
+}
+
+/** Write side of the immutable object-store seam. Implementations must be create-only. */
+export interface ArtifactStorageWriter {
+  write(request: ArtifactStorageWriteRequest): Promise<ArtifactStorageWriteResult>;
+  remove?(request: Pick<ArtifactStorageWriteRequest, 'storageKey' | 'objectVersion'>): Promise<void>;
+}
+
+export type ArtifactStorageAdapterWithWriter = ArtifactStorageAdapter & ArtifactStorageWriter;
+
 /** Explicit fail-closed placeholder until a durable immutable store is wired. */
 export class UnavailableArtifactStorageAdapter implements ArtifactStorageAdapter {
   async read(_request: ArtifactStorageReadRequest): Promise<ArtifactStorageReadResult> {

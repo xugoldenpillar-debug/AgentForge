@@ -1,3 +1,5 @@
+export { RunscSandboxProvider } from './runsc.ts';
+export type { RunscCommandRunner, RunscSandboxProviderOptions } from './runsc.ts';
 export { InMemorySandboxProvider } from './in-memory.ts';
 export { computeSandboxSnapshotDigest, isSha256Digest } from './snapshot-digest.ts';
 export {

@@ -6,6 +6,13 @@ AgentForge has one application runtime: **Next.js + PostgreSQL + Better Auth**.
 Development and isolated testing use the same application. The early Portable preview
 has been retired; existing local data is not deleted or migrated.
 
+## Deployment status / 部署状态
+
+[hubei deployment and sandbox verification / hubei 部署与沙箱验收](docs/deployment/hubei-byok.md)
+contains pinned gVisor installation, real lifecycle probes, application release/rollback scripts,
+and explicit launch blockers. **The animation creation product is not yet production-wired;
+these scripts do not complete or enable L0–L8.**
+
 ## Run the application
 
 Prerequisites: Node.js >=22.16, Corepack/pnpm, Docker with Compose, internet access for dependency installation.
@@ -195,3 +202,18 @@ publication only, not a working animation-creation product. See the
 [implementation map and unresolved release parameters](specs/artifact-arena/launch/implementation-status.md).
 
 Current slice verification: [2026-09-07 isolated checks](docs/verification/animation-launch-df6c-2026-09-07.md).
+
+### BYOK protocol selection
+
+Provider settings now offer explicit OpenAI-compatible Chat Completions, OpenAI
+Responses, Anthropic Messages and Gemini native protocols. Existing credentials
+remain Chat Completions after migration 0013. API keys stay encrypted and server-side.
+Every protocol uses the same HTTPS host allowlist, pinned public DNS and redirect
+restrictions; selecting a protocol does **not** grant a new host access. Configure
+the exact trusted host through the existing operator allowlist before use.
+
+Native SDK wire/authentication/usage/cancellation tests run offline through
+`pnpm test:provider-sdk` in CI. They are not live vendor acceptance. The
+[BYOK-first change](specs/artifact-arena/launch/byok-first.md) defers monetary caps
+for the future animation creation path, not legacy DAG budgets or other resource
+limits. Protocol selection does not yet connect creation v2 or open the sandbox.

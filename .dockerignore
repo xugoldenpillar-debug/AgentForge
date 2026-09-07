@@ -16,3 +16,6 @@ coverage
 *.p12
 *.pfx
 .DS_Store
+
+# Local agent settings are not application source.
+.codex

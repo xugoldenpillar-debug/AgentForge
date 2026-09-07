@@ -37,14 +37,14 @@ export const SVG_ANIMATION_POLICY = Object.freeze({
 
 /** Candidate limits, not a spending authorization or implemented quota counter. */
 export const ANIMATION_LAUNCH_LIMITS = Object.freeze({
-  version: 'animation-launch-v1',
+  version: 'animation-launch-byok-v1',
   activeRunsPerUser: 1,
   queuedRunsPerUser: 3,
   newRunsPerRollingDay: 10,
   wallTimeSeconds: 120,
   tokensPerRun: 16_000,
   toolCallsPerRun: 40,
-  costPerRunUsd: 0.10,
+  costPerRunUsd: null,
   minimumValidVotes: 20,
   minimumIndependentVoters: 10,
 } as const);

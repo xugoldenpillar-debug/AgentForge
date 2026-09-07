@@ -1,3 +1,4 @@
+import type { ProviderProtocol } from './provider-protocol.ts';
 import type { AnimationChallenge, AnimationChallengeVersion } from './animation-challenge.ts';
 import type { AgentBuildDefinition } from './agent-build-contract.ts';
 import type {
@@ -78,7 +79,7 @@ export interface Run {
 }
 export interface RunCase extends CaseResult { id: string; runId: string }
 export interface Submission { id: string; runId: string; buildId: string; versionId: string; userId: string; problemId: string; tier: Tier; score: number; accuracy: number; robustness: number; security: number; efficiency: number; elegance: number; tokens: number; cost: number | null; latency: number; nodes: number; model: string; createdAt: string }
-export interface Credential { id: string; userId: string; name: string; baseUrl: string; modelId: string; ciphertext: string; lastFour: string; inputPrice: number | null; outputPrice: number | null; createdAt: string }
+export interface Credential { protocol?: ProviderProtocol; id: string; userId: string; name: string; baseUrl: string; modelId: string; ciphertext: string; lastFour: string; inputPrice: number | null; outputPrice: number | null; createdAt: string }
 export interface FailureCase { id: string; problemId: string; buildId: string; versionId: string; userId: string; input: string; reason: string; fingerprint: string; status: 'verified' | 'pending' | 'not_reproduced'; tier: Tier; actual: string | null; createdAt: string }
 export interface Reputation { id: string; userId: string; points: number; reason: string; referenceId: string; createdAt: string }
 export interface Badge { id: string; name: string; description: string; icon: string }
@@ -136,6 +137,7 @@ export interface CreationRun {
   buildVersionId: string;
   briefId: string;
   briefVersionId: string;
+  challengeVersionId: string | null;
   environmentTemplateId: string;
   environmentTemplateVersionId: string;
   evaluationJobId: string | null;
@@ -280,7 +282,7 @@ export interface ShowcaseAuditEvent {
   metadata: ShowcaseAuditMetadata;
 }
 
-export type EvaluationAssociationKind = 'competitive-run' | 'self-test-run' | 'component-evaluation';
+export type EvaluationAssociationKind = 'competitive-run' | 'self-test-run' | 'component-evaluation' | 'creation-run';
 export type EvaluationOutboxStatus = 'pending' | 'leased' | 'published' | 'dead-letter';
 export interface EvaluationJobRow {
   id: string;

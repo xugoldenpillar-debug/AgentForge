@@ -1,5 +1,7 @@
 # 实现设计：复用现有机制，补齐真实接线
 
+> 首发范围调整：以 [BYOK 首发方案](byok-first.md) 为准；以下平台模型首发和美元上限要求由该调整覆盖，安全/资源限制与工程验收仍须完成。
+
 ## I1. 数据与权威目录
 
 复用 Build/BuildVersion、CreationBrief/Version、CreationRun、EnvironmentTemplate/Version、ArtifactBundle/manifest、WorkPublication、ShowcaseEntry 和 Voting 领域服务。不把作品写成旧 Submission，不改旧 DAG JudgeId/评分。

@@ -17,7 +17,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/*.test.ts",
-    "test:provider-sdk": "tsx --test tests/deepseek-sdk.integration.ts",
+    "test:provider-sdk": "tsx --test tests/deepseek-sdk.integration.ts tests/provider-protocol-sdk.integration.ts",
     "test:migrations": "node --experimental-strip-types --test tests/migrations.integration.ts tests/migration-history.integration.ts",
     "test:evaluation-db": "tsx --test tests/evaluation-postgres.integration.ts",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
@@ -26,12 +26,17 @@
     "setup": "node scripts/setup.mjs",
     "audit:community-export": "node scripts/audit-community-export.mjs",
     "worker:start": "tsx scripts/evaluation-worker-production.ts",
-    "worker:healthcheck": "node --experimental-strip-types scripts/worker-healthcheck.ts"
+    "worker:healthcheck": "node --experimental-strip-types scripts/worker-healthcheck.ts",
+    "test:deploy": "bash -n scripts/deploy/app.sh scripts/deploy/install-gvisor.sh && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/deploy/sandbox-smoke.py').read_text())\" && node --experimental-strip-types --test tests/deployment-preflight.test.ts tests/deployment-cli.test.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "3.0.116",
     "@ai-sdk/gateway": "^3.0.0",
+    "@ai-sdk/google": "3.0.121",
+    "@ai-sdk/openai": "3.0.109",
     "@ai-sdk/openai-compatible": "^2.0.0",
     "@better-auth/drizzle-adapter": "^1.7.2",
+    "@earendil-works/pi-agent-core": "0.85.1",
     "@radix-ui/react-slot": "^1.2.3",
     "@xyflow/react": "^12.8.4",
     "ai": "^6.0.0",
@@ -50,8 +55,7 @@
     "tailwind-merge": "^3.3.1",
     "undici": "^7.15.0",
     "zod": "^4.1.5",
-    "zustand": "^5.0.8",
-    "@earendil-works/pi-agent-core": "0.85.1"
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.12",

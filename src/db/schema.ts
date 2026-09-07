@@ -212,6 +212,7 @@ export const submissions = pgTable("submissions", {
 });
 
 export const credentials = pgTable("provider_credentials", {
+  protocol: text("protocol").notNull().default("openai-chat"),
   id: text("id").primaryKey(),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
@@ -222,7 +223,9 @@ export const credentials = pgTable("provider_credentials", {
   inputPrice: doublePrecision("input_price"),
   outputPrice: doublePrecision("output_price"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-});
+}, (t) => [
+  check("provider_credentials_protocol_check", sql`${t.protocol} IN ('openai-chat', 'openai-responses', 'anthropic-messages', 'google-generative-ai')`),
+]);
 
 export const failureCases = pgTable("failure_cases", {
   id: text("id").primaryKey(),
@@ -462,11 +465,12 @@ export const evaluationJobs = pgTable("evaluation_jobs", {
   index("evaluation_jobs_user_created_idx").on(t.userId, t.createdAt),
   index("evaluation_jobs_state_created_idx").on(t.state, t.createdAt, t.id),
   uniqueIndex("evaluation_jobs_one_active_user_idx").on(t.userId).where(sql`${t.state} in ('accepted', 'queued', 'running', 'cancelling', 'unknown', 'reconciling')`),
-  check("evaluation_jobs_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation')`),
+  check("evaluation_jobs_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation', 'creation')`),
   check("evaluation_jobs_association_check", sql`(
     (${t.purpose} = 'competitive' and ${t.associationKind} = 'competitive-run' and ${t.competitiveRunId} is not null and ${t.businessRecordId} = ${t.competitiveRunId})
     or (${t.purpose} = 'author-self-test' and ${t.associationKind} = 'self-test-run' and ${t.competitiveRunId} is null)
     or (${t.purpose} = 'component-evaluation' and ${t.associationKind} = 'component-evaluation' and ${t.competitiveRunId} is null)
+    or (${t.purpose} = 'creation' and ${t.associationKind} = 'creation-run' and ${t.competitiveRunId} is null and ${t.associationVisibility} is null)
   )`),
   check("evaluation_jobs_state_version_check", sql`${t.stateVersion} >= 0`),
 ]);
@@ -592,7 +596,7 @@ export const evaluationBudgetReservations = pgTable("evaluation_budget_reservati
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (t) => [
   index("evaluation_budget_reservations_state_idx").on(t.state, t.updatedAt),
-  check("evaluation_budget_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation')`),
+  check("evaluation_budget_purpose_check", sql`${t.purpose} in ('competitive', 'author-self-test', 'component-evaluation', 'creation')`),
   check("evaluation_budget_kind_check", sql`${t.kind} in ('execution-budget', 'benchmark-cost', 'platform-spend')`),
   check("evaluation_budget_state_check", sql`${t.state} in ('reserved', 'partially-settled', 'settled', 'released', 'held-for-reconciliation')`),
   check("evaluation_budget_certainty_check", sql`${t.usageCertainty} in ('known', 'unknown')`),
@@ -706,6 +710,7 @@ export const creationRuns = pgTable("creation_runs", {
   buildVersionId: text("build_version_id").notNull().references(() => buildVersions.id, { onDelete: "restrict" }),
   briefId: text("brief_id").notNull().references(() => creationBriefs.id, { onDelete: "restrict" }),
   briefVersionId: text("brief_version_id").notNull().references(() => creationBriefVersions.id, { onDelete: "restrict" }),
+  challengeVersionId: text("challenge_version_id").references(() => animationChallengeVersions.id, { onDelete: "restrict" }),
   environmentTemplateId: text("environment_template_id").notNull().references(() => environmentTemplates.id, { onDelete: "restrict" }),
   environmentTemplateVersionId: text("environment_template_version_id").notNull().references(() => environmentTemplateVersions.id, { onDelete: "restrict" }),
   evaluationJobId: text("evaluation_job_id").references(() => evaluationJobs.id, { onDelete: "restrict" }),

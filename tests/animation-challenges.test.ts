@@ -7,7 +7,7 @@ import {
   animationChallengeDigest,
   listAnimationChallenges,
 } from '../src/server/animation-challenges.ts';
-import { SVG_ANIMATION_POLICY } from '../src/shared/animation-challenge.ts';
+import { SVG_ANIMATION_POLICY, ANIMATION_LAUNCH_LIMITS } from '../src/shared/animation-challenge.ts';
 
 test('two original challenges: ordered, bilingual, no hidden judge, no invented runtime reference', async () => {
   const repo = new MemoryRepository();
@@ -79,4 +79,13 @@ test('public HTTP catalog reads persisted records without granting execution', a
   const result = await response.json();
   assert.equal(result.length, 2);
   assert.equal(result[0].runAvailability.enabled, false);
+});
+
+// Explicit user scope change: defer dollars, never remove infrastructure controls.
+test('BYOK launch defers dollar caps without disabling other resource limits', () => {
+  assert.equal(ANIMATION_LAUNCH_LIMITS.costPerRunUsd, null);
+  assert.equal(ANIMATION_LAUNCH_LIMITS.version, 'animation-launch-byok-v1');
+  assert.equal(ANIMATION_LAUNCH_LIMITS.activeRunsPerUser, 1);
+  assert.equal(ANIMATION_LAUNCH_LIMITS.tokensPerRun, 16000);
+  assert.equal(ANIMATION_LAUNCH_LIMITS.wallTimeSeconds, 120);
 });

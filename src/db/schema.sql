@@ -202,6 +202,7 @@ CREATE TABLE IF NOT EXISTS "submissions" (
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS "provider_credentials" (
+  "protocol" TEXT NOT NULL DEFAULT 'openai-chat' CHECK (protocol IN ('openai-chat', 'openai-responses', 'anthropic-messages', 'google-generative-ai')),
   "id" TEXT PRIMARY KEY,
   "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
   "name" TEXT NOT NULL,
@@ -437,8 +438,8 @@ CREATE INDEX IF NOT EXISTS community_audit_events_component_idx ON community_aud
 CREATE TABLE IF NOT EXISTS public.evaluation_jobs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
-  purpose TEXT NOT NULL CHECK (purpose IN ('competitive', 'author-self-test', 'component-evaluation')),
-  association_kind TEXT NOT NULL CHECK (association_kind IN ('competitive-run', 'self-test-run', 'component-evaluation')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('competitive', 'author-self-test', 'component-evaluation', 'creation')),
+  association_kind TEXT NOT NULL CHECK (association_kind IN ('competitive-run', 'self-test-run', 'component-evaluation', 'creation-run')),
   business_record_id TEXT NOT NULL,
   competitive_run_id TEXT REFERENCES public.runs(id) ON DELETE RESTRICT,
   association_visibility TEXT CHECK (association_visibility IS NULL OR association_visibility IN ('public', 'hidden')),
@@ -463,6 +464,7 @@ CREATE TABLE IF NOT EXISTS public.evaluation_jobs (
     (purpose = 'competitive' AND association_kind = 'competitive-run' AND competitive_run_id IS NOT NULL AND business_record_id = competitive_run_id AND association_visibility IS NOT NULL)
     OR (purpose = 'author-self-test' AND association_kind = 'self-test-run' AND competitive_run_id IS NULL AND association_visibility IS NULL)
     OR (purpose = 'component-evaluation' AND association_kind = 'component-evaluation' AND competitive_run_id IS NULL AND association_visibility IS NULL)
+    OR (purpose = 'creation' AND association_kind = 'creation-run' AND competitive_run_id IS NULL AND association_visibility IS NULL)
   )
 );
 
@@ -562,7 +564,7 @@ CREATE INDEX IF NOT EXISTS evaluation_idempotency_expiry_idx ON public.evaluatio
 CREATE TABLE IF NOT EXISTS public.evaluation_budget_reservations (
   id TEXT PRIMARY KEY,
   job_id TEXT NOT NULL UNIQUE REFERENCES public.evaluation_jobs(id) ON DELETE RESTRICT,
-  purpose TEXT NOT NULL CHECK (purpose IN ('competitive', 'author-self-test', 'component-evaluation')),
+  purpose TEXT NOT NULL CHECK (purpose IN ('competitive', 'author-self-test', 'component-evaluation', 'creation')),
   kind TEXT NOT NULL CHECK (kind IN ('execution-budget', 'benchmark-cost', 'platform-spend')),
   state TEXT NOT NULL CHECK (state IN ('reserved', 'partially-settled', 'settled', 'released', 'held-for-reconciliation')),
   usage_certainty TEXT NOT NULL CHECK (usage_certainty IN ('known', 'unknown')),
@@ -670,6 +672,7 @@ CREATE TABLE IF NOT EXISTS public.creation_runs (
   build_version_id TEXT NOT NULL REFERENCES public.build_versions(id) ON DELETE RESTRICT,
   brief_id TEXT NOT NULL REFERENCES public.creation_briefs(id) ON DELETE RESTRICT,
   brief_version_id TEXT NOT NULL REFERENCES public.creation_brief_versions(id) ON DELETE RESTRICT,
+  challenge_version_id TEXT REFERENCES public.animation_challenge_versions(id) ON DELETE RESTRICT,
   environment_template_id TEXT NOT NULL REFERENCES public.environment_templates(id) ON DELETE RESTRICT,
   environment_template_version_id TEXT NOT NULL REFERENCES public.environment_template_versions(id) ON DELETE RESTRICT,
   evaluation_job_id TEXT UNIQUE REFERENCES public.evaluation_jobs(id) ON DELETE RESTRICT,
@@ -683,6 +686,7 @@ CREATE TABLE IF NOT EXISTS public.creation_runs (
 );
 CREATE INDEX IF NOT EXISTS creation_runs_owner_created_idx ON public.creation_runs(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS creation_runs_brief_version_idx ON public.creation_runs(brief_version_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS creation_runs_challenge_version_idx ON public.creation_runs(challenge_version_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS creation_runs_status_idx ON public.creation_runs(status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.artifact_bundles (

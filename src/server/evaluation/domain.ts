@@ -459,7 +459,9 @@ function validateAssociationValues(association: EvaluationAssociation): void {
     ? [association.runId]
     : association.kind === 'self-test-run'
       ? [association.selfTestRunId]
-      : [association.componentEvaluationId];
+      : association.kind === 'component-evaluation'
+        ? [association.componentEvaluationId]
+        : [association.creationRunId];
   if (values.some((value) => typeof value !== 'string' || value.trim().length === 0)) {
     throw new EvaluationServiceError('INVALID_ASSOCIATION', 'Association identifiers must not be empty.');
   }

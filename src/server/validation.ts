@@ -1,3 +1,4 @@
+import { PROVIDER_PROTOCOLS } from '../shared/provider-protocol.ts';
 import { z } from 'zod';
 import { isConfiguredAgentBuild } from '../shared/agent-build-contract.ts';
 import { validateBuildEnvelope, parsePrivateAgentDefinition, privateAgentDraft } from './agent-drafts.ts';
@@ -48,7 +49,7 @@ const showcaseVote = z.object({ ballotId: id.optional(), choice: z.enum(['a', 'b
 
 const schemas: Record<string, z.ZodType> = {
 
-  providers: z.object({ name: z.string().min(1).max(60), baseUrl: z.url().max(300), modelId: short, apiKey: z.string().min(16).max(512), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
+  providers: z.object({ protocol: z.enum(PROVIDER_PROTOCOLS).optional(), name: z.string().min(1).max(60), baseUrl: z.url().max(300), modelId: short, apiKey: z.string().min(16).max(512), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
   runs: z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), mode: z.literal('legacy-stream').optional() }).strict(),
   'runs/async': z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), idempotencyKey }).strict(),
   'evaluation-jobs': z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), idempotencyKey }).strict(),

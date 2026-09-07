@@ -140,7 +140,7 @@ export interface EvaluationStatusResponse {
     readonly snapshot: {
       readonly schemaVersion: number;
       readonly buildVersionId: string;
-      readonly testSuiteVersionId: string;
+      readonly testSuiteVersionId: string | null;
       readonly runtimeAdapter: string;
       readonly modelOfferingId: string | null;
       readonly policyVersion: string;

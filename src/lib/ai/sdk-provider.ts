@@ -1,3 +1,7 @@
+import { createOpenAI } from '@ai-sdk/openai';
+import { createAnthropic } from '@ai-sdk/anthropic';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { parseProviderProtocol } from '../../shared/provider-protocol.ts';
 import { generateText, stepCountIs, type LanguageModel } from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createGateway } from '@ai-sdk/gateway';
@@ -101,7 +105,10 @@ class SDKProvider implements AIProvider {
 
 export function byokProvider(credential: Credential, key: string): AIProvider {
   const url = new URL(credential.baseUrl);
+  const protocol = parseProviderProtocol(credential.protocol);
   const officialFlash = url.hostname === 'api.deepseek.com';
+  ensure(!officialFlash || protocol === 'openai-chat',
+    'Official DeepSeek requires Chat Completions.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
   let baseURL = credential.baseUrl;
   if (officialFlash) {
     ensure(
@@ -112,11 +119,32 @@ export function byokProvider(credential: Credential, key: string): AIProvider {
     resolveOfficialProviderOffering({ providerId: 'deepseek', modelId: credential.modelId, thinking: false });
     baseURL = 'https://api.deepseek.com';
   }
-  const compatible = createOpenAICompatible({
-    name: 'byok', baseURL, apiKey: key, fetch: safeProviderFetch(baseURL),
-  });
+  const settings = { baseURL, apiKey: key, fetch: safeProviderFetch(baseURL) };
+  let model: (id: string) => LanguageModel;
+  switch (protocol) {
+    case 'openai-chat': {
+      const provider = createOpenAICompatible({ name: 'byok', ...settings });
+      model = id => provider(id);
+      break;
+    }
+    case 'openai-responses': {
+      const provider = createOpenAI(settings);
+      model = id => provider.responses(id);
+      break;
+    }
+    case 'anthropic-messages': {
+      const provider = createAnthropic(settings);
+      model = id => provider(id);
+      break;
+    }
+    case 'google-generative-ai': {
+      const provider = createGoogleGenerativeAI(settings);
+      model = id => provider(id);
+      break;
+    }
+  }
   return new SDKProvider(
-    credential.id, id => compatible(id),
+    credential.id, model,
     { inputPrice: credential.inputPrice, outputPrice: credential.outputPrice }, key, officialFlash,
   );
 }

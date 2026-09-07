@@ -26,6 +26,7 @@ export type TestSuiteVersionId = OpaqueId<'test-suite-version'>;
 export type SkillVersionId = OpaqueId<'skill-version'>;
 export type SelfTestRunId = OpaqueId<'self-test-run'>;
 export type ComponentEvaluationId = OpaqueId<'component-evaluation'>;
+export type CreationRunId = OpaqueId<'creation-run'>;
 
 /** Timestamps follow the repository convention of serializable ISO-8601 strings. */
 export type EvaluationTimestamp = string;
@@ -36,7 +37,7 @@ export function asOpaqueId<Kind extends string>(value: string): OpaqueId<Kind> {
   return value as OpaqueId<Kind>;
 }
 
-export type EvaluationPurpose = 'competitive' | 'author-self-test' | 'component-evaluation';
+export type EvaluationPurpose = 'competitive' | 'author-self-test' | 'component-evaluation' | 'creation';
 export type CompetitiveEvaluationVisibility = 'public' | 'hidden';
 
 export type EvaluationJobState =
@@ -102,12 +103,14 @@ export const EVALUATION_SNAPSHOT_VERSION = 1 as const;
 export type EvaluationAssociation =
   | { readonly kind: 'competitive-run'; readonly runId: RunId; readonly visibility: CompetitiveEvaluationVisibility }
   | { readonly kind: 'self-test-run'; readonly selfTestRunId: SelfTestRunId }
-  | { readonly kind: 'component-evaluation'; readonly componentEvaluationId: ComponentEvaluationId };
+  | { readonly kind: 'component-evaluation'; readonly componentEvaluationId: ComponentEvaluationId }
+  | { readonly kind: 'creation-run'; readonly creationRunId: CreationRunId };
 
 export interface EvaluationInputSnapshot {
   readonly schemaVersion: typeof EVALUATION_SNAPSHOT_VERSION;
   readonly buildVersionId: BuildVersionId;
-  readonly testSuiteVersionId: TestSuiteVersionId;
+  /** Creation jobs do not have a hidden test suite; competitive jobs always do. */
+  readonly testSuiteVersionId: TestSuiteVersionId | null;
   readonly skillVersionId: SkillVersionId | null;
   readonly runtimeAdapter: string;
   readonly modelOfferingId: string | null;
@@ -367,7 +370,9 @@ export function assertEvaluationAssociation(
     ? 'competitive-run'
     : purpose === 'author-self-test'
       ? 'self-test-run'
-      : 'component-evaluation';
+      : purpose === 'component-evaluation'
+        ? 'component-evaluation'
+        : 'creation-run';
 
   if (association.kind !== expectedKind) {
     throw new EvaluationContractError(
@@ -380,7 +385,11 @@ export function assertEvaluationAssociation(
   const associationKeys = Object.keys(association);
   const expectedKeys = expectedKind === 'competitive-run'
     ? ['kind', 'runId', 'visibility']
-    : ['kind', expectedKind === 'self-test-run' ? 'selfTestRunId' : 'componentEvaluationId'];
+    : ['kind', expectedKind === 'self-test-run'
+      ? 'selfTestRunId'
+      : expectedKind === 'component-evaluation'
+        ? 'componentEvaluationId'
+        : 'creationRunId'];
 
   if (associationKeys.length !== expectedKeys.length || expectedKeys.some((key) => !associationKeys.includes(key))) {
     throw new EvaluationContractError(

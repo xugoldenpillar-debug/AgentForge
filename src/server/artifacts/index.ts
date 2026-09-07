@@ -24,3 +24,7 @@ export type {
 
 export { MAX_ARTIFACT_READ_BYTES, UnavailableArtifactStorageAdapter, assertArtifactReadIntegrity, projectArtifactBundle, readArtifactStorageObject } from './access.ts';
 export type { ArtifactReadBundle, ArtifactReadResult, ArtifactReadPort, ArtifactStorageAdapter, ArtifactStorageReadRequest, ArtifactStorageReadResult, ArtifactBundleProjection, ArtifactManifestProjectionEntry } from './access.ts';
+
+export { FileSystemArtifactStorageAdapter, createArtifactStorageKey, objectVersionForBytes } from './filesystem.ts';
+export { sealArtifactBundle } from './seal.ts';
+export type { SealArtifactBundleInput, SealedArtifactBundleResult } from './seal.ts';

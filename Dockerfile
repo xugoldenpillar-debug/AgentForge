@@ -1,10 +1,8 @@
 FROM node:22-bookworm-slim AS dependencies
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.15.1 --activate
-COPY package.json ./
-# The authoring environment could not reach npm. A fabricated lockfile is not shipped.
-# Commit the lockfile produced by your first successful install before release.
-RUN pnpm install --no-frozen-lockfile
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 
 FROM dependencies AS build
 COPY . .

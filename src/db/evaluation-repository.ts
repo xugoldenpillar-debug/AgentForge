@@ -573,7 +573,9 @@ function businessRecordId(record: EvaluationJobRecord): string {
     ? record.association.runId
     : record.association.kind === 'self-test-run'
       ? record.association.selfTestRunId
-      : record.association.componentEvaluationId;
+      : record.association.kind === 'component-evaluation'
+        ? record.association.componentEvaluationId
+        : record.association.creationRunId;
 }
 
 function toJobRow(record: EvaluationJobRecord): EvaluationJobRow {
@@ -610,7 +612,9 @@ function toJobRecord(row: EvaluationJobRow): EvaluationJobRecord {
     ? { kind: 'competitive-run' as const, runId: asOpaqueId<'run'>(row.businessRecordId), visibility: row.associationVisibility === 'public' ? 'public' as const : 'hidden' as const }
     : row.associationKind === 'self-test-run'
       ? { kind: 'self-test-run' as const, selfTestRunId: asOpaqueId<'self-test-run'>(row.businessRecordId) }
-      : { kind: 'component-evaluation' as const, componentEvaluationId: asOpaqueId<'component-evaluation'>(row.businessRecordId) };
+      : row.associationKind === 'component-evaluation'
+        ? { kind: 'component-evaluation' as const, componentEvaluationId: asOpaqueId<'component-evaluation'>(row.businessRecordId) }
+        : { kind: 'creation-run' as const, creationRunId: asOpaqueId<'creation-run'>(row.businessRecordId) };
   return {
     id: asOpaqueId<'evaluation-job'>(row.id),
     userId: asOpaqueId<'user'>(row.userId),

@@ -22,7 +22,7 @@
 | 作品与动画 | artifact preview、read authorization | 结构化净化、受限 CSS/SVG 动画、独立域与浏览器控制；不改变旧静态 renderer 冒充动画支持 |
 | 社区 | WorkPublication、ShowcaseEntry/Ballot/Vote/audit、durable repository | 生产接线、WorkLike、持久 season/comparator、独立选民门槛、共享限流、审核 UI |
 
-## 尚未批准的发布参数
+## 待补齐的发布参数（后续 hubei 授权见下）
 
 没有从本机配置、其他 worktree 或插件账号推断授权，也未采购/调用真实模型/部署。
 
@@ -31,4 +31,23 @@
 - 模型：平台批准模型固定版本、价格、凭据安全注入来源、两题真实验收的总费用上限。
 - 公开部署：目标环境/数据库/主域、无共享 Cookie 的预览域、全站日预算和并发、告警与审核负责人。
 
-这些缺口阻塞依赖验收和发布；不阻塞后续代码实现。每 run USD 0.10 是候选产品约束，不能当作本次真实模型费用授权。L0 尚未完整关闭，L1 仅目录切片，L2–L8 未交付。本轮未改变 PoC 邀请 gate、运行开关或生产权限。
+这些缺口阻塞依赖验收和发布；不阻塞后续代码实现。旧每 run USD 0.10 候选值已由 BYOK 首发调整覆盖；仍未授权使用任何现有真实模型凭据。L0 尚未完整关闭，L1 仅目录切片，L2–L8 未交付。本轮未改变 PoC 邀请 gate、运行开关或生产权限。
+
+## BYOK 首发后续增量
+
+用户已覆盖平台模型首发和美元上限要求，见 [BYOK 首发调整](byok-first.md)。
+已完成四种协议的凭据持久化/SDK/UI接入与本地验证，见
+[本次验证](../../../../docs/verification/byok-protocols-df6c-2026-09-07.md)。
+这只接入现有模型适配器，不代表 creation v2、真实沙箱或社区闭环完成。
+目录提交为 e08de60；后续 BYOK 与部署脚本在本轮交付，实际 Git 状态以提交日志为准，未上线。
+
+## hubei 实机后续验证与部署工具
+
+用户已明确授权 hubei 安装 gVisor、创建专用测试资源。`scripts/deploy/sandbox-smoke.py`
+在实机运行通过；安装器重复执行通过。不会改变 Docker 默认 runtime，也不重启旧容器。
+固定版本、镜像 digest、清理结果与未验收项见
+[部署文档](../../../../docs/deployment/hubei-byok.md) 和
+[实机验证](../../../../docs/verification/hubei-gvisor-deployment-2026-09-07.md)。
+
+这是 L2 基础设施的实测进展，**不是生产 SandboxProvider 的应用接线**。archive 仍是本地测试文件，
+不是对象存储。主站生产数据库、对象存储、预览域和 creation v2 社区闭环仍未交付；L2–L8 不关闭。

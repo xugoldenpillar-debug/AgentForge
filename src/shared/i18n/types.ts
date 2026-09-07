@@ -7,6 +7,15 @@ export const LOCALE_STORAGE_KEY = 'agentforge.display-language';
 export type MessageParams = Record<string, string | number>;
 
 export type MessageKey =
+  | 'providers.protocol'
+  | 'providers.protocol.openai-chat'
+  | 'providers.protocol.openai-responses'
+  | 'providers.protocol.anthropic-messages'
+  | 'providers.protocol.google-generative-ai'
+  | 'providers.protocolHelp'
+  | 'providers.protocolUrlHelp'
+  | 'providers.keyPlaceholder'
+
   | 'language.label'
   | 'language.english'
   | 'language.simplifiedChinese'

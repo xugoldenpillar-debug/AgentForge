@@ -1,3 +1,4 @@
+import { parseProviderProtocol } from '../shared/provider-protocol.ts';
 import { classifyProviderLane } from '../lib/ai/provider-lane.ts';
 import { artifactArenaAvailability } from './artifact-arena-availability.ts';
 import {
@@ -447,14 +448,40 @@ export class ArenaService {
     });return this.build(newId,userId);
   }
   async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:'next'};}
-  async addProvider(userId:string,body:Record<string,unknown>){
-    await this.user(userId);await this.limit(userId,'provider',10);
-    ensure((await this.repo.read('credentials',{userId})).length<10,'At most 10 credentials may be saved.',400,ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
-    const name=text(body.name,'Provider name',1,60),baseUrl=text(body.baseUrl,'Base URL',8,300),apiKey=text(body.apiKey,'API key',16,512),modelId=text(body.modelId,'Model ID',1,160);
-    withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(baseUrl,this.options.allowedHosts));
-    const price=(v:unknown)=>{if(v===null||v===undefined||v==='')return null;ensure(typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=10000,'Price must be a nonnegative number per million tokens.',400,ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);return v;};
-    const credentialId=id(),record:Credential={id:credentialId,userId,name,baseUrl:baseUrl.replace(/\/$/,''),modelId,ciphertext:encryptCredential(apiKey,this.options.encryptionKey,userId,credentialId),lastFour:apiKey.slice(-4),inputPrice:price(body.inputPrice),outputPrice:price(body.outputPrice),createdAt:now()};
-    await this.repo.transaction(tx=>tx.insert('credentials',[record]));return publicCredential(record);
+  async addProvider(userId: string, body: Record<string, unknown>) {
+    await this.user(userId);
+    await this.limit(userId, 'provider', 10);
+    ensure((await this.repo.read('credentials', { userId })).length < 10,
+      'At most 10 credentials may be saved.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
+    const protocol = parseProviderProtocol(body.protocol);
+    const name = text(body.name, 'Provider name', 1, 60);
+    const baseUrl = text(body.baseUrl, 'Base URL', 8, 300);
+    const apiKey = text(body.apiKey, 'API key', 16, 512);
+    const modelId = text(body.modelId, 'Model ID', 1, 160);
+    withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID,
+      () => validateProviderUrl(baseUrl, this.options.allowedHosts));
+    const price = (value: unknown) => {
+      if (value === null || value === undefined || value === '') return null;
+      ensure(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10000,
+        'Price must be a nonnegative number per million tokens.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
+      return value;
+    };
+    const credentialId = id();
+    const record: Credential = {
+      id: credentialId,
+      userId,
+      name,
+      protocol,
+      baseUrl: baseUrl.replace(/\/$/, ''),
+      modelId,
+      ciphertext: encryptCredential(apiKey, this.options.encryptionKey, userId, credentialId),
+      lastFour: apiKey.slice(-4),
+      inputPrice: price(body.inputPrice),
+      outputPrice: price(body.outputPrice),
+      createdAt: now(),
+    };
+    await this.repo.transaction(tx => tx.insert('credentials', [record]));
+    return publicCredential(record);
   }
   async deleteProvider(userId:string,credentialId:string){await this.user(userId);await this.limit(userId,'provider',10);await this.repo.transaction(tx=>tx.remove('credentials',{id:credentialId,userId}));return {deleted:true};}
   private async executionProviders(userId:string,w:Workflow,override?:string):Promise<{resolve:ProviderResolver;tier:Tier;model:string}>{
