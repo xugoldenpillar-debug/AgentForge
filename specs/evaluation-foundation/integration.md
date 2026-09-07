@@ -24,7 +24,7 @@
 - 不同本地服务使用独立端口、测试数据库和队列前缀，避免跨 worktree 消费或迁移。
 - 跨分支设计更新须在用户授权后，通过 merge/cherry-pick 显式集成包含这些文档的提交；以各 worktree 的实际 HEAD 和工作区状态确认同步，不直接覆盖其未提交文件。
 
-## 联合接口约束（设计边界，未实现）
+## 组件联合接口约束（目标；不代表公共 EF 未实现）
 
 社区侧提交冻结的 ComponentVersion、TestSuiteVersion、运行时／策略身份、作者凭据准入结果、同意版本和稳定幂等键；evaluation-foundation 校验并创建唯一 EvaluationJob，负责排队、Attempt／Invocation、Outbox 投递、Worker 执行、容量／预算预占与结算、取消和不确定上游状态收敛。社区侧只记录 SelfTestRun 与 Job 的关联，并消费安全状态／汇总投影。
 
@@ -33,3 +33,7 @@
 ## 联合验收
 
 自测不生成竞技成绩／奖励；跨入口用户并发为一；同上游额度不被队列数放大；草稿变化不影响排队快照；排队期间撤销能生效；中断不重复付费；重置后旧会话失效；明细清理后证据正确标记。所有项需要实现后的实际证据，不提前打勾。
+
+## Artifact Arena 联合工作包（2026-09-07）
+
+公共 EF 已有实现，新增 Agent challenge 接入见 [AA-T3](../artifact-arena/tasks.md)，creation 用途/association/消息/快照/Build 上下文的版本扩展见 [AA-T6](../artifact-arena/tasks.md)。Q19 唯一业务关联、Q23 总名额和不确定费用停止规则不变。作品发布/ShowcaseEntry/投票归作品领域，不进入 EF 新队列或改写竞技 Submission。

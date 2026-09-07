@@ -6,8 +6,8 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 | --- | --- | --- |
 | A fixes | Pi 文档矛盾纠偏、首批 Agent 设计；Pi 缺陷修复另由代码工作包留证 | 本次仅文档；代码验收以另包实际记录为准 |
 | B Build | Agent persistence / versioning / Fork | B1 and B2 private unconfigured drafts delivered; lane finding independently closed. B3 UI, reference authorization and public publishing remain unavailable. |
-| C reliable execution | 复用 EF Job/Attempt/Outbox Worker/取消/容量/费用 | 未实现；依赖 EF，不另建 Agent 调度器 |
-| D sandbox/artifacts | Python 隔离、collector、manifest、下载/安全预览、独立 judge | 未实现；供应商、镜像/限制、费用与数据边界验证后才可开放 |
+| C reliable execution | 复用 EF Job/Attempt/Outbox Worker/取消/容量/费用 | 公共 EF 有代码，Agent 接入未实现；对应 AA-T3/T6，不另建调度器 |
+| D sandbox/artifacts | 固定环境隔离、collector、manifest、多格式静态预览、独立 judge | 未实现；供应商、镜像/限制、费用与数据边界验证后才可开放 |
 | E competitive loop | Run → Submission → Score → Leaderboard → Fork | 未实现；C/D 与现有 Profile/lane/评分 Gate 联合通过 |
 | F extensions | 批准的只读 MCP、可执行 Skill、厂商 SDK/更多语言或多 Agent | 后续独立准入；不因 B–E 通过自动授权 |
 
@@ -29,7 +29,7 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 
 ### B2 private unconfigured drafts: accepted within restricted scope
 
-- [x] 既有 BuildVersion additive 0005 迁移、服务端摘要、固定 mode、不可变历史与 CAS。
+- [x] 既有 BuildVersion additive 迁移（当前主序列 0009，原 Pi 0005 历史保留）、服务端摘要、固定 mode、不可变历史与 CAS。
 - [x] fail-closed 草稿限制；owner-only Agent DTO、metadata history、精确来源版本 Fork、旧客户端 mode opt-in。
 - [x] 拒绝 Agent DAG/Run/hunt；不构造 Agent 模型、不新增凭据/Grant/注册表。
 - [x] Worker final rerun: related 41 passed, full 198 passed, Pi 23 passed / 1 skipped, typecheck/build and isolated Next/Auth smoke successful. Reviewer inspected `/tmp/b2-lane-*.log`, not independently rerun. Earlier real migration matrix and overlapping PostgreSQL CAS each passed 1 test; these were not rerun by reviewer.
@@ -50,7 +50,7 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 
 ## D：沙箱和 artifacts（AM5–AM8、AM10、AM12）
 
-- [ ] 选型与验证外部隔离提供商，冻结 Python 镜像/digest、标准库、CPU/内存/磁盘/时间/进程/文件/日志/网络限额及成本来源；默认禁网，无 host shell。
+- [ ] 选型与验证外部隔离提供商，冻结静态作品/Python 工程轨的镜像/digest、标准库、CPU/内存/磁盘/时间/进程/文件/日志/网络限额及成本来源；默认禁网，无 host shell。
 - [ ] 验证逃逸/宿主文件/跨任务访问拒绝、子进程超时与终止确认、无隐式安装、broker 不暴露密钥。
 - [ ] 验证路径穿越、编码/大小写冲突、symlink/hardlink/特殊文件、超额输出与解析资源限制。
 - [ ] 竞态测试在检查与读取间替换文件、并发改写、旧 Attempt 封存；确认停止写入/快照/no-follow/hash-copy/不可变对象及摘要绑定，否则不通过 Gate。
@@ -75,8 +75,12 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 ## 尚待冻结的实施决策
 
 1. 沙箱提供商能否证明隔离、全进程停写/不可变快照和取消，地区/数据留存/价格是否可接受。
-2. Python 镜像与数值配额、输出 schema、报告判据、Agent 评分权重及资源限制归责；跨 runtime/mode 比较需 Profile 明确兼容后再开放。
+2. 静态作品/Python 工程轨镜像与数值配额、输出 schema、报告判据、Agent 评分权重及资源限制归责；跨 runtime/mode 比较需 Profile 明确兼容后再开放。
 3. 五契约具体字段、外键/唯一约束、API 版本、对象存储封存/下载方案，以及与 EF/社区 PR 的兼容发布顺序。
 4. 隐藏产物保留/删除与审计策略；不能拿 Q22 自测 30 天替代。许可名单、MCP 身份与数据边界沿原准入 Gate。
 
 这些是技术调查/后续范围决策，不撤销 Q1–Q25，也不要求凭空选限额或立即购买服务。遇到新的产品取舍再请用户确认。
+
+## 当前实施拆分入口
+
+执行 [AA-T0–T10](../artifact-arena/tasks.md)，其映射表覆盖 B3/C/D/E，保留已完成 B1/B2 与上文历史证据。AA-T7 的社区榜不是 E 的隐藏竞技；AA-T9 的环境图不是 Workflow DAG。此链接不勾选任何待执行 Gate。

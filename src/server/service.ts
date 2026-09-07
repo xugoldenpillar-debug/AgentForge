@@ -1,5 +1,14 @@
 import { classifyProviderLane } from '../lib/ai/provider-lane.ts';
-import { privateAgentDraft, versionMetadata, validateBuildEnvelope } from './agent-drafts.ts';
+import { artifactArenaAvailability } from './artifact-arena-availability.ts';
+import {
+  parsePrivateAgentDefinition,
+  resolveAgentDraft,
+  resolvePersistedAgentDraft,
+  versionMetadata,
+  validateBuildEnvelope,
+  type PersistedAgentDraft,
+} from './agent-drafts.ts';
+import type { AgentBuildResolver } from './agent-build-resolver.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Build, CaseResult, Config, Constraints, Credential, FailureCase, Metrics, Problem, Repository, RunEvent, RunKind, Submission, Tier, Trace, User, Workflow } from '../shared/types.ts';
 import type { AIProvider, ProviderResolver } from '../lib/ai/types.ts';
@@ -44,6 +53,8 @@ export interface ServiceOptions {
   /** Durable competitive scheduling is injected; legacy run() remains an explicit compatibility path. */
   competitiveRunScheduler?: CompetitiveRunJobScheduler;
   env?: Record<string, string | undefined>;
+  /** Optional authoritative catalog/release/permission resolver for configured Agents. */
+  agentBuildResolver?: AgentBuildResolver;
 }
 const id=()=>randomUUID();const now=()=>new Date().toISOString();
 const text=(v:unknown,label:string,min=1,max=200)=>{ensure(typeof v==='string'&&v.trim().length>=min&&v.length<=max,`${label} must be ${min} to ${max} characters.`,400,ERROR_CODES.REQUEST_VALIDATION_FAILED);return v.trim();};
@@ -64,7 +75,18 @@ export class ArenaService {
   }
   async user(userId:string){const u=(await this.repo.read('users',{id:userId}))[0];ensure(u,'Sign in to continue.',401,ERROR_CODES.AUTH_REQUIRED);return u;}
   async limit(userId:string,action:string,count=20){ensure(await this.repo.rateLimit(`${action}:${userId}`,count,60000),'Too many requests. Try again in a minute.',429,ERROR_CODES.RATE_LIMITED);}
-  async boot(){return {demoMode:this.options.demoMode,runtime:'next',githubEnabled:!!this.options.githubEnabled,platformAvailable:!!this.options.platform,piSelfTestEntry:true};}
+  private async resolveStoredAgent(
+    version: { agentDefinition?: unknown; definitionDigest?: unknown },
+    request: { actorId: string; ownerId: string; buildId: string; buildVersionId: string; operation: 'read' | 'fork' }
+  ): Promise<PersistedAgentDraft> {
+    return resolvePersistedAgentDraft(
+      version.agentDefinition,
+      version.definitionDigest,
+      request,
+      this.options.agentBuildResolver
+    );
+  }
+  async boot(){return {demoMode:this.options.demoMode,runtime:'next',githubEnabled:!!this.options.githubEnabled,platformAvailable:!!this.options.platform,piSelfTestEntry:true,artifactArena:artifactArenaAvailability(this.piEnv())};}
   private piEnv(){return this.options.env??process.env;}
   private piStatus(email: string, access: string | null | undefined) {
     const status = piSelfTestStatusFor(email, access, this.piEnv());
@@ -279,8 +301,15 @@ export class ArenaService {
     const metadata = versionMetadata(version);
     if (version.mode === 'agent') {
       ensure(owner && expose, 'Agent drafts are private.', 403, ERROR_CODES.OWNERSHIP_FORBIDDEN);
+      const draft = await this.resolveStoredAgent(version, {
+        actorId: viewerId!,
+        ownerId: b.userId,
+        buildId: b.id,
+        buildVersionId: version.id,
+        operation: 'read',
+      });
       return {...b, mode: 'agent' as const, owner, creator: publicUser(creator), problem,
-        version: {...metadata, agentDefinition: version.agentDefinition, definitionDigest: version.definitionDigest},
+        version: {...metadata, ...draft},
         history, submissions: [], forkCount: forks.length, canFork: true, promptVisible: true};
     }
     const workflow = await this.workflow(versionId);
@@ -316,12 +345,14 @@ export class ArenaService {
   }
   async saveBuild(userId: string, body: Record<string, unknown>) {
     const mode = validateBuildEnvelope(body);
-    const draft = mode === 'agent' ? privateAgentDraft(body.agentDefinition, body.visibility) : null;
+    const agentDefinition = mode === 'agent'
+      ? parsePrivateAgentDefinition(body.agentDefinition, body.visibility)
+      : null;
     await this.user(userId);
     await this.limit(userId, 'save', 40);
     const title = text(body.title, 'Build title', 1, 80);
     const problem = await this.getProblem(text(body.problemId, 'Challenge ID'));
-    const workflow = draft ? null : validateWorkflow(body.workflow);
+    const workflow = agentDefinition ? null : validateWorkflow(body.workflow);
     ensure(body.visibility === 'public' || body.visibility === 'private',
       'Choose public or private visibility.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     const visibility = body.visibility;
@@ -353,6 +384,15 @@ export class ArenaService {
         await tx.insert('builds', [{id: buildId, problemId: problem.id, userId, title, visibility,
           currentVersionId: versionId, parentBuildId: null, createdAt: now(), updatedAt: now()}]);
       }
+      const draft = agentDefinition
+        ? await resolveAgentDraft(agentDefinition, visibility, {
+            actorId: userId,
+            ownerId: old?.userId ?? userId,
+            buildId,
+            buildVersionId: versionId,
+            operation: 'save',
+          }, this.options.agentBuildResolver)
+        : null;
       if (draft) {
         await tx.insert('buildVersions', [{id: versionId, buildId, revision, title, visibility,
           createdAt: now(), mode: 'agent', ...draft}]);
@@ -383,7 +423,15 @@ export class ArenaService {
       ensure(source.userId === userId || (source.visibility === 'public' && version.visibility === 'public' && version.mode !== 'agent'),
         "Private prompts cannot be forked without their owner's permission.", 403, ERROR_CODES.OWNERSHIP_FORBIDDEN);
       const title = `${version.title.slice(0,60)} / remix`;
-      const draft = version.mode === 'agent' ? privateAgentDraft(version.agentDefinition, 'private') : null;
+      const draft = version.mode === 'agent'
+        ? await this.resolveStoredAgent(version, {
+            actorId: userId,
+            ownerId: source.userId,
+            buildId: source.id,
+            buildVersionId: version.id,
+            operation: 'fork',
+          })
+        : null;
       await tx.insert('builds', [{id: newId, problemId: source.problemId, userId, title, visibility: 'private',
         currentVersionId: versionId, parentBuildId: buildId, createdAt: now(), updatedAt: now()}]);
       if (draft) {

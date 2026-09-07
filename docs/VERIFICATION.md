@@ -1,3 +1,5 @@
+> **2026-09-07 Artifact Arena spec:** [Documentation-only verification](verification/artifact-arena-spec-2026-09-07.md). No application, sandbox, browser or paid-model acceptance is implied; future gates are in the linked spec.
+
 > Current architecture: Next.js only. Portable records below are retired historical evidence, not current acceptance. See [retirement evidence](verification/retire-portable-2026-09-06.md).
 
 > **2026-09-06 live BYOK update:** [Application Flash evidence](verification/deepseek-app-live-2026-09-06.md): one authorized real public run, 4/4, 976/1000, 242 tokens; not Verified or production acceptance. Offline SDK suite: 18 passed.

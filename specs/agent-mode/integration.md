@@ -33,7 +33,7 @@ Final worker rerun logs `/tmp/b2-lane-{related,full,typecheck,pi,build,smoke}.lo
 
 ### B3 与未来范围
 
-仍缺 Agent 编辑 UI、权威 Component/Profile/输出/环境解析与授权/撤销/公开许可、凭据绑定、可靠 EF Worker、沙箱/artifacts、Agent Run/评分/完整竞技闭环。不要创建新 Profile/组件注册表或把本次验证称为这些能力已验收。
+仍缺 Agent 编辑 UI、权威 Component/Profile/输出/环境解析与授权/撤销/公开许可、凭据绑定、Agent 到已有可靠 EF Worker 的接入、沙箱/artifacts、Agent Run/评分/完整竞技闭环。不要创建新 Profile/组件注册表或把本次验证称为这些能力已验收。
 
 ---
 

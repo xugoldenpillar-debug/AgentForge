@@ -16,7 +16,14 @@ import {
 } from './evaluation/domain.ts';
 import { EvaluationPersistenceError } from '../db/evaluation-repository.ts';
 import type { ArenaService } from './service.ts';
+import { artifactArenaAvailability } from './artifact-arena-availability.ts';
 import type { CommunityService } from './community-service.ts';
+import { assertArtifactReadIntegrity, MAX_ARTIFACT_READ_BYTES, type ArtifactReadPort, type ArtifactReadResult } from './artifacts/access.ts';
+import { projectArtifactBundle } from './artifacts/access.ts';
+import { projectPreviewContent } from './artifacts/preview.ts';
+import type { WorkPublicationService } from './showcase/service.ts';
+import type { ShowcaseVotingService } from './voting/service.ts';
+import type { AgentBuildResolver } from './agent-build-resolver.ts';
 
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   ensure(request.headers.get('content-type')?.includes('application/json'), 'Use application/json.', 400, ERROR_CODES.REQUEST_CONTENT_TYPE_INVALID);
@@ -53,6 +60,58 @@ const json = (data: unknown, status = 200, headers: Record<string, string> = {})
   },
 });
 const errorResponse = (error: ReturnType<typeof safeError>) => ({ error: { code: error.code, message: error.message } });
+
+function requireArtifactArenaEnabled(service: ArenaService): void {
+  const availability = artifactArenaAvailability(service.options?.env ?? process.env);
+  ensure(availability.builderDesign.enabled, 'Artifact Arena is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+}
+
+/**
+ * Historical reads have a separate kill-switch contract: an operator may stop
+ * new runs/publication/votes while still allowing already sealed, authorized
+ * artifacts and public records to be inspected. The injected repository is
+ * still required below, so this does not create a storage fallback.
+ */
+function requireArtifactArenaHistoricalRead(service: ArenaService): void {
+  const availability = artifactArenaAvailability(service.options?.env ?? process.env);
+  ensure(availability.historicalReads.enabled, 'Artifact Arena history is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+}
+
+function artifactContentResponse(artifact: ArtifactReadResult): Response {
+  assertArtifactReadIntegrity(artifact, MAX_ARTIFACT_READ_BYTES);
+  const basename = artifact.entry.relativePath.split('/').pop() || 'artifact';
+  const filename = basename.replace(/[^A-Za-z0-9._-]/gu, '_').slice(0, 128) || 'artifact';
+  return new Response(Buffer.from(artifact.bytes), {
+    headers: {
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': String(artifact.bytes.byteLength),
+    },
+  });
+}
+
+function requireArtifactRead(service: ArtifactReadPort | undefined, arenaService: ArenaService, historicalRead = false): ArtifactReadPort {
+  if (historicalRead) requireArtifactArenaHistoricalRead(arenaService);
+  else requireArtifactArenaEnabled(arenaService);
+  ensure(service, 'Artifact reading is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return service;
+}
+
+function requirePublicationService(service: ArtifactArenaPublicationPort | undefined, arenaService: ArenaService, historicalRead = false): ArtifactArenaPublicationPort {
+  if (historicalRead) requireArtifactArenaHistoricalRead(arenaService);
+  else requireArtifactArenaEnabled(arenaService);
+  ensure(service, 'Work publication is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return service;
+}
+
+function requireVotingService(service: ArtifactArenaVotingPort | undefined, arenaService: ArenaService, historicalRead = false): ArtifactArenaVotingPort {
+  if (historicalRead) requireArtifactArenaHistoricalRead(arenaService);
+  else requireArtifactArenaEnabled(arenaService);
+  ensure(service, 'Showcase voting is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return service;
+}
 
 function requireCommunity(service: CommunityService | undefined): CommunityService {
   ensure(service, 'Community component library is not available.', 503, ERROR_CODES.INTERNAL_SERVER_ERROR);
@@ -270,11 +329,43 @@ function mapEvaluationError(error: unknown): unknown {
   return error;
 }
 
-export async function handleArena(request: Request, options: { service: ArenaService; communityService?: CommunityService; userId?: string; origin: string; validateBody?: (path: string, body: Record<string, unknown>) => void }): Promise<Response> {
-  const { service, communityService, userId } = options;
+type ArtifactArenaPublicationPort = Pick<WorkPublicationService,
+  | 'requestPublication'
+  | 'withdrawPublication'
+  | 'reviewPublication'
+  | 'getOwnerPublication'
+  | 'getPublicPublication'
+>;
+
+type ArtifactArenaVotingPort = Pick<ShowcaseVotingService,
+  | 'getBallot'
+  | 'projectLeaderboard'
+  | 'createEntry'
+  | 'withdrawEntry'
+  | 'issueBallot'
+  | 'castBallot'
+>;
+
+export interface ArtifactArenaHttpServices {
+  readonly artifacts?: ArtifactReadPort;
+  readonly publications?: ArtifactArenaPublicationPort;
+  readonly voting?: ArtifactArenaVotingPort;
+}
+
+interface ArenaValidationOptions {
+  readonly agentBuildResolver?: AgentBuildResolver;
+}
+
+export async function handleArena(request: Request, options: { service: ArenaService; communityService?: CommunityService; userId?: string; origin: string; validateBody?: (path: string, body: Record<string, unknown>, options?: ArenaValidationOptions) => void; artifactArena?: ArtifactArenaHttpServices }): Promise<Response> {
+  const { service, communityService, userId, artifactArena } = options;
   try {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/^\/api\/arena\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+    let path: string[];
+    try {
+      path = url.pathname.replace(/^\/api\/arena\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+    } catch {
+      throw new AppError('Invalid URL path.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+    }
     const method = request.method;
     const mutating = method !== 'GET';
     if (mutating) {
@@ -290,6 +381,35 @@ export async function handleArena(request: Request, options: { service: ArenaSer
     };
 
     if (method === 'GET') {
+      if (path[0] === 'artifact-bundles' && path.length === 2) {
+        const bundle = await requireArtifactRead(artifactArena?.artifacts, service, true).getBundleForOwner(auth(), path[1]);
+        ensure(bundle, 'Artifact bundle not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+        return json(projectArtifactBundle(bundle));
+      }
+      if (path[0] === 'artifacts' && path[1] && (path.length === 2 || (path.length === 3 && (path[2] === 'content' || path[2] === 'preview')))) {
+        const artifact = await requireArtifactRead(artifactArena?.artifacts, service, true).getArtifactForOwner(auth(), path[1], MAX_ARTIFACT_READ_BYTES);
+        ensure(artifact, 'Artifact not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+        assertArtifactReadIntegrity(artifact, MAX_ARTIFACT_READ_BYTES);
+        if (path[2] === 'content') return artifactContentResponse(artifact);
+        return json(projectPreviewContent(artifact.bundle.manifest, artifact.entry.artifactId, artifact.bytes, artifact.entry.bytes));
+      }
+      if (path[0] === 'showcase' && path[1] === 'publications' && path[2] && path.length === 3) {
+        return json(await requirePublicationService(artifactArena?.publications, service, true).getPublicPublication(path[2]));
+      }
+      if (path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'owner' && path.length === 4) {
+        return json(await requirePublicationService(artifactArena?.publications, service, true).getOwnerPublication(auth(), path[2]));
+      }
+      if (path[0] === 'showcase' && path[1] === 'ballots' && path[2] && path.length === 3) {
+        return json(await requireVotingService(artifactArena?.voting, service, true).getBallot(auth(), path[2]));
+      }
+      if ((path[0] === 'showcase' && path[1] === 'leaderboard' && path.length === 2)
+        || (path[0] === 'showcase-leaderboard' && path.length === 1)) {
+        const roundId = url.searchParams.get('roundId');
+        const comparatorKey = url.searchParams.get('comparatorKey');
+        const policyVersion = url.searchParams.get('policyVersion');
+        ensure(roundId && comparatorKey && policyVersion, 'roundId, comparatorKey and policyVersion are required.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+        return json(await requireVotingService(artifactArena?.voting, service, true).projectLeaderboard(roundId, comparatorKey, policyVersion));
+      }
       if (path[0] === 'components') {
         const actor = auth();
         if (path.length === 1) return json(await requireCommunity(communityService).listOwnedComponents(actor));
@@ -351,13 +471,79 @@ export async function handleArena(request: Request, options: { service: ArenaSer
 
     if (method === 'POST' || method === 'PATCH') {
       const isCancellation = path[0] === 'evaluation-jobs' && path[1] && path[2] === 'cancel';
+      const isShowcaseIdempotent =
+        (path[0] === 'showcase' && ((path[1] === 'ballots' && path.length === 2) || path[1] === 'votes' || (path[1] === 'ballots' && path[3] === 'votes')))
+        || path[0] === 'showcase-ballots'
+        || path[0] === 'showcase-votes';
       const rawBody = request.body ? await readJson(request) : {};
-      const body = isCancellation ? rawBody : (path[0] === 'evaluation-jobs' || (path[0] === 'runs' && url.searchParams.get('mode') === 'async') ? withIdempotencyKey(request, rawBody) : rawBody);
+      const body = isCancellation ? rawBody : (path[0] === 'evaluation-jobs' || (path[0] === 'runs' && url.searchParams.get('mode') === 'async') || isShowcaseIdempotent ? withIdempotencyKey(request, rawBody) : rawBody);
       const validationPath = path[0] === 'runs' && url.searchParams.get('mode') === 'async'
         ? 'runs/async'
         : path.join('/');
-      options.validateBody?.(validationPath, body);
+      options.validateBody?.(validationPath, body, { agentBuildResolver: service.options.agentBuildResolver });
 
+      if (method === 'POST' && path[0] === 'creation-runs' && path.length === 1) {
+        throw new AppError('Creation runs are unavailable until the Creation Evaluation Foundation contract is enabled.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+      }
+
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'publications' && path.length === 2)
+        || (path[0] === 'work-publications' && path.length === 1))) {
+        return json(await requirePublicationService(artifactArena?.publications, service).requestPublication(auth(), {
+          bundleId: body.bundleId as string | undefined,
+          creationRunId: body.creationRunId as string | undefined,
+          expectedSnapshotDigest: body.expectedSnapshotDigest as string,
+          expectedManifestDigest: body.expectedManifestDigest as string,
+          title: body.title as string,
+          description: body.description as string,
+          entryPath: body.entryPath as string,
+          publicArtifactIds: body.publicArtifactIds as string[],
+        }), 201);
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'withdraw' && path.length === 4)
+        || (path[0] === 'work-publications' && path[1] && path[2] === 'withdraw' && path.length === 3))) {
+        return json(await requirePublicationService(artifactArena?.publications, service).withdrawPublication(auth(), path[0] === 'work-publications' ? path[1] : path[2], body.expectedRevision as number));
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'review' && path.length === 4)
+        || (path[0] === 'work-publications' && path[1] && path[2] === 'review' && path.length === 3))) {
+        return json(await requirePublicationService(artifactArena?.publications, service).reviewPublication(auth(), {
+          publicationId: path[0] === 'work-publications' ? path[1] : path[2],
+          expectedStatus: body.expectedStatus as import('./showcase/contracts.ts').PublicationStatus,
+          expectedRevision: body.expectedRevision as number,
+          decision: body.decision as import('./showcase/contracts.ts').PublicationReviewDecision,
+          reason: body.reason as string,
+        }));
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'entries' && path.length === 2)
+        || (path[0] === 'showcase-entries' && path.length === 1))) {
+        return json(await requireVotingService(artifactArena?.voting, service).createEntry(auth(), {
+          publicationId: body.publicationId as string,
+          roundId: body.roundId as string,
+          comparatorKey: body.comparatorKey as string,
+          policyVersion: body.policyVersion as string,
+        }), 201);
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'entries' && path[2] && path[3] === 'withdraw' && path.length === 4)
+        || (path[0] === 'showcase-entries' && path[1] && path[2] === 'withdraw' && path.length === 3))) {
+        return json(await requireVotingService(artifactArena?.voting, service).withdrawEntry(auth(), path[0] === 'showcase-entries' ? path[1] : path[2]));
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'ballots' && path.length === 2)
+        || (path[0] === 'showcase-ballots' && path.length === 1))) {
+        return json(await requireVotingService(artifactArena?.voting, service).issueBallot(auth(), {
+          roundId: body.roundId as string,
+          comparatorKey: body.comparatorKey as string,
+          policyVersion: body.policyVersion as string,
+          idempotencyKey: body.idempotencyKey as string,
+        }), 201);
+      }
+      if (method === 'POST' && ((path[0] === 'showcase' && ((path[1] === 'votes' && path.length === 2) || (path[1] === 'ballots' && path[2] && path[3] === 'votes' && path.length === 4)))
+        || (path[0] === 'showcase-votes' && path.length === 1)
+        || (path[0] === 'showcase-ballots' && path[1] && path[2] === 'votes' && path.length === 3))) {
+        return json(await requireVotingService(artifactArena?.voting, service).castBallot(auth(), {
+          ballotId: path[0] === 'showcase-votes' || path[1] === 'votes' ? body.ballotId as string : path[2],
+          choice: body.choice as import('./voting/contracts.ts').BallotChoice,
+          idempotencyKey: body.idempotencyKey as string,
+        }));
+      }
       if (method === 'POST' && path[0] === 'components' && path.length === 1) {
         return json(await requireCommunity(communityService).createDraft(auth(), { definition: body.definition }), 201);
       }

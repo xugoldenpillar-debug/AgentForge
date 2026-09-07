@@ -65,7 +65,7 @@ AgentForge 是以 AI Workflow 为核心的挑战竞技应用，必须保持以�
 - 隐藏测试只返回允许的汇总和进度；包括错误路径在内，不得泄露输入、答案、逐条输出或秘密。
 - 保持资源所有权检查、私有 Prompt 保护、不可变 Build 历史、并发保存约束及 Fork 清除凭据引用。
 - BYOK 凭据继续使用认证加密和用户隔离；不记录 API Key、密码、Cookie、token、连接串中的密码。
-- 不放宽 Provider 域名/IP、重定向及 SSRF 防护，不增加任意 shell 或用户代码执行能力。
+- 不放宽 Provider 域名/IP、重定向及 SSRF 防护；禁止宿主执行用户代码、任意 shell 或未准入执行能力。作品方向仅允许按 `specs/artifact-arena/` Gate 后续实现平台批准的隔离沙箱能力；Skill 上传/画布配置不授予执行权，文档确认不等于启用能力或付费/生产授权。
 - 不得删除历史 Portable 数据；数据清理需单独授权。
 - `.env.example` 只允许占位值或明确标记的本地演示值。不要提交 `.env*` 实际配置、`.data/`、数据库备份、私钥。
 - 真实模型费用、生产部署、生产数据库写入、删除数据及权限变更须取得对应明确授权。
@@ -137,3 +137,13 @@ pnpm test:smoke
 - GitHub 分支保护是远端设置，本文件和 PR 模板不会自动启用。
 
 新增工程工具时应在同一变更中更新脚本、CI 和文档。解决上述缺口后同步删改本节，避免过期说明。
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

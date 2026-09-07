@@ -1,5 +1,5 @@
 import { getAuth } from '@/lib/auth';
-import { getCommunityService, getService } from '@/server/factory';
+import { getArtifactArenaServices, getCommunityService, getService } from '@/server/factory';
 import { handleArena } from '@/server/http';
 import { validateBody } from '@/server/validation';
 import { safeError } from '@/shared/errors';
@@ -14,6 +14,7 @@ async function handler(request: Request) {
     return handleArena(request, {
       service: getService(),
       communityService: getCommunityService(),
+      artifactArena: getArtifactArenaServices(),
       userId: session?.user.id,
       origin: new URL(process.env.BETTER_AUTH_URL || 'http://localhost:3000').origin,
       validateBody,

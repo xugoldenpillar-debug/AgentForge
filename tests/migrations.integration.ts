@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));
@@ -60,6 +60,11 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       'evaluation_idempotency_keys',
       'evaluation_budget_reservations',
       'evaluation_outbox',
+      'work_publications',
+      'showcase_entries',
+      'showcase_ballots',
+      'showcase_votes',
+      'showcase_audit_events',
     ];
     const freshTables = await sql`
       SELECT table_name

@@ -49,15 +49,15 @@ BYOK HTTP clients use exact-host HTTPS allowlists, no redirects, validated publi
 
 ## Deployment boundaries
 
-Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. Long executions are request-bound; no durable job queue or reconnect-resume protocol is claimed.
+Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. The legacy path is request-bound; configured EF outbox execution has a durable queue/independent worker implementation (see below). Agent/Pi is not integrated into it. Reconnecting to status never means automatically resuming uncertain model execution.
 
 ## Official Flash adaptation within existing BYOK
 
 The existing BYOK SDK adapter now resolves official DeepSeek endpoints through the Registry, forces non-thinking Flash and requires real input/output usage. Other compatible BYOK endpoints retain their existing behavior. This does not introduce a new trust lane or implement Official/Custom credential authorization. Credentials still use the existing owner-bound AES-GCM store. Unknown pricing remains null, so token/call bounds do not imply a monetary hard cap. See `docs/verification/deepseek-app-live-2026-09-06.md`.
 
-## Accepted target architecture — not implemented (2026-09-06)
+## Evaluation foundation — current code and remaining gates (2026-09-07)
 
-See [project design map](../specs/README.md), [evaluation foundation](../specs/evaluation-foundation/README.md) and ADR-0012. The request-bound execution described above remains the current implementation; Redis/BullMQ, durable workers, Outbox, shared quotas, budget settlement and email flows are planned, not production-verified.
+See [project design map](../specs/README.md), [evaluation foundation](../specs/evaluation-foundation/README.md) and ADR-0012. The legacy request-bound path coexists with the configured EF outbox path. `src/server/evaluation/`, `src/db/evaluation-repository.ts`, migration 0006 and `scripts/evaluation-worker-production.ts` implement the public foundation/worker boundary. This is not evidence that every purpose, quota/settlement, email or production gate is complete; Agent/Pi remains unintegrated. See the integration safety boundary below and `evaluation-worker-operations.md`.
 
 The target keeps one Next.js application with independent Node workers. PostgreSQL owns business state and evidence; Redis/BullMQ coordinates delivery. Competitive Run and component SelfTestRun remain distinct records under common evaluation jobs/attempts. Verified execution reuses this foundation while retaining its separate private model gateway, Ticket/Profile/Season/Receipt gates. Pi is an optional execution adapter, not an alternative web application or a security sandbox.
 
@@ -65,9 +65,9 @@ Public caching may be eventually consistent; permissions, credential revocation,
 
 ## Optional Pi adapter — current vs target
 
-Target: a second task runtime behind the same platform adapter boundary, default off, never a sandbox and never mixed into competitive leaderboards.
+Target: a second task runtime behind the same platform adapter boundary, default off and not a sandbox. Future Agent competition requires its own validated Profile/runtime compatibility and trust gates; no default mixing with DAG or other trust lanes.
 
-Current: optional Pi adapter behind `PI_RUNTIME_ENABLED` (exact string `true`; default `false`). Competitive `ArenaService.run` goes through the DAG adapter onto the same `executeWorkflow`; new `runs` rows store nullable DAG identity and are not backfilled. Pi is not a sandbox, has no public UI selector, and does not write competitive submissions. Bridge A reuses official Flash safe fetch; Bridge B stays unavailable. Invited/public enablement is still off.
+Current: optional Pi adapter behind `PI_RUNTIME_ENABLED` (exact string `true`; default `false`). The legacy request-bound `ArenaService.run` uses the DAG adapter onto `executeWorkflow`; the EF worker has its own existing frozen-policy executor path, as detailed below. New `runs` store the applicable nullable identity and old rows are not backfilled. Pi is not a sandbox, has no public UI selector, and does not write competitive submissions. Bridge A reuses official Flash safe fetch; Bridge B stays unavailable. Invited/public enablement is still off.
 
 ## Pi/main integration safety boundary
 
@@ -102,3 +102,9 @@ adapter as the web scheduler. `createProductionWorkerService` is exercised by th
 PostgreSQL/BullMQ gate: a worker with only model execution options cannot finalize a
 Run/Submission and would conservatively leave an unknown Job after usage was recorded.
 The integration fixes that composition without replaying or deleting unknown work.
+
+## Artifact Arena target — not implemented (2026-09-07)
+
+See [the executable spec](../specs/artifact-arena/README.md) and [conflict decisions](../specs/artifact-arena/reconciliation.md). Agent Build configuration extends the existing immutable versions. Pi uses EF plus model/tool brokers and a separately isolated sandbox; its current self-test denial boundary remains until integration gates pass. Artifact bundles are sealed per Attempt/classification; public work releases and showcase entries are separate from hidden competitive Submissions. Creation runs require a versioned EF purpose/input and Build-context extension, not fake suites or component self-tests.
+
+Agent/environment canvas edges declare configuration/capability requests; Workflow edges retain their existing DAG dataflow and Model-required validation. HTML/Markdown/SVG preview is a separate isolated, initially script-free surface, not main-origin execution. First ship fixed approved environments, then composable environment modules; running Attempts cannot gain new permissions from canvas edits. These targets do not authorize host shell, production execution, payment or data deletion.

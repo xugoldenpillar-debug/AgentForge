@@ -1,4 +1,18 @@
 import type { AgentBuildDefinition } from './agent-build-contract.ts';
+import type {
+  ArtifactBundleStatus,
+  ArtifactManifestV1,
+  ArtifactMediaType,
+  ArtifactVisibility,
+  CreationBriefVersionV1,
+  CreationBuildContextV1,
+} from './artifact-contract.ts';
+import type {
+  EnvironmentArtifactPolicyV1,
+  EnvironmentCapabilityRefV1,
+  EnvironmentLimitsV1,
+  EnvironmentTemplateVersionV1,
+} from './environment-contract.ts';
 import type { ErrorCode } from './error-core.ts';
 import type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
 export type { Config, NodeKind, SkillId, ToolId, Workflow, WorkflowEdge, WorkflowNode } from './workflow-types.ts';
@@ -69,6 +83,202 @@ export interface Reputation { id: string; userId: string; points: number; reason
 export interface Badge { id: string; name: string; description: string; icon: string }
 export interface UserBadge { id: string; userId: string; badgeId: string; createdAt: string }
 export interface ForkRelation { id: string; parentBuildId: string; childBuildId: string; userId: string; createdAt: string; sourceVersionId?: string | null }
+
+export type EnvironmentTemplateScope = 'platform' | 'private';
+export interface EnvironmentTemplate {
+  id: string;
+  ownerId: string | null;
+  scope: EnvironmentTemplateScope;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface EnvironmentTemplateVersionRow {
+  id: string;
+  templateId: string;
+  versionNumber: number;
+  name: string;
+  description: string;
+  runtimeKind: 'pi';
+  runtimeAdapterVersion: string;
+  runtimePolicyVersion: string;
+  capabilities: readonly EnvironmentCapabilityRefV1[];
+  limits: EnvironmentLimitsV1;
+  artifactPolicy: EnvironmentArtifactPolicyV1;
+  contentDigest: string;
+  createdAt: string;
+}
+export interface CreationBrief {
+  id: string;
+  ownerId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface CreationBriefVersionRow {
+  id: string;
+  briefId: string;
+  ownerId: string;
+  versionNumber: number;
+  title: string;
+  instructions: string;
+  inputAttachments: CreationBriefVersionV1['inputAttachments'];
+  outputPolicy: CreationBriefVersionV1['outputPolicy'];
+  contentDigest: string;
+  createdAt: string;
+}
+export type CreationRunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'incomplete';
+export interface CreationRun {
+  id: string;
+  ownerId: string;
+  buildId: string;
+  buildVersionId: string;
+  briefId: string;
+  briefVersionId: string;
+  environmentTemplateId: string;
+  environmentTemplateVersionId: string;
+  evaluationJobId: string | null;
+  status: CreationRunStatus;
+  context: CreationBuildContextV1;
+  contextDigest: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+export interface ArtifactBundle {
+  id: string;
+  ownerId: string;
+  creationRunId: string | null;
+  runId: string | null;
+  attemptId: string;
+  outputSlot: string;
+  status: ArtifactBundleStatus;
+  snapshotDigest: string;
+  manifestDigest: string;
+  manifest: ArtifactManifestV1;
+  sealedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface Artifact {
+  id: string;
+  ownerId: string;
+  bundleId: string;
+  path: string;
+  mediaType: ArtifactMediaType;
+  detectedMediaType: ArtifactMediaType | null;
+  sizeBytes: number;
+  sha256: string;
+  storageKey: string;
+  objectVersion: string;
+  visibility: ArtifactVisibility;
+  createdAt: string;
+}
+export type WorkPublicationStatus = 'pending' | 'published' | 'rejected' | 'withdrawn' | 'taken-down';
+export type WorkPublicationPreviewKind = 'html' | 'markdown' | 'svg' | 'image' | 'json' | 'csv' | 'text' | 'download';
+export interface WorkPublicationFileRef {
+  artifactId: string;
+  relativePath: string;
+  mediaType: string;
+  previewKind: WorkPublicationPreviewKind;
+  sizeBytes: number;
+  sha256: string;
+}
+export interface WorkPublication {
+  id: string;
+  ownerId: string;
+  sourceBundleId: string;
+  sourceSnapshotDigest: string;
+  sourceManifestDigest: string;
+  sourceAttemptFence: string;
+  releaseDigest: string;
+  title: string;
+  description: string;
+  entryPath: string;
+  /** Public artifact metadata only; object bytes remain outside PostgreSQL. */
+  files: readonly WorkPublicationFileRef[];
+  status: WorkPublicationStatus;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt: string | null;
+  withdrawnAt: string | null;
+}
+
+export type ShowcaseEntryStatus = 'active' | 'withdrawn';
+export interface ShowcaseEntry {
+  id: string;
+  ownerId: string;
+  publicationId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  roundId: string;
+  status: ShowcaseEntryStatus;
+  /** Release digest frozen when the entry is created; votes never retarget a mutable publication. */
+  publicationReleaseDigest: string;
+  createdAt: string;
+  withdrawnAt: string | null;
+}
+
+export type ShowcaseBallotStatus = 'open' | 'cast' | 'expired';
+export interface ShowcaseBallot {
+  id: string;
+  voterId: string;
+  roundId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  entryAId: string;
+  entryBId: string;
+  pairKey: string;
+  requestDigest: string;
+  idempotencyKey: string;
+  issuedAt: string;
+  expiresAt: string;
+  status: ShowcaseBallotStatus;
+  castVoteId: string | null;
+}
+
+export type ShowcaseBallotChoice = 'a' | 'b' | 'tie' | 'skip';
+export type ShowcaseVoteValidity = 'accepted' | 'excluded';
+export interface ShowcaseVote {
+  id: string;
+  ballotId: string;
+  voterId: string;
+  roundId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  entryAId: string;
+  entryBId: string;
+  pairKey: string;
+  choice: ShowcaseBallotChoice;
+  idempotencyKey: string;
+  createdAt: string;
+  validity: ShowcaseVoteValidity;
+  exclusionReason: string | null;
+}
+
+export type ShowcaseAuditAction =
+  | 'work-publication.requested'
+  | 'work-publication.reviewed'
+  | 'work-publication.withdrawn'
+  | 'showcase-entry.created'
+  | 'showcase-entry.withdrawn'
+  | 'showcase-ballot.issued'
+  | 'showcase-vote.recorded';
+export type ShowcaseAuditMetadata = Readonly<Record<string, string | number | boolean | null>>;
+export interface ShowcaseAuditEvent {
+  id: string;
+  action: ShowcaseAuditAction;
+  actorId: string;
+  /** Set for publication events; voting events use entityId instead. */
+  publicationId: string | null;
+  /** Set for entry, ballot and vote events; publication events use publicationId instead. */
+  entityId: string | null;
+  occurredAt: string;
+  metadata: ShowcaseAuditMetadata;
+}
+
 export type EvaluationAssociationKind = 'competitive-run' | 'self-test-run' | 'component-evaluation';
 export type EvaluationOutboxStatus = 'pending' | 'leased' | 'published' | 'dead-letter';
 export interface EvaluationJobRow {
@@ -302,6 +512,11 @@ export interface Tables {
   failureCases: FailureCase; reputations: Reputation; badges: Badge; userBadges: UserBadge; forkRelations: ForkRelation;
   components: Component; componentVersions: ComponentVersion; attachments: Attachment;
   componentAttachmentContents: ComponentAttachmentContent;
+  environmentTemplates: EnvironmentTemplate; environmentTemplateVersions: EnvironmentTemplateVersionRow;
+  creationBriefs: CreationBrief; creationBriefVersions: CreationBriefVersionRow; creationRuns: CreationRun;
+  artifactBundles: ArtifactBundle; artifacts: Artifact;
+  workPublications: WorkPublication; showcaseEntries: ShowcaseEntry; showcaseBallots: ShowcaseBallot;
+  showcaseVotes: ShowcaseVote; showcaseAuditEvents: ShowcaseAuditEvent;
   componentTestSuites: ComponentTestSuite; componentTestSuiteVersions: ComponentTestSuiteVersion;
   componentTestRuns: ComponentTestRun; publicationRequests: PublicationRequest;
   publicationReviews: PublicationReview; componentReleases: ComponentRelease; usageReferences: UsageReference;

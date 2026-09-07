@@ -77,11 +77,11 @@ test('golden main/Pi partial histories converge with unchanged data and physical
       const snapshot = async () => history.length ? JSON.stringify(await sql`SELECT id, email, name FROM users ORDER BY id`) : '';
       const before = await snapshot();
       const results = await Promise.all([runMigrations(db, canonical), runMigrations(db, canonical)]);
-      assert.equal(results.reduce((n, r) => n + r.applied.length, 0), 9 - history.length);
+      assert.equal(results.reduce((n, r) => n + r.applied.length, 0), canonical.length - history.length);
       assert.equal(await snapshot(), before);
       assert.deepEqual((await sql`SELECT * FROM schema_migrations ORDER BY version`).slice(0, history.length), [...original]);
       assert.equal(await schema(sql), canonicalSchema);
-      assert.equal((await runMigrations(db, canonical)).skipped, 9);
+      assert.equal((await runMigrations(db, canonical)).skipped, canonical.length);
       const ledger = await sql`SELECT * FROM schema_migrations ORDER BY version`;
       const bad = parseMigration('0010_failure.sql', 'CREATE TABLE rollback_probe(id TEXT); SELECT 1/0;');
       await assert.rejects(runMigrations(db, [...canonical, bad]));

@@ -16,7 +16,7 @@
 - DAG adapter：`src/lib/runtime/dag-adapter.ts` 包装 `executeWorkflow`。`ArenaService.run`／`hunt` 经该适配器执行，公开 trace 即时转发。
 - Pi adapter：`src/server/runtime/pi/`。`load.ts` 对字符串 `PI_CORE_PACKAGE` 做 fail-closed 动态 import。
 - 模型 Bridge A：官方 Flash + `safeProviderFetch`、thinking disabled、128 token 上限、无重试。Bridge B 仍抛 `RUNTIME_UNAVAILABLE`。
-- `0003_runs_runtime_identity.sql` 为可空身份列；新 DAG run 写入 `dag`，旧行不回填。Pi 不写竞技 `submissions`。
+- 当前主迁移 `0007_runs_runtime_identity.sql`（Pi 原 0003 保留在历史台账）为可空身份列；新 DAG run 写入 `dag`，旧行不回填。Pi 不写竞技 `submissions`。
 - 没有公开 UI 选择器、没有排行榜混榜、没有 coding-agent、没有沙箱。
 - `pnpm test:pi-runtime` 在 CI，无付费。付费样例仅 `PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live`。
 
@@ -118,7 +118,7 @@ B. 采用 Pi 模型层但注入同等受控出口；必须证实没有旁路网�
 
 ## 6. 版本、证据与比较
 
-本分支已有 `0003_runs_runtime_identity.sql`，新增可空 `runtime_kind` / `adapter_version` / `policy_version`；新 DAG Run 持久化此子集。不是新增 `runs.runtime`，也不是完整冻结 Run 契约。旧结果保持未知身份，不编造版本/Attempt 或回填成 Pi。迁移文件存在不等于本次真实数据库升级/并发 Gate 已通过。
+当前主序列已有 `0007_runs_runtime_identity.sql`（Pi 原 0003 在 historical/pi-runtime-poc 保留，不能直接混跑台账），新增可空 `runtime_kind` / `adapter_version` / `policy_version`；新 DAG Run 持久化此子集。不是新增 `runs.runtime`，也不是完整冻结 Run 契约。旧结果保持未知身份，不编造版本/Attempt 或回填成 Pi。迁移文件存在不等于本次真实数据库升级/并发 Gate 已通过。
 
 DAG 与 Pi 的结果分别展示，默认组件自测不产生竞技 Submission。将来是否可在同一赛季比较，必须另行定义 Profile、资源和评分规则。
 
@@ -147,4 +147,8 @@ Pi 稳定性、启动时间、峰值内存、依赖规模需测量后记录；�
 
 当前：Bridge A、身份列、flag、幂等助手有代码；[PI3 样本](pi3-flash-sample.md) 与 [PI4 测量](pi4-measurement.md) 是历史单次证据。幂等助手不是持久化 Job/Attempt/Outbox，import 时间/RSS 不是长期容量或故障验收；因此不能宣称 PI0–PI4 全部门禁通过。公共用户选择器仍关闭；受邀开放还需共享执行/费用 Gate 和相应实际验证。任何 Gate 失败不静默降级；关闭 Pi 不删除历史记录，不影响 DAG 运行。沙箱脚本／MCP 的执行 Gate 另立，Pi 验收通过不等于这两项已获准。
 
-Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，独立 Worker 是 EF 目标；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
+Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，公共 EF 独立 Worker 已有代码，Pi/Agent 联合接入仍待实现；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
+
+## Artifact Arena 接入（2026-09-07，目标）
+
+[AA-T3](../artifact-arena/tasks.md) 将 Pi 接入既有 EF 与受控沙箱 broker；不使用 coding-agent CLI，不新建付费队列，不以移除旧 self-test 的 EF 拒绝来代替集成。静态作品预览与 Python 工程轨见 [范围](../artifact-arena/requirements.md)。当前不产生竞技 Submission；未来仅在 AA-T8、原 Pi/Profile/trust Gate 通过后允许合资格 Agent 隐藏评测，不与 DAG 默认混榜。旧 PI0–PI4/Bridge A 样本和限制不因此扩大。
