@@ -1,24 +1,21 @@
-# AgentForge 简体中文适配设计
+# AgentForge 界面本地化设计与状态
 
-- **状态**：已确认，待实现
-- **日期**：2026-09-05
-- **适用范围**：Next.js / React 全栈前端、免安装 portable 前端，以及两者共享的系统内容与常见用户可见错误
+- **状态**：Next.js / React 基础已实现；完整文案覆盖和浏览器验收仍需随功能持续维护
+- **日期**：2026-09-07（设计起始于 2026-09-05）
+- **适用范围**：当前 Next.js / React 全栈前端、共享系统内容与常见用户可见错误；Portable 已退役，仅在历史验证文档中保留
 - **相关文档**：[领域词汇表](../CONTEXT.md)、[ADR-0001](./adr/0001-shared-client-side-localization.md)、[架构说明](./ARCHITECTURE.md)、[验证说明](./VERIFICATION.md)
 
 ## 1. 背景
 
-AgentForge 当前有一套共享业务内核和两套独立前端：
+AgentForge 当前只有 Next.js / React / React Flow / Zustand 应用运行时。Portable 已退役，历史 Portable 前端不再属于实现范围或验收入口。
 
-- Next.js / React / React Flow / Zustand 前端；
-- `portable/server.ts` + `public/portable-app.js` 组成的免安装原生前端。
+本地化基础已经在当前应用中落地：共享消息源、语言上下文、`en`/`zh-CN` 选择、首屏语言同步、系统内容映射、结构化错误码映射和 `Intl` 格式化均有代码与单元测试。仍需随页面和功能迭代持续补齐文案覆盖、窄屏布局、错误/空态和可访问性文本。
 
-两套前端共享 Workflow、评测、评分、内置挑战、能力、工具、徽章和服务层，但不共享认证和持久化。当前所有界面文案基本硬编码为英文，两个 HTML 入口的 `lang` 均固定为 `en`，日期和数字格式也硬编码为 `en-US` 或 `en-GB`。项目尚无语言上下文、消息词典、语言偏好持久化或结构化错误码。
-
-本设计为 AgentForge 增加英文与简体中文两种显示语言，并确保语言切换不会改变 Workflow 行为、评测输入、用户内容或任何持久化领域值。
+本设计确保语言切换不会改变 Workflow 行为、评测输入、用户内容或任何持久化领域值。
 
 ## 2. 目标
 
-1. Next.js 和 portable 两套前端都提供 `EN / 简中` 切换。
+1. Next.js / React 应用提供 `English / 简体中文` 切换。
 2. 首次访问根据浏览器语言选择显示语言，之后尊重用户的本机选择。
 3. 切换立即生效，不刷新页面、不改变 URL，也不重置当前业务状态。
 4. 翻译所有界面文案和 AgentForge 控制的内置系统内容。
@@ -26,7 +23,7 @@ AgentForge 当前有一套共享业务内核和两套独立前端：
 6. 常见用户可见服务端错误通过稳定错误码本地化，并保留安全英文回退。
 7. 日期和普通数字遵循当前显示语言，费用币种、评分精度和排序语义不变。
 8. 中文措辞克制、专业、面向开发者，保留适度竞技感但不采用幼稚或角色扮演式语言。
-9. 不给 portable 引入安装依赖，不为这一阶段增加第三方 i18n 库。
+9. 不为本地化增加不必要的第三方 i18n 依赖；共享消息源保持轻量且可独立测试。
 
 ## 3. 非目标
 
@@ -170,7 +167,7 @@ agentforge.display-language
 
 ### 7.1 总体结构
 
-采用“共享消息源 + 两个薄适配器”：
+采用“共享消息源 + React 适配器”，不再维护 Portable 适配器：
 
 ```text
 src/shared/i18n/
@@ -182,13 +179,9 @@ src/lib/i18n/
 ├── locale-provider.tsx  # React Context 和本机偏好
 ├── translate.ts         # t()、回退和插值
 └── format.ts            # number/date/percent 格式化
-
-public/
-├── locale-bootstrap.js  # 两套前端共用的首屏语言检测
-└── portable-app.js      # portable 的薄 i18n 适配
 ```
 
-目录名称在实现时可以小幅调整，但必须保持：消息只有一个权威来源，React 和 portable 不各维护一份中文词典。
+消息只有一个权威来源；组件不得为同一文案手写第二套中文词典。
 
 ### 7.2 消息词典
 
@@ -227,7 +220,7 @@ t('runs.completedCases', { completed, total });
 
 - 模板占位符必须在调用时完整提供；
 - 测试环境中缺少参数直接失败；
-- portable 把插值结果写入 HTML 时仍须经过现有 `esc()`；
+- React 组件把插值结果放入 DOM 时仍须使用框架默认转义；
 - 不把用户文本拼成翻译键；
 - 英文需要单复数时使用明确的 `one` / `other` 键并由 `Intl.PluralRules` 选择，中文可以让两个键使用相同句式。
 
@@ -249,17 +242,11 @@ interface LocaleContextValue {
 
 `src/app/layout.tsx` 保留可预测的服务端默认值，客户端 bootstrap 和 Provider 在浏览器中同步真实 `lang`。`src/app/error.tsx`、Suspense fallback 和公共加载组件也必须进入本地化范围，或使用无语言占位。
 
-### 7.5 Portable 适配器
+### 7.5 当前实现边界
 
-portable 保持无依赖和单页渲染模式：
+Next.js 的 `LocaleProvider`、首屏 bootstrap、语言开关、系统内容映射、错误码翻译和格式化工具已经接入。语言状态不进入 Builder Zustand store，切换只触发界面重新渲染，不创建版本、不改变 Workflow、不取消运行。
 
-- 在全局状态中增加独立的 `language`，但不放进 `builder` 子状态；
-- 提供与 React 语义一致的 `t()` 和格式化方法；
-- 点击语言开关后更新 `localStorage`、`html.lang` 和 `data-display-language`；
-- 调用现有 `render()` 重新绘制界面，但必须保留 Builder、运行控制器、当前选择、缩放、dirty 状态和页面数据；
-- portable 词典由 `src/shared/i18n/messages.ts` 的权威消息源提供，不能手写第二套消息文件。
-
-实现时可由 `portable/server.ts` 将共享消息序列化为一个只读同源脚本或 JSON 资源。该资源必须加入显式静态路由，不得放开任意文件读取。资源只包含公开界面文案，不得包含隐藏测试、秘密或 Provider 凭据。
+Portable 已退役；不得新增 Portable 入口、词典、启动命令或将历史 Portable 检查描述为当前验收。
 
 ### 7.6 内置系统内容
 
@@ -341,7 +328,7 @@ localizeBadge(badge, language)
 
 ### 8.1 Header 开关
 
-在两套前端的公共 Header 中增加分段语言开关：
+在 Next.js/React 公共 Header 中增加分段语言开关：
 
 ```text
 [ EN | 简中 ]
@@ -410,65 +397,45 @@ document.documentElement.dataset.displayLanguage = language;
 - 系统内容：缺少 ID 对应翻译时保留服务端内容；
 - 服务端错误：缺少错误码翻译时显示安全英文 `message`。
 
-## 11. 预计文件影响
+## 11. 当前实现与剩余工作
 
-以下为实现阶段预计修改范围，不代表当前已经修改：
+已实现的主要入口：
 
-| 路径 | 预计变更 |
+| 路径 | 当前状态 |
 | --- | --- |
-| `src/shared/i18n/*` | 新增共享语言类型、消息和系统内容词典 |
-| `src/lib/i18n/*` | 新增 React Provider、翻译与格式化工具 |
-| `src/app/layout.tsx` | 接入首屏语言初始化和基础语言属性 |
-| `src/app/[[...slug]]/page.tsx` | 移除语言相关英文 fallback |
-| `src/app/error.tsx` | 本地化恢复界面 |
-| `src/components/common.tsx` | 公共组件改用翻译键和 locale formatter |
-| `src/components/arena-app.tsx` | Header、页面文案和系统内容本地化 |
-| `src/features/builder/builder-page.tsx` | Builder 界面本地化，保持 Workflow 字符串原文 |
-| `src/features/builder/canvas.tsx` | 节点类型和辅助说明本地化 |
-| `public/locale-bootstrap.js` | 新增无依赖首屏语言选择 |
-| `public/portable-app.js` | portable 翻译适配和语言开关 |
-| `portable/server.ts` | 明确提供 bootstrap 和共享词典资源，不放宽静态文件边界 |
-| `src/shared/errors.ts` | 为可迁移错误增加稳定错误码能力 |
-| `src/server/*`、`src/lib/workflow/*`、`src/lib/ai/*` | 为常见安全错误指定稳定错误码 |
-| `src/lib/client-api.ts` | 兼容结构化错误和旧字符串错误 |
-| `tests/*` | 词典、回退、状态隔离、HTTP 契约回归 |
-| `scripts/browser-smoke.py` | 保留英文流程并增加中文切换/持久化/窄屏检查 |
+| `src/shared/i18n/*` | 共享语言类型、消息、系统内容、回退和格式化已实现 |
+| `src/lib/i18n/*` | React Provider、翻译与格式化适配已实现 |
+| `src/app/layout.tsx` | 首屏 locale bootstrap 和 `lang` 同步已接入 |
+| `src/components/common.tsx`、`src/components/arena-app.tsx` | 公共导航、页面状态和系统内容已接入主要翻译路径 |
+| `src/features/builder/*` | Builder 界面本地化基础已接入；Workflow 持久化字符串保持原文 |
+| `src/shared/errors.ts`、`src/lib/client-api.ts` | 稳定错误码与安全英文 fallback 已有兼容路径 |
+| `tests/i18n.test.ts`、相关 runtime 测试 | 语言选择、回退、插值、格式化和错误映射已有回归覆盖 |
 
-不预计修改数据库 schema 或执行数据迁移。
+剩余工作包括：逐页检查新增/旧页面的硬编码文本、补齐所有加载/成功/错误/空态/帮助/提示/可访问性文本、核对中文窄屏布局，并在每次功能交付时同步中英文 key/fallback 和测试。完整支持声明仍需真实 Next.js 浏览器检查与当前证据记录。
 
-## 12. 实施顺序
+## 12. 实施与维护顺序
 
-### 阶段 1：基础设施
+### 阶段 1：基础设施（已实现基础）
 
-1. 建立 `DisplayLanguage`、消息键和英文基准词典；
-2. 增加简体中文词典并启用键集合约束；
-3. 实现 locale 解析、持久化、翻译、插值和格式化；
-4. 接入首屏 bootstrap；
-5. 为两套 Header 增加语言开关。
+1. 维护 `DisplayLanguage`、消息键和英文基准词典；
+2. 维护简体中文词典并保持键集合一致；
+3. 维护 locale 解析、持久化、翻译、插值和格式化；
+4. 维护首屏 bootstrap、`<html lang>` 和语言开关。
 
-### 阶段 2：React
+### 阶段 2：页面与组件持续迁移
 
-1. 公共组件；
-2. 首页、挑战、排行榜、组件库、Provider、Profile、Build 详情和认证；
-3. Builder 与 React Flow 辅助界面；
-4. 内置系统内容覆盖；
-5. 日期、数字和可访问性文本。
+1. 公共组件、首页、挑战、排行榜、组件库、Provider、Profile、Build 详情和认证；
+2. Builder 与 React Flow 辅助界面；
+3. 内置系统内容、日期/数字/费用和可访问性文本；
+4. 每个新功能同时完成英文与简体中文，禁止留下单语言半成品。
 
-### 阶段 3：Portable
+### 阶段 3：错误码与回退持续维护
 
-1. 使用同一消息源；
-2. 迁移公共 shell 和页面；
-3. 迁移 Builder 与运行控制台；
-4. 接入系统内容覆盖和格式化；
-5. 验证切换不丢失内存状态。
+按高频用户路径逐步补齐稳定错误 code，同时保持旧响应兼容。不得为了翻译一次性重写领域错误或改变 HTTP 状态码。
 
-### 阶段 4：错误码
+### 阶段 4：验证和文档
 
-按高频用户路径逐步给错误增加稳定 code，同时保持旧响应兼容。不得为了翻译一次性重写领域错误或改变 HTTP 状态码。
-
-### 阶段 5：验证和文档
-
-执行自动测试、两种语言的 portable 浏览器流程、React 构建检查和人工 UI 检查，并更新真实执行证据。未实际执行的项目必须明确标记为未验证。
+执行自动测试、Next.js 浏览器检查、构建检查和人工 UI 检查，并更新真实执行证据。未实际执行的项目必须明确标记为未验证。
 
 ## 13. 验证计划
 
@@ -495,34 +462,23 @@ document.documentElement.dataset.displayLanguage = language;
 node --experimental-strip-types --test tests/*.test.ts
 ```
 
-### 13.2 Portable HTTP 回归
+### 13.2 Next.js 浏览器检查
 
-确认：
-
-- 新的 bootstrap 和消息资源只通过显式 allowlist 提供；
-- 源码、隐藏 fixtures、`.env` 和 `.data` 仍不可作为静态资源读取；
-- CSP 不需要新增外部来源或 `unsafe-inline`；
-- HTML 和静态资源类型正确；
-- 认证、运行、提交和持久化行为没有变化。
-
-### 13.3 Portable 浏览器检查
-
-现有英文 smoke 流程保留，以防英文回归。新增中文检查：
+在真实 Next.js/React 前端检查：
 
 1. 首次中文浏览器显示简体中文；
-2. 切换为英文后立即更新并在刷新后保持；
-3. 再切换简体中文后保持；
-4. 导航、首页、挑战详情、排行榜、组件库、登录和 Builder 主要界面为中文；
-5. 内置 Challenge 和能力显示中文；
-6. 用户填写的 Build 标题、Prompt 和节点标签保持原文；
-7. Builder 有未保存修改时切换语言，dirty 和 Workflow 数据不变；
-8. 运行期间切换不取消请求或清空结果；
-9. 390px 中文首页无页面级横向溢出；
-10. 无未捕获浏览器 JavaScript 错误。
+2. 切换为英文后立即更新并在刷新后保持，再切回简体中文；
+3. 导航、首页、挑战详情、排行榜、组件库、登录、Providers 和 Builder 的主要系统文案均有中英文；
+4. 内置 Challenge、Skill、Tool 和 Badge 根据稳定 ID 显示中文；
+5. 用户填写的 Build 标题、Prompt、节点标签、模型输出和 Workflow 文本保持原文；
+6. Builder 有未保存修改时切换语言，dirty 状态和 Workflow 数据不变；
+7. 运行期间切换不取消请求或清空结果；
+8. 桌面和窄屏没有页面级横向溢出，焦点、`aria-label`、`title` 和状态提示可用；
+9. 无未捕获浏览器 JavaScript 错误。
 
-`scripts/browser-smoke.py --bridge` 仍只能证明 portable DOM 和实际后端请求，不代表 React Flow 或浏览器原生 Cookie/流式行为已经验证。
+Portable 浏览器检查不再作为当前验收；如需引用，必须链接对应的退役历史记录并注明不代表当前 Next.js。
 
-### 13.4 全栈检查
+### 13.3 全栈检查
 
 依赖可用时执行：
 
@@ -532,13 +488,13 @@ pnpm typecheck
 pnpm build
 ```
 
-React 前端还需要在正常浏览器中人工检查桌面和窄屏关键路径。portable 浏览器通过不能替代 React 前端验证。
+React 前端还需要在正常浏览器中人工检查桌面和窄屏关键路径；单元测试、历史截图或 HTTP 检查不能替代这一验收。
 
 ## 14. 验收标准
 
 只有满足以下条件，才可以声明“AgentForge 支持简体中文”：
 
-- 两套前端都提供可访问的语言开关；
+- Next.js/React 前端提供可访问的语言开关；
 - 选择会持久化，刷新后保持；
 - `<html lang>` 与当前语言同步；
 - 所有主导航和核心业务路径均已本地化；
@@ -547,7 +503,6 @@ React 前端还需要在正常浏览器中人工检查桌面和窄屏关键路�
 - 切换语言不改变 dirty 状态、不创建版本、不取消运行；
 - 高频用户错误可中文显示，未知错误安全回退英文；
 - 中英文消息键通过一致性测试；
-- portable 静态文件和安全边界未放宽；
 - 390px 中文界面没有新增页面级横向溢出；
 - 已实际执行的验证结果被准确记录，未执行项没有被描述为通过。
 
@@ -555,15 +510,11 @@ React 前端还需要在正常浏览器中人工检查桌面和窄屏关键路�
 
 ### 翻译覆盖面较大
 
-React 和 portable 都有大量硬编码字符串。应按页面分批迁移，但同一功能交付中完成两套前端，避免形成长期半成品。
+React 页面仍可能存在遗漏的硬编码字符串。应按页面分批迁移，但同一功能交付必须同时补齐 English、简体中文、状态/错误/空态、可访问性文本和测试，避免形成单语言半成品。
 
 ### 持久化字符串边界混淆
 
 如果把 Workflow 标签或 Prompt 当作普通界面文案翻译，可能产生未保存修改或改变模型行为。实现时必须把 Workflow 数据视为 Builder Content。
-
-### portable 词典重复
-
-手工复制词典会迅速漂移。portable 必须消费共享消息源产生的公开资源，并用测试保证键一致。
 
 ### 结构化错误迁移范围扩大
 
@@ -579,7 +530,7 @@ React 和 portable 都有大量硬编码字符串。应按页面分批迁移，�
 
 ## 16. 决策摘要
 
-- 同时支持 Next.js 和 portable；
+- 当前只支持 Next.js / React；Portable 已退役，仅保留历史证据；
 - 支持 `en` 与 `zh-CN`；
 - 使用本机偏好，不修改 URL；
 - 首次按浏览器语言选择，之后尊重显式选择；
@@ -589,4 +540,4 @@ React 和 portable 都有大量硬编码字符串。应按页面分批迁移，�
 - 客户端通过稳定错误码本地化常见错误；
 - 日期和普通数字跟随 locale，业务数值语义不变；
 - 中文采用克制、专业、面向开发者的表达；
-- 两套前端和对应测试完成后，才声明功能完成。
+- 只有核心页面、状态、错误、空态、帮助/提示、可访问性文本和中英文 key/fallback 测试都同步后，才声明功能完成。

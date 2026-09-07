@@ -418,11 +418,9 @@ aggregation_method
 
 ## 8. 数据库迁移策略
 
-当前 `pnpm db:migrate` 没有版本台账，因此不能直接开始加业务表。
+当前 `pnpm db:migrate` 已使用 `schema_migrations` 版本台账、checksum 校验和事务级 advisory lock。Gateway 专属业务表仍必须通过新的、经协调的 additive migration 加入，不能改写已应用历史。
 
-### 8.1 先引入版本迁移执行器
-
-建议：
+### 8.1 已实现：版本化迁移执行器
 
 ```text
 src/db/migrations/
@@ -441,7 +439,9 @@ scripts/migrate.ts
 
 `src/db/schema.sql` 继续表示全新数据库的目标结构；版本 SQL 负责已有数据库升级。不能依赖 `CREATE TABLE IF NOT EXISTS` 补字段。
 
-### 8.2 推荐迁移批次
+### 8.2 Gateway 专属迁移批次（设计草案）
+
+以下名称保留为设计标签，不是当前已创建的迁移文件；实施时必须分配新的 canonical 版本并保持既有 checksum 历史不变。
 
 ```text
 001_versioned_migration_ledger

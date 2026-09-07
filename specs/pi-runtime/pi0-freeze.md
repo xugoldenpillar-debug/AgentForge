@@ -1,5 +1,7 @@
 # PI0 freeze（安装前，非安全验收）
 
+> **历史核验 / Historical record：** 本文记录 2026-09-06 的安装前冻结，不是当前依赖或运行状态说明。冻结时关于“尚无依赖/lockfile”的结论只适用于当日快照；当前接入状态见 [`specs/pi-runtime/design.md`](design.md) 和 [`docs/PI-MAIN-INTEGRATION-REVIEW.md`](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。
+
 - 冻结日：**2026-09-06**。
 - 范围：registry / 已发布 tarball 身份核验。不向应用 `package.json` 添加依赖，不启用 feature flag，不调用付费模型，不修改应用源码，不提交、不推送。
 - 结论用途：后续可选服务端安装的**精确包名与版本**。本文不是生产安全验收、不是签名核验通过、不是 SDK 兼容验收。
@@ -15,7 +17,7 @@
 | `package.json` `license` / README “License: MIT” / 仓库根 LICENSE 文本 | 已验证（声明与仓库文本）；tarball **不含** `LICENSE` 文件 |
 | `engines.node` | 已验证：`>=22.19.0` |
 | npm `dist.signatures` 与 SLSA provenance **元数据存在** | 已观察到 URL / keyid；**未**用 npm 公钥做密码学验签，**未**核验 attestation 构建来源 |
-| 传递依赖完整许可证清点、漏洞扫描、lockfile 解析 | **未**做（仓库尚无 `pnpm-lock.yaml`；本次未 `pnpm add`） |
+| 传递依赖完整许可证清点、漏洞扫描、lockfile 解析 | **冻结时未**做（当日仓库尚无 `pnpm-lock.yaml`；本次未 `pnpm add`） |
 | 导入主入口是否有网络 / 读宿主目录 / 执行 shell 的副作用 | **未**运行代码，未验证 |
 | 旧 scope 与新 scope API 兼容 | **未**验证；禁止当同一产物使用 |
 
@@ -47,7 +49,7 @@
 
 ## 2. 冻结推荐（后续可选安装用）
 
-**精确依赖（仅服务端可选，尚未写入应用清单）：**
+**冻结时精确依赖（仅服务端可选；后续实现状态见当前评审）：**
 
 ```text
 @earendil-works/pi-agent-core@0.85.1
@@ -138,10 +140,10 @@ coding-agent 另有 `undici@8.9.0`、`cross-spawn@7.0.6`、`jiti@2.7.0`、`@silv
 - 应用 `package.json`：`"engines": { "node": ">=22.16.0" }`。仓库无 `.npmrc` / `engine-strict`。
 - Pi core / pi-ai / chord / telemetry / coding-agent 0.85.1：`"node": ">=22.19.0"`。
 - **裁决：Pi 0.85.1 不能覆盖应用声明的完整 Node 区间。** `22.16.0 <= node < 22.19.0` 上应用应仍可运行 DAG；Pi 必须拒绝启用，而不是抬高全应用 `engines.node`。
-- 本机 `node --version` 为 `v26.7.0`，数值上高于 Pi 下限，但本次未运行 Pi。
+- 冻结当日核验环境的 `node --version` 为 `v26.7.0`，数值上高于 Pi 下限；这是历史环境信息，不代表当前运行版本。
 - 不要用 `legacy-node20` / `0.74.2` 绕过该差异。
 
-启用时建议检查（尚未实现）：`process.version` 不满足 `>=22.19.0` 则返回明确错误，且不加载 Pi。
+当前适配器已实现该门禁：`process.version` 不满足 `>=22.19.0` 时返回明确错误，且不加载 Pi；应用整体仍保持 `>=22.16.0`。
 
 ## 5. 为何用 core + 允许列表工具，而不是 coding-agent
 
@@ -175,11 +177,11 @@ README Quick Start 的 `new Agent({ initialState, streamFn })` 不传入工具�
 - **等于**官方 core 包内含这些实现，且从主入口再导出。适配器不得注册它们。
 - 是否 `import "@earendil-works/pi-agent-core"` 就会执行 shell：**未运行验证**。从源码看 `createBashTool` 是工厂，`execute` 才调用环境；但 ESM `export *` 会加载该模块。
 
-后续适配器约束（尚未实现，此处只记录冻结含义）：只注入允许列表工具；不要从 core 导入 harness 文件/shell 工厂；不要用 coding-agent 的 `createAgentSession` / `DefaultResourceLoader`。
+适配器约束：只注入允许列表工具；不要从 core 注册 harness 文件/shell 工厂；不要用 coding-agent 的 `createAgentSession` / `DefaultResourceLoader`。当前 `src/server/runtime/pi/` 的实现仍须按这些边界审查。
 
-## 6. 给后续工程师的可复制事实
+## 6. 冻结时可复制事实 / Freeze-time reference
 
-应用当前 **没有** Pi 依赖，也 **没有** lockfile。下面命令仍不要在 PI0 执行；仅供安装工作流复制。
+以下命令和元数据只描述 PI0 冻结时的安装前状态；当前仓库已经在 `package.json` 和 `pnpm-lock.yaml` 中固定 Pi 依赖，不能把本节的安装前措辞当作当前状态。
 
 ```text
 # OPTIONAL, server-only, after PI0 freeze is accepted.
@@ -206,4 +208,4 @@ type: module
 #   @earendil-works/pi-telemetry@0.85.1
 ```
 
-安装后必须：生成并审查 lockfile；确认解析到的 `@earendil-works/pi-ai` / `chord` / `pi-telemetry` 版本；把 Pi 限制在服务端适配器动态导入；对 Node `<22.19.0` 拒绝启用。
+冻结后的实施检查要求：审查 lockfile 中解析的 `@earendil-works/pi-ai` / `chord` / `pi-telemetry` 版本；把 Pi 限制在服务端适配器动态导入；对 Node `<22.19.0` 拒绝启用。依赖固定和 Node/flag gate 已有当前代码基础，但生产容量、供应链和安全验收仍未完成。

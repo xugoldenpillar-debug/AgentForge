@@ -50,10 +50,12 @@ No standard account is created. Register your account and configure Providers.
 Existing Demo history remains labeled and separate; forks and new workflows have no
 selected provider. Saving a draft is allowed; running requires a provider and consent.
 
-See `docs/verification/retire-portable-2026-09-06.md` for this change's evidence and
-`docs/VERIFICATION.md` for historical results. Historical Portable screenshots and
-checks are not current Next.js acceptance. The application remains an MVP, not a
-production security certification or a completed Verified Gateway implementation.
+See `docs/verification/retire-portable-2026-09-06.md` for the retirement evidence,
+`docs/VERIFICATION.md` for the historical verification matrix, and
+`docs/PI-MAIN-INTEGRATION-REVIEW.md` for the current merged delivery status.
+Historical Portable screenshots and checks are not current Next.js acceptance. The
+application remains an MVP, not a production security certification or a completed
+Verified Gateway implementation.
 
 ## Real model calls / BYOK
 
@@ -146,7 +148,7 @@ Hidden inputs, expected values and per-case outputs never leave the arena API on
 
 The checked-in fixtures and fixed Secret Keeper secret are for a **local, inspectable MVP**, not a confidential contest benchmark. Replace them with server-private, separately versioned tests/secrets before hosting a real competition. Secret checks catch several obvious encodings but do not prove a general non-disclosure property. Safety Guard is a bounded injection heuristic, not a comprehensive security system.
 
-Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox, agent marketplace payments or background worker. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. Execution is synchronous/streamed with limits; run the app on a host that supports the configured request duration. Not a multi-tenant production certification.
+Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox or agent marketplace payments. The durable evaluation Worker foundation exists behind explicit outbox configuration, but production deployment and the complete community/Verified integrations remain unfinished. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. Request-bound execution remains available when the durable scheduler is not configured. Not a multi-tenant production certification.
 
 See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Retired Portable screenshots under `docs/screenshots/` are historical only.
 
@@ -158,7 +160,7 @@ Before extending AgentForge, read:
 - `CONTRIBUTING.md` — local development, Git branches/commits/PRs, database changes and the test matrix.
 - `.github/pull_request_template.md` — change scope, evidence, compatibility and review checklist.
 
-The repository currently has no committed pnpm lockfile or lint/format scripts. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
+The repository tracks `pnpm-lock.yaml` and CI uses frozen installation; lint/format scripts are not configured. Versioned database migrations are implemented; the isolated PostgreSQL test command and remaining verification gates are documented in `docs/MIGRATIONS.md`. The contribution guide distinguishes these follow-up improvements from checks already implemented. GitHub branch protection must be configured separately; documentation does not enable it.
 
 ## Design and implementation roadmap
 

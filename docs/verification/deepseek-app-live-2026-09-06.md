@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录 2026-09-06 的一次授权 BYOK 样本，不代表当前运行、持续可用性、Verified 或生产验收。
+
 # 应用侧 Flash 真实验证 — 2026-09-06
 
 ## 范围与授权

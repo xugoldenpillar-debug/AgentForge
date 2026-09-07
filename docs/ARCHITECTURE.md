@@ -49,15 +49,15 @@ BYOK HTTP clients use exact-host HTTPS allowlists, no redirects, validated publi
 
 ## Deployment boundaries
 
-Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. Long executions are request-bound; no durable job queue or reconnect-resume protocol is claimed.
+Production TLS/origin configuration, email verification/recovery, account abuse monitoring, content moderation, database backup, key rotation and service observability need deployment-specific work. The Next CSP is a development-compatible baseline with inline/eval allowances; harden it with tested per-request nonces before public deployment. The Docker image keeps dev tooling to run migrations/seed; optimize it only after the full build path passes in your environment. The evaluation-foundation tables, Outbox/BullMQ delivery path and independent Node Worker exist in the current code behind explicit scheduler configuration; the request-bound path remains a compatibility fallback when that scheduler is not configured. Production deployment and reconnect/resume behavior still require separate validation.
 
 ## Official Flash adaptation within existing BYOK
 
 The existing BYOK SDK adapter now resolves official DeepSeek endpoints through the Registry, forces non-thinking Flash and requires real input/output usage. Other compatible BYOK endpoints retain their existing behavior. This does not introduce a new trust lane or implement Official/Custom credential authorization. Credentials still use the existing owner-bound AES-GCM store. Unknown pricing remains null, so token/call bounds do not imply a monetary hard cap. See `docs/verification/deepseek-app-live-2026-09-06.md`.
 
-## Accepted target architecture — not implemented (2026-09-06)
+## Evaluation foundation and worker architecture (foundation implemented; product integrations pending, 2026-09-07)
 
-See [project design map](../specs/README.md), [evaluation foundation](../specs/evaluation-foundation/README.md) and ADR-0012. The request-bound execution described above remains the current implementation; Redis/BullMQ, durable workers, Outbox, shared quotas, budget settlement and email flows are planned, not production-verified.
+See [project design map](../specs/README.md), [evaluation foundation](../specs/evaluation-foundation/README.md) and ADR-0012. The current implementation includes the shared Job/Attempt/Invocation foundation, Outbox/BullMQ delivery, an independent Worker, idempotency and lease/recovery boundaries. The request-bound executor remains available only as a compatibility path when the durable scheduler is not configured. Complete component SelfTestRun, community/Verified integration, production operations, shared quota policy and email flows remain pending and are not claimed as production-verified.
 
 The target keeps one Next.js application with independent Node workers. PostgreSQL owns business state and evidence; Redis/BullMQ coordinates delivery. Competitive Run and component SelfTestRun remain distinct records under common evaluation jobs/attempts. Verified execution reuses this foundation while retaining its separate private model gateway, Ticket/Profile/Season/Receipt gates. Pi is an optional execution adapter, not an alternative web application or a security sandbox.
 

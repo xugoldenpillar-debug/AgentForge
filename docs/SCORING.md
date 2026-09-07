@@ -10,6 +10,8 @@ Grades are deterministic thresholds; consult the source for cutoffs. Score is ro
 
 Demo latency/token/cost values are simulated and do not predict real models. BYOK measurements and user prices are not independently verified; only compare them within their own lane. The UI's benchmark rating is a simple monotonic score-derived proxy plus reputation, not a competitive head-to-head Elo algorithm. Public tests are for feedback; only completed hidden submissions affect the leaderboard.
 
-## Planned asynchronous execution boundary
+## Asynchronous execution boundary
 
-The [evaluation foundation](../specs/evaluation-foundation/README.md) is not implemented yet. Its queue waiting time must not enter the existing execution-latency score. Incomplete or interrupted competitive evaluations create no Submission; fully executed evaluations may legitimately contain failed cases. Author Self-Test and Platform Component Evaluation produce their own evidence, not competitive points or Verified certification. Operational budget reservations and actual spend are distinct from Benchmark Cost; introducing the scheduler must not silently change scoring formulas.
+The [evaluation foundation](../specs/evaluation-foundation/README.md) now provides the shared durable scheduling foundation for competitive evaluation: Job/Attempt/Invocation, Outbox, idempotency, leases, cancellation and Worker completion. The web adapter is opt-in through `EVALUATION_SCHEDULER_MODE=outbox`; without that configuration the request-bound compatibility path remains available. Its queue waiting time must not enter the existing execution-latency score.
+
+Incomplete or interrupted competitive evaluations create no Submission; fully executed evaluations may legitimately contain failed cases. Author Self-Test and Platform Component Evaluation produce their own evidence, not competitive points or Verified certification. Operational budget reservations and actual spend are distinct from Benchmark Cost. The foundation code and local regression do not imply a production deployment or that community/Verified integrations are complete.

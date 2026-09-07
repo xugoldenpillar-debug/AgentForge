@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录一次授权的 Pi/Flash 样本，不代表当前运行、持续可用性、Verified 或生产验收。
+
 # PI3 Flash sample — AgentForge optional Pi Runtime
 
 - Date: 2026-09-06T13:25:37.712Z

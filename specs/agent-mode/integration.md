@@ -1,113 +1,100 @@
-# B2 交付范围与独立审查（2026-09-07）
+# Agent mode integration boundary and delivery status
 
-## 当前实现与审查结论
+> **状态快照 / Status snapshot：2026-09-07。** 本文件是 Agent mode 的长期技术边界和交付状态说明，不是交接记录。历史测试结果只说明记录的代码路径曾经通过，不代表当前进程、服务、数据库或生产环境状态。
 
-B2 delivers private unconfigured Agent draft persistence/HTTP/history/CAS/Fork, not Agent UI or execution. Independent review inspected actual service, DTO, HTTP, migration, repository and tests. The identified Workflow lane regression is now fixed and independently verified; no remaining blocking finding was identified within this restricted B2 scope. Reviewer did not change code or shared services.
+## 1. 范围与结论 / Scope and conclusion
 
-### 已冻结接口与存储
+B1 和受限 B2 已交付：Agent Build 可以保存私有、未配置的声明式草稿，支持不可变版本、并发保存保护、历史读取和精确版本 Fork。B3 的编辑器、引用授权、公开发布和执行能力仍未交付。
 
-- POST `/api/arena/builds`：`mode: agent`、`agentDefinition`（B1 v1）；沿用 `title`、`problemId`、`visibility`、`buildId`、`currentVersionId`。缺省 mode 仅指 Workflow；拒绝混合定义、未知字段、客户端 digest、bindings/Grant 与 mode 转换，无 `expectedVersionId` 别名。
-- 仅 private；允许空 instructions。模型/Profile/输出/环境/runtime 选择必须全部为 null，Skill/能力必须为空。所有非空引用 fail closed；不以结构校验、hash 或静态目录代替授权。
-- GET `/api/arena/builds/:id?mode=agent[&version=id]`：Agent 仅 owner 可读；返回所选版本 definition/digest，不返回 workflow；history 对两种 mode 均仅显式 metadata。缺省 mode 的旧客户端读取 Agent 得到 409 `RUNTIME_POLICY_DENIED`。
-- POST `/api/arena/builds/:id/fork`：仅 mode/versionId；HTTP Agent 需显式 `mode: agent`。事务内核对源、精确版本归属及访问，创建 private revision 1，`fork_relations.source_version_id` 保存确切来源。旧 lineage 为 null、不猜历史；Agent 无凭据/Grant 支持，Workflow 仍清除凭据引用。
-- `0009_agent_build_drafts.sql`（Pi 原历史为 0005，原始字节和台账保留；见 `docs/MIGRATIONS.md`）扩展 build_versions.mode（默认 workflow）/agent_definition/definition_digest 与 source_version_id；main 0001–0006 未改写。保留节点/边和历史；SQL CHECK 是 payload 一致性/格式约束，不是完整定义验证或依赖授权。重复迁移依赖 checksum 台账跳过，不承诺手动重复执行裸 SQL。
-- 保存事务维持 owner/problem/mode/CAS；Drizzle 包装的 serialization/deadlock 错误整事务重试。Agent Run/DAG/hunt 拒绝；不存在 Agent 执行入口。
+本文件保留 Agent mode 的接口、安全和后续接入边界。当前 EF（Evaluation Foundation）已经提供 Job/Attempt/Invocation、Outbox、BullMQ/Worker、幂等、租约、取消和恢复基础；Agent 不得自行创建另一套调度器。Agent-specific execution、SelfTestRun、沙箱和竞技闭环必须经过共同 Gate 后才能开放。
 
-### Closed finding: Workflow hunt lane mismatch (2026-09-07)
+## 2. 已完成项 / Delivered
 
-Before the fix, hunt classified every platform provider as Verified, while provider resolution used BYOK if either price was null. This selected the wrong leaderboard. The fix adds `src/lib/ai/provider-lane.ts`; both paths share `classifyProviderLane`, without provider construction or authorization side effects. Either missing price means BYOK; both known, including zero, means Verified. Demo/custom lanes are unchanged.
+### 2.1 B1：纯定义契约 / Pure definition contract
 
-Historical pre-fix probe: a platform with both prices null requested Verified and returned RESOURCE_NOT_FOUND, with zero provider constructions. This was an in-memory reproduction, not a database or paid-model test.
+- `src/shared/agent-build-contract.ts` 提供 `AgentBuildDefinitionV1`、规范化、严格字段校验、资源界限和深冻结结果。
+- `src/lib/agent-build/digest.ts` 对规范化定义计算服务端 SHA-256；固定版本和 Skill 顺序属于摘要协议的一部分。
+- 定义不承载凭据或 Grant；结构合法、摘要一致不等于引用真实、获得授权或具备执行资格。
+- mode、execution runtime 和 trust lane 保持独立；Pi 的 `RunDefinition.kind: pi` 不等于持久化 Agent Build，也不是转换器。
 
-### 验证事实与边界
+### 2.2 B2：私有未配置草稿 / Private unconfigured drafts
 
-Pre-fix worker evidence (`/tmp/b2-*.log`): full 183 passed, Pi 23 passed / 1 skipped, typecheck/build and isolated smoke successful; real migration matrix and overlapping PostgreSQL CAS each 1 passed. These are historical worker results inspected by reviewer, not independently rerun or sufficient by themselves to close the lane finding.
+- `POST /api/arena/builds` 支持显式 `mode: agent` 和 B1 `agentDefinition`；缺省 mode 仍只表示 Workflow。
+- Agent 草稿只允许 private；可以保存空 instructions。模型、Profile、输出、环境和 runtime 选择必须为空，Skill/能力也必须为空。非空引用 fail closed。
+- `GET /api/arena/builds/:id?mode=agent[&version=id]` 只允许 owner 读取 Agent definition/digest；history 只返回显式安全 metadata，不把 Agent 当作 Workflow 返回。
+- `POST /api/arena/builds/:id/fork` 要求明确 mode/version；事务内核对源、精确版本归属和访问，创建 private revision 1，并保存 `fork_relations.source_version_id`。
+- `build_versions.mode`、`agent_definition`、`definition_digest` 和 Fork 来源由 `0009_agent_build_drafts.sql` 承载；主线 `0001`–`0006` 不改写。Pi 历史迁移文件和字节继续保留在历史目录。
+- 保存事务维持 owner/problem/mode/CAS；序列化和死锁错误按既有事务重试边界处理。Agent Run/DAG/hunt 入口 fail closed，不构造 Agent provider 或模型调用。
 
-Reviewer independently ran the initial draft suite (8 passed) and the pre-fix in-memory probe. After the fix, reviewer ran `node --experimental-strip-types --test tests/provider-lane.test.ts tests/agent-drafts.test.ts`: 23 passed / 0 failed / 0 skipped (15 lane + 8 drafts). Coverage includes missing input/output/both prices, known nonzero/zero prices, Demo/custom, Run/submission/hunt target consistency and historical Agent rejection before provider construction. No shared database, browser, full build or paid models used.
+### 2.3 已关闭的 lane 回归 / Closed lane regression
 
-Final worker rerun logs `/tmp/b2-lane-{related,full,typecheck,pi,build,smoke}.log` were inspected: related 41 passed, full 198 passed, typecheck/build successful, Pi 23 passed / 1 skipped, isolated Next/Auth smoke successful. Reviewer did not independently repeat these full/integration commands. Earlier migration/CAS evidence remains separately attributed.
+Provider lane 的分类和解析现在共用 `classifyProviderLane`。任一价格缺失即为 BYOK；两项价格均已知（包括零）才为 Verified；Demo/custom 行为不变。该分类不触发 provider 构造或授权副作用。
 
-浏览器为主 worker 回报：Chromium 1440×900 / 390×844，既有 Builder/detail 访问 Agent 显示安全错误，无 React Flow 节点；不是 Agent UI 可用性验收，没有截图证据。Demo 三题 smoke 不代表真实模型正确率。远端 CI 未执行；没有生产/付费操作、提交或推送。
+## 3. 接口与安全边界 / Interface and safety boundaries
 
-主 worker 留存资源：PostgreSQL 容器 `agentforge-b2-drafts-20260907`、localhost 55447、库 b2_drafts；Next 测试服务 localhost:3317。独立 reviewer 未停止/修改/复用这些服务，也未并发运行构建；最终存活状态以主 worker 回报为准。未改依赖/锁文件或实际环境配置。
+### 3.1 请求与版本 / Requests and versions
 
-### B3 与未来范围
+- POST 保存请求拒绝未知字段、混合 DAG/Agent 定义、客户端摘要、bindings/Grant 和 mode 隐式转换。
+- 直接 service 调用也必须执行与 HTTP 相同的领域校验，不能只依赖 Zod 或按钮隐藏。
+- Build 的 current pointer 和历史版本保持不可变语义；排队快照必须使用精确的 immutable BuildVersion，不随之后的草稿变化。
+- `currentVersionId` 是当前兼容字段；不要在没有明确契约变更时引入 `expectedVersionId` 别名或静默重命名。
 
-仍缺 Agent 编辑 UI、权威 Component/Profile/输出/环境解析与授权/撤销/公开许可、凭据绑定、可靠 EF Worker、沙箱/artifacts、Agent Run/评分/完整竞技闭环。不要创建新 Profile/组件注册表或把本次验证称为这些能力已验收。
+### 3.2 读取、投影与 Fork / Reads, projections and Fork
 
----
+- owner 与非 owner 读取路径必须分别核验 Build、所选历史版本和组件访问资格；不能共用未经裁剪的 definition 序列化。
+- 加入组件引用后，必须使用显式 DTO，避免私有 instructions、引用或 Grant 经 history、详情、列表和导出泄露。
+- Fork 必须保存确切来源版本，在事务内重新核验源和依赖权限，创建 private revision 1，清除全部凭据绑定且不复制 Grant。无权访问时拒绝，不静默替换依赖。
+- 组件引用必须固定到不可变版本；普通 withdrawn/deprecated 和安全 revoked 的行为要区分，授权变化不能由缓存绕过。
 
-## 历史 B2 准备清单（2026-09-06，保留规划上下文）
+### 3.3 与 EF 的联合边界 / Shared EF boundary
 
-**以下未勾选项是实现前的完整目标清单，不是当前状态表；已交付子集与待修复项以上文为准。配置引用/公开发布和全 UI 项仍未交付。**
+- Agent C 阶段复用现有 EvaluationJob/Attempt/Invocation/Outbox 和独立 Worker；不创建 AgentJob、AgentQueue 或 AgentBudget。
+- SelfTestRun、Agent Run 和后续 ComponentEvaluation 仍是不同业务记录；自测不得生成竞技 Submission 或排行榜成绩。
+- Agent-specific 联合创建必须一次性绑定冻结的 definition、Profile/输出合同、凭据准入、同意版本、预算和幂等摘要。页面断线不等于取消，取消和不确定上游结果由 EF 收敛。
+- 在 EF scheduler/outbox 配置下，尚未接入共同持久化准入的 Agent/Pi 真实调用必须 fail closed；不可用长 HTTP 请求冒充可靠执行。
 
-日期：2026-09-06。基于 `feat/pi-runtime-poc` 工作区的只读集成调查；B1 由另一工作包实现。本页是交付边界与待验证清单，不表示代码、迁移、权限或运行 Gate 已通过。
+## 4. 未完成项 / Not delivered
 
-普通代码、文档及已授权的隔离本地验证可以继续，不以本文要求重复授权。真实付费调用、生产操作、服务购买、既有数据删除、权限变更仍需对应明确授权；沙箱供应商、镜像、隔离证据与成本政策另行选型，不阻塞纯 Build 契约工作。
+### B3：编辑器与发布 / Editor and publishing
 
-## 1. B1 → B2 契约交接
+- [ ] Agent 编辑器、历史选择、保存冲突、加载/空/错误状态及桌面/窄屏可访问性验收。
+- [ ] Component/ComponentVersion/Release/UsageReference 的权威解析、digest、读权限、许可、撤回/撤销和公开依赖检查。
+- [ ] Agent definition 的安全 DTO、公开发布、凭据重新绑定和跨用户 Fork 的完整端到端验证。
 
-- [ ] 冻结定义字段、schema 版本、规范化和错误语义；`mode: agent` 与 execution runtime、trust lane 是独立维度。PoC `RunDefinition.kind: pi` 不是持久化 Build，也不是转换器。
-- [ ] 仅在明确的兼容入口将旧请求缺省 mode 解释为 Workflow；拒绝未知 mode/schema、混合 DAG/Agent 字段及隐式转换，不生成假节点或空图充当 Agent。
-- [ ] 摘要由服务端对通过校验的规范化定义计算；明确对象键序、Skill 顺序、能力集合排序、换行规范化及摘要域/schema。不能直接信任客户端 definitionDigest，定义摘要不等于授权执行快照摘要。
-- [ ] 定义仅表达模型/版本、固定组件版本、能力意图、输出/Profile/环境引用及 runtime 选择，不承载秘密或 Grant。结构校验成功不代表引用真实、获准、可公开或可执行。
-- [ ] 明确未配置草稿的表示：缺少模型、Profile/输出/环境身份时如何保存；不得凭空生成已批准引用或把缺少凭据等同于完整执行资格。
-- [ ] B1 若将凭据绑定排除在定义之外，B2 单独冻结 owner-scoped 绑定的存储、版本/快照关系、DTO 与 Fork 清除规则；不要为绑定悄悄扩展纯定义摘要。
-- [ ] helper 保持 Node 原生 `.ts` 导入、无 Next.js/数据库/真实 SDK 依赖。不在 B1/B2 另建 AgentJob、AgentQueue、AgentBudget 或 EvaluationProfile。
+### C：可靠执行 / Reliable execution
 
-## 2. Additive schema 与事务
+- [ ] Agent 与 EF 的 SelfTestRun/Job 原子创建、状态查询、确认取消、fencing、恢复和安全结果投影。
+- [ ] 双 API 幂等、重复投递、Redis 断线/补投、Worker 失联/旧写回、排队撤销、取消完成竞态及真实容额/费用验收。
+- [ ] 邮箱验证、密码找回、共享认证限流和邮件消费者等配套 Gate。
 
-- [ ] 扩展既有 BuildVersion，存储 mode、schema-versioned Agent 定义及服务端摘要；旧 Workflow 的节点/边/历史不改写。冻结 mode 与 payload 一致性，以及遗留记录的默认解释。
-- [ ] 同步 `src/db/schema.ts`、目标 `schema.sql`、版本迁移、共享 Tables、仓储和测试内存表清单。当前迁移已有 `0001`–`0004`；集成前协调新编号，不改已应用 checksum。
-- [ ] 保留 `(buildId, revision)` 唯一约束、不可变历史、固定 problemId 和 currentVersionId CAS。当前请求字段是 `currentVersionId`，设计称 `expectedVersionId`；明确兼容映射，不能无声改名。
-- [ ] 在同一事务核查 owner、预期版本、依赖授权，写版本/引用并 CAS 更新当前指针；失败回滚全部记录。现有模型凭据检查在事务外，不作为新依赖检查的模板。
-- [ ] `builds.currentVersionId` 当前没有 FK，且首次保存先插 Build 后插版本；若增强指针约束，兼顾插入顺序与同 Build 归属，不引入不可满足的循环约束。
-- [ ] 处理并发保存的稳定 409 错误；检查 serializable 重试及唯一约束竞争，不能把内存仓储串行事务测试当成 PostgreSQL 并发证明。
+### D：沙箱与 artifacts / Sandbox and artifacts
 
-## 3. 组件、投影与 Fork
+- [ ] Python 或其他执行环境的真实隔离、镜像/digest、资源配额、默认禁网、无宿主 shell 和停止确认。
+- [ ] 路径穿越、symlink/hardlink、竞态替换、超额输出、artifact 封存/下载/预览、XSS/CSV 公式/远程资源和隐藏内容泄露验证。
+- [ ] 独立 judge、失败与基础设施故障区分，以及可审计的不可变产物摘要。
 
-- [ ] 引用解析检查 component/version 归属与权威 digest、读权限、声明式 eligibility、发布状态及公开依赖/许可。现有 buildSkills 仅关联静态 skills，不是 ComponentVersion 使用关系。
-- [ ] 依赖固定版本，不跟随 latest。普通 withdrawn/deprecated 阻止新引用、保留合法旧绑定；安全 revoked 阻止执行，历史结果仍可读。冻结新 BuildVersion/Fork 是否属于新增引用的判定。
-- [ ] 公开发布必须检查依赖可公开性，不以删掉私有依赖来偷偷改变行为。默认拒绝无法授权的引用；测试适配器不代表真实组件权限系统。
-- [ ] **替换原始版本投影**：当前 `build()` 直接返回 version 与全部 history。加入定义后必须显式构造 DTO，防止私有 instructions/refs 经历史、公开详情、列表或导出泄露。
-- [ ] 同时核查当前 Build 和所选历史版本 visibility，再独立核查组件访问；owner 的详情与非 owner 的详情不能共用未经裁剪的定义序列化。
-- [ ] Fork 指定历史版本，保存确切来源版本身份。当前 forkRelations 仅保存 parent/child Build ID；来源版本需要 additive 方案。
-- [ ] Fork 在事务内重新核查源与依赖权限，产生 private revision 1，清除模型/MCP/工具全部 credential bindings，不复制 Grant；新 owner 自行绑定并授权。无权私有内容拒绝，不静默替换依赖。
+### E/F：竞技闭环与扩展 / Competitive loop and extensions
 
-## 4. HTTP 与旧客户端
+- [ ] Agent Profile/Season/Suite/Scoring 兼容身份和资源归责；Run → Submit → Score → Leaderboard → Fork 全链路。
+- [ ] Demo/BYOK/Verified 隔离、自测/平台复测不产竞技成绩、隐藏输入/输出只投影允许汇总。
+- [ ] 只读 MCP、可执行 Skill、其他语言/厂商 SDK 和多 Agent 需单独完成身份、许可、供应链、SSRF、数据同意、配额和沙箱准入。
 
-| 现有入口 | B2 要求 |
-| --- | --- |
-| `POST /api/arena/builds` | 判别式严格校验，保留旧 workflow 请求；保存路由复用领域规则。 |
-| `GET /api/arena/builds/:id?version=…` | 返回明确 mode、安全的选定版本及 history DTO；验证所选版本属于 Build。 |
-| `POST /api/arena/builds/:id/fork`，`{versionId}` | 严格校验历史版本字段；当前 validateBody 按完整路径查 schema，嵌套路由未匹配 builds schema，需要补齐。 |
-| `POST /api/arena/runs` | 执行前显式检查持久化 mode；未接入可靠执行的 Agent 返回清楚的不可执行错误，不进入 DAG/provider 路径。 |
+## 5. 历史验证记录 / Historical verification record
 
-- [ ] 保留 auth、Origin/跨站限制、安全错误 envelope、请求 128 KiB 上限，定义容量限制与入口协调。
-- [ ] 旧 DAG NDJSON 协议不变；不把 Pi 长请求自测接成新的生产 Agent 执行入口。查询/取消等可靠作业 API 与 EF 联合冻结，不由 B2 猜定。
-- [ ] 审计所有读取 workflow 的服务及 UI；旧客户端不能把 Agent 当空 Workflow 编辑/保存/运行。支持模式分流或明确不支持，禁止隐式模式改写。
-- [ ] 不仅依赖 HTTP Zod：直接 service 调用也必须经过领域校验，保持测试/其他入口的相同约束。
+以下结果属于 2026-09-07 及之前的历史记录，不代表当前运行或生产验收：
 
-## 5. 当前缺失的真实依赖
+- B1 定向 Agent contract 测试：16 passed；覆盖定义规范化、严格字段、资源限制和摘要 golden vector。
+- B2 定向 draft/lane 测试：23 passed / 0 failed / 0 skipped；覆盖价格缺失/零值、Demo/custom、Run/submission/hunt 一致性和 Agent 执行前拒绝。
+- 相关工作包记录：full suite、Pi suite、typecheck/build 和隔离 Next/Auth smoke 均曾成功；该记录不是本文件当前执行结果，也不代表生产服务仍在运行。
+- 迁移矩阵、PostgreSQL 并发 CAS 和 EF PostgreSQL/Redis Worker 测试有独立历史记录；它们只覆盖记录的场景，不能替代生产容量、费用、故障或安全验收。
+- 没有以本文件中的历史测试结果宣称 Agent UI、Agent 真实模型执行、沙箱、Verified 或社区公开发布已完成。
 
-以下是此 checkout 的实现缺口，不是新增库或权限的批准：
+## 6. 后续验收 / Next acceptance gates
 
-- Component/ComponentVersion/Release/UsageReference 表、权威版本解析与授权/撤销服务尚不存在；共享静态 Skill 目录不替代它们。
-- EF EvaluationJob/Attempt/Invocation/Outbox、独立可靠 Worker、持久化 SelfTestRun、取消确认/fencing、共享容量与预算预占账本尚未实现。
-- package.json 没有 BullMQ/Redis 客户端依赖；不要为了 B2 草稿保存抢建另一套队列或顺带引入它们。
-- Benchmark Profile/version、Season/Suite/Scoring 的 Agent 兼容身份尚无对应实现；未定义兼容性前不开放跨模式评分/提交。
-- Pi SDK 已在依赖中，但只是 PoC 基础，不意味着沙箱、组件权限、异步执行或 Verified 已可用。
-- `pnpm-lock.yaml` 已被此 checkout 跟踪，AGENTS §9 的缺失锁文件说明已过时；本工作包不修改该文件。
+- [ ] 运行全新库、旧结构升级、重复迁移、原数据保留、并发 CAS、事务回滚和注册/登录矩阵；保持已应用迁移 checksum 不变。
+- [ ] 验证正常、错误、越权、未知 schema、混合定义、摘要伪造、撤回/撤销、公开许可和授权变化竞争。
+- [ ] 验证私有当前/历史版本、公开 DTO、跨用户 Fork、凭据清除和 Grant 不复制；禁止通过缓存泄露私有内容。
+- [ ] 在真实 Next.js/React 前端验证桌面和窄屏的加载、空、错误、保存冲突、历史选择、语言切换和可访问性；不得以 HTTP 测试或历史截图代替。
+- [ ] 只有在共同 EF、权限、预算、撤销、沙箱和隐私 Gate 全部有实际证据后，才开放 Agent 执行或公开发布；真实模型、付费服务和生产操作仍需单独授权。
 
-**可独立推进**：纯契约、摘要/版本 helper、additive 草稿持久化及安全 HTTP 投影。组件-backed 引用/公开发布需权威组件服务；缺失时明确拒绝，不用伪造目录解锁。Agent 执行依赖 EF 和对应 Profile/准入 Gate；沙箱文件任务还需独立真实隔离验收。
-
-## 6. 后续验收与证据
-
-- [ ] 全新库、旧结构升级、重复迁移、原数据保留；真实并发 CAS/事务回滚；注册与登录。
-- [ ] 正常/错误/越权保存，未知 schema、混合定义和双向隐式转换拒绝；legacy DAG 回归。
-- [ ] 私有当前/历史版本、原始 history、公开导出不泄露；跨用户 Fork 和全部绑定清除。
-- [ ] 伪造组件归属/digest、撤回与安全撤销、公开依赖许可、授权变化竞争。
-- [ ] B2 实现后按范围执行相关测试、typecheck/build、隔离 Next.js/auth smoke；同 worktree 不并发写构建目录。
-- [ ] UI 集成后真实 Next.js 桌面/窄屏的加载、空、错误、保存冲突与历史选择；不以 HTTP 测试或历史截图代替。
-
-本次仅文档与静态调查，未运行上述 Gate。参考：[Agent 设计](design.md)、[EF 联合边界](../evaluation-foundation/integration.md)、[社区实现边界](../community-component-library/implementation.md)。
+参考：[Agent mode README](README.md)、[Agent design](design.md)、[Evaluation Foundation](../evaluation-foundation/README.md)、[community implementation](../community-component-library/implementation.md)、[当前合并交付评审](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。

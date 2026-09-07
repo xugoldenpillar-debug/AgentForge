@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录一次本地 Pi 依赖测量，不代表当前机器状态、SLA 或生产容量。
+
 # PI4 measurement — optional Pi core import
 
 - Date: 2026-09-06T13:25:37.902Z

@@ -1,6 +1,6 @@
 # 评测基础与组件库：跨分支交付边界
 
-日期：2026-09-06。设计对齐，不代表代码/类型契约/迁移已完成或其他分支已同步。
+日期：2026-09-06；当前 EF 代码状态补充见 [`docs/PI-MAIN-INTEGRATION-REVIEW.md`](../../docs/PI-MAIN-INTEGRATION-REVIEW.md)。本文件保留跨分支设计边界；已落地的 EF 基础代码不等于社区/Verified 联合接入完成，也不代表其他分支已同步。
 
 | 归属 | 负责内容 |
 | --- | --- |
@@ -24,7 +24,7 @@
 - 不同本地服务使用独立端口、测试数据库和队列前缀，避免跨 worktree 消费或迁移。
 - 跨分支设计更新须在用户授权后，通过 merge/cherry-pick 显式集成包含这些文档的提交；以各 worktree 的实际 HEAD 和工作区状态确认同步，不直接覆盖其未提交文件。
 
-## 联合接口约束（设计边界，未实现）
+## 联合接口约束（设计边界，联合接入未完成）
 
 社区侧提交冻结的 ComponentVersion、TestSuiteVersion、运行时／策略身份、作者凭据准入结果、同意版本和稳定幂等键；evaluation-foundation 校验并创建唯一 EvaluationJob，负责排队、Attempt／Invocation、Outbox 投递、Worker 执行、容量／预算预占与结算、取消和不确定上游状态收敛。社区侧只记录 SelfTestRun 与 Job 的关联，并消费安全状态／汇总投影。
 

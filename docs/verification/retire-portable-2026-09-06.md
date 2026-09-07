@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录 2026-09-06 的 Portable 退役验证，不代表当前运行或启动入口。Portable 截图和结果仅作历史证据保留。
+
 # 单一 Next.js 应用收敛验证 — 2026-09-06
 
 ## 变更与环境

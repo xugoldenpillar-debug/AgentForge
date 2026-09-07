@@ -71,6 +71,6 @@ D1 → 实际许可证文本、NOTICE／署名要求、权利链、来源／历�
 
 本次仅确认设计，不新增 LICENSE、不调整远端可见性、不拆仓推送、不追溯撤销既有授权。实际仓库可见性尚未核实；未来任何调整另行取得用户授权。
 
-## D5：可靠评测联合基础（已确认，未实现）
+## D5：可靠评测联合基础（已确认，基础代码已实现，联合接入未完成）
 
 采用 [Q1–Q25](../evaluation-foundation/README.md)。T5 只能接入 evaluation-foundation 的统一持久化 Job／Attempt／Invocation、Outbox、Worker、幂等、取消、容量和预算基础；社区组件层只拥有 Component／Version／Attachment／TestSuite／SelfTestRun 等业务记录，并保存与一个 EvaluationJob 的关联，不复制作业、用量、预算或执行器，也不复用竞技 Run。跨用途用户总占用、费用不确定处理、邮箱过渡和 30 天明细规则已确认。之前“调度待选”“可复用竞技 runs”“Portable 本地子集”的候选表述不再适用。T9/Pi/脚本/MCP 不提前进入首版。

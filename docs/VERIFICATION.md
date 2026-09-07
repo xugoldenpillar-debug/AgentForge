@@ -1,12 +1,12 @@
-> Current architecture: Next.js only. Portable records below are retired historical evidence, not current acceptance. See [retirement evidence](verification/retire-portable-2026-09-06.md).
+> **历史验证记录 / Historical verification record：** 本文记录 2026-09-05 的一次验证及其后补充链接，不代表当前进程、端口、数据库、日志目录或生产环境状态。Portable 结果只属于退役运行时；当前应用只有 Next.js。请以 [当前合并交付评审](PI-MAIN-INTEGRATION-REVIEW.md) 和各 dated verification 文档中的边界为准。
 
-> **2026-09-06 live BYOK update:** [Application Flash evidence](verification/deepseek-app-live-2026-09-06.md): one authorized real public run, 4/4, 976/1000, 242 tokens; not Verified or production acceptance. Offline SDK suite: 18 passed.
+> **2026-09-06 live BYOK update:** [Application Flash evidence](verification/deepseek-app-live-2026-09-06.md) records one authorized real public run; it is not Verified or production acceptance. The offline SDK suite is historical evidence only.
 
-> **2026-09-06 foundation update:** See [DeepSeek Gateway Phase 0 evidence](verification/deepseek-gateway-phase0-2026-09-06.md) for this working tree's 112 passing native tests, successful typecheck/build, and subsequently passed PostgreSQL/authentication gates. Historical results below remain historical; no Verified Gateway or paid model acceptance is claimed.
+> **2026-09-06 foundation update:** [DeepSeek Gateway Phase 0 evidence](verification/deepseek-gateway-phase0-2026-09-06.md) records the earlier foundation checks. Historical results below remain historical; no Verified Gateway or paid model acceptance is claimed.
 
-# Verification record
+# Historical verification record
 
-Date: 2026-09-05. This records executed checks, not planned checks.
+Date: 2026-09-05. This records executed checks, not planned checks; it is retained for provenance, not as a current status page.
 
 ## Passed
 
@@ -47,7 +47,7 @@ Chromium in this environment denied direct navigation to localhost with `ERR_BLO
 
 Thus the 14 checks exercise DOM rendering, forms, pointer dragging, link edits, saves, server runs, results, forks, profile, registration, providers, failure hunting, pending problems and mobile overflow. **They do not verify native browser network streaming, cookie enforcement or browser history behavior.** Native server streaming and session behavior were covered independently as described above. `docs/browser-report.json` identifies the bridge explicitly. The script's default non-bridge mode is available for local verification in a normal browser environment.
 
-These browser checks target the portable UI. They do not claim React Flow, the React frontend or Better Auth were mounted in a browser here. Screenshots are actual portable UI captures, clearly labeled by its in-page runtime banner.
+These browser checks target the retired Portable UI. They do not claim React Flow, the current React frontend or Better Auth were mounted in a native browser here. Screenshots are actual historical Portable UI captures and remain clearly labeled by their in-page runtime banner.
 
 ## Not executed in the authoring environment
 
@@ -61,30 +61,23 @@ The following require available npm dependencies, PostgreSQL/Docker, credentials
 - Native-browser React Flow drag/connect behavior, full React UI integration, or native browser security enforcement.
 - Load, race stress, full accessibility, comprehensive penetration testing, general prompt-injection resistance, or production certification.
 
-## Reproduce locally
+## Reproduce the current application
+
+The following is a current, generic Next.js verification outline. It is an instruction, not a record that a service is running now:
 
 ```sh
-node --experimental-strip-types --test tests/*.test.ts
-node --experimental-strip-types portable/server.ts
-# In another terminal:
-node --experimental-strip-types scripts/smoke.ts
-python scripts/browser-smoke.py --base-url http://127.0.0.1:3000
-```
-
-After installing dependencies, check the full stack rather than assuming portable success implies integration success:
-
-```sh
+pnpm install --frozen-lockfile
 pnpm run setup
 docker compose up -d postgres
 pnpm db
+pnpm test
 pnpm typecheck
 pnpm build
-pnpm start
-# Another terminal, with DEMO_MODE=true:
-pnpm test:smoke
 ```
 
-Start from disposable local data for smoke/UI tests. The GitHub Actions workflow automates full-stack install, PostgreSQL, typechecking, build and smoke, but was not itself executed here. For public deployment, add genuine versioned migrations, locked dependencies and a deployment-specific security review.
+For full-stack smoke, use `APP_ENV=test` and `DEMO_MODE=true` only with a disposable database, and set `SMOKE_BASE_URL` to the current task's isolated Next.js service. For migration integration, set `MIGRATION_TEST_DATABASE_URL` explicitly to a disposable local PostgreSQL administrative database. Never substitute a working credential database, production service, or another task's process.
+
+The old Portable server and `scripts/browser-smoke.py` bridge are not current startup or acceptance commands. Portable screenshots and bridge results remain historical evidence in the retirement record.
 
 ## Evaluation Worker operations gate
 

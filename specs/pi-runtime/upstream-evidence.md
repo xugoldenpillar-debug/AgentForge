@@ -1,5 +1,7 @@
 # Pi upstream 核验证据（非集成验收）
 
+> **历史核验 / Historical record：** 本文件记录 2026-09-06 的上游资料核验，不是当前依赖、工作区、分支或运行状态说明。后续 Pi 接入状态以 [`specs/pi-runtime/design.md`](design.md) 和 [`docs/PI-MAIN-INTEGRATION-REVIEW.md`](../../docs/PI-MAIN-INTEGRATION-REVIEW.md) 为准。
+
 - 核验日：**2026-09-06**（Asia/Shanghai）。
 - 范围：官方仓库的 6 份文档/清单；不安装依赖、不调用模型、不部署、不修改运行时代码。
 - 方式：已调用 `web.run` 打开官方仓库及源码 URL，但工具返回空内容，未获得可引用正文。随后使用只读 `curl` / Python `urllib.request` 读取官方公开 HTTP 资源；以下为实际读到的 upstream 文档声明与包元数据，不冒充源码执行或兼容性测试。
@@ -52,12 +54,12 @@
 
 ## 3. 本地环境事实（不是 upstream 兼容性证据）
 
-- 工作区：`/Users/pillarxu/.codex/worktrees/f4f7/AgentForge`；分支 `codex/component-library-design`。开始时已有 `CONTEXT.md` 修改及 ADR/spec 未跟踪目录，本任务保留它们。
+- 采集环境、分支及当时已有的未提交文件不作为长期状态记录；本文件只保留固定上游提交和公开资料事实。
 - 本机 `node --version` 返回 `v26.7.0`，数值上高于 Pi 清单最低版本，但未运行 Pi。AgentForge `package.json` / README 仍支持 Node `>=22.16.0`；直接引入该 Pi 快照将产生最低版本差异，必须另行决策和验证。[本地 package.json；S4, S5]
 - 本地 `src/lib/ai/types.ts` 的 `AIProvider.execute(AIRequest): Promise<AIResult>` 是请求/结果契约，带剩余 token/工具次数/费用与取消信号；不是 Pi 的模型消息流契约。`package.json` 声明 Vercel `ai` 与相关适配器不证明与 Pi 可互换。[本地源码和清单]
 - 仓库规范要求共享核心保持 Node 原生运行、便携版不增加必须安装的依赖，运行流为 NDJSON，禁止任意 shell/用户代码执行并保留预算、SSRF 和隐藏评测保密约束。[本地 AGENTS.md / README.md]
 
-## 4. 候选设计与验证门槛（未批准、未实现）
+## 4. 冻结时的候选设计与验证门槛（历史未批准、未实现）
 
 下面不是 upstream 已提供的 AgentForge 功能，也不是依赖选型结论：
 
@@ -69,6 +71,6 @@
 6. Pi 原始事件不得直接转发为 AgentForge NDJSON。bridge 必须使用既有允许字段、隐藏评测脱敏、用户凭据隔离和可信执行计量；Demo/BYOK/平台可信榜保持分离。
 7. 包版本、Node 最低版本和依赖隔离路径须锁定后再编译/测试；便携 Demo 不得因此强制安装 Pi。
 
-## 5. 完成与未验证项
+## 5. 本次历史核验范围与未验证项
 
 本次完成只读仓库检查、官方重定向/提交定位、6 份官方文档/清单读取，并仅新建本文件。没有安装、模型调用、数据库操作、部署、提交或推送；未运行功能测试、Pi 类型检查、bridge 或安全隔离实测。此文可供设计提问与开发门槛引用，不能作为生产安全、SDK 兼容或真实模型验收结论。

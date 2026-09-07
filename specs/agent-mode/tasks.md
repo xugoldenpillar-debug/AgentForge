@@ -1,12 +1,12 @@
 # Agent mode tasks / Gates
 
-Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. The independent lane finding is fixed and closed. B3 Agent UI and C-F execution/sandbox work remain undelivered. Checked items apply only to their stated scope; distinguish worker-reported evidence from reviewer-run tests.
+Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. The lane finding is fixed and closed. B3 Agent UI and C-F execution/sandbox work remain undelivered. Checked items apply only to their stated scope; test counts below are historical verification records and do not describe the current runtime or production state.
 
 | 阶段 | 交付 | 当前状态与前置 |
 | --- | --- | --- |
-| A fixes | Pi 文档矛盾纠偏、首批 Agent 设计；Pi 缺陷修复另由代码工作包留证 | 本次仅文档；代码验收以另包实际记录为准 |
+| A fixes | Pi 文档矛盾纠偏、首批 Agent 设计；Pi 代码边界与证据另见 `specs/pi-runtime/` | 本文件仅维护范围与 Gate，不重复宣称代码或生产验收 |
 | B Build | Agent persistence / versioning / Fork | B1 and B2 private unconfigured drafts delivered; lane finding independently closed. B3 UI, reference authorization and public publishing remain unavailable. |
-| C reliable execution | 复用 EF Job/Attempt/Outbox Worker/取消/容量/费用 | 未实现；依赖 EF，不另建 Agent 调度器 |
+| C reliable execution | 复用 EF Job/Attempt/Outbox Worker/取消/容量/费用 | Agent-specific integration 未实现；EF foundation 已有代码，不另建 Agent 调度器 |
 | D sandbox/artifacts | Python 隔离、collector、manifest、下载/安全预览、独立 judge | 未实现；供应商、镜像/限制、费用与数据边界验证后才可开放 |
 | E competitive loop | Run → Submission → Score → Leaderboard → Fork | 未实现；C/D 与现有 Profile/lane/评分 Gate 联合通过 |
 | F extensions | 批准的只读 MCP、可执行 Skill、厂商 SDK/更多语言或多 Agent | 后续独立准入；不因 B–E 通过自动授权 |
@@ -15,7 +15,7 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 
 - [x] 写入 README/requirements/design/tasks，提供五份候选契约及 Q1–Q25 对齐；证据为同目录文档，不是协议已冻结。
 - [x] Pi design 区分已有 PoC 文件、历史样本与未验收发布 Gate；社区 T4 链接到精确状态，不沿用“PI3/PI4 全未做/全通过”的矛盾口径。
-- [x] 记录代码工作包本次回报：`pnpm test` 155 passed；`pnpm test:pi-runtime` 20 passed / 1 skipped；typecheck/build passed。修正范围与证据归属见 [Pi 状态](../pi-runtime/design.md)。仅表示收到并记录结果，本次文档工作包未重跑，不代表迁移/浏览器/生产 Gate 通过。
+- [x] 记录 Pi 实现的历史验证摘要：`pnpm test` 155 passed；`pnpm test:pi-runtime` 20 passed / 1 skipped；typecheck/build passed。修正范围与证据归属见 [Pi 状态](../pi-runtime/design.md)。这些结果仅覆盖记录的代码路径，不代表本次文档变更重新执行，也不代表迁移、浏览器或生产 Gate 通过。
 - Gate：相对链接有效、变更仅 specs、无新增上线/付费/生产宣称。最终检查结果见交付说明。
 
 ## B：Build（AM1–AM4）
@@ -29,20 +29,20 @@ Date: 2026-09-07. B1 and the restricted B2 private-draft slice are delivered. Th
 
 ### B2 private unconfigured drafts: accepted within restricted scope
 
-- [x] 既有 BuildVersion additive 0005 迁移、服务端摘要、固定 mode、不可变历史与 CAS。
+- [x] 既有 BuildVersion additive 迁移、服务端摘要、固定 mode、不可变历史与 CAS；Pi 分支曾使用 0005，当前主线 canonical 迁移为 0009，历史字节与 checksum 台账保持不变。
 - [x] fail-closed 草稿限制；owner-only Agent DTO、metadata history、精确来源版本 Fork、旧客户端 mode opt-in。
 - [x] 拒绝 Agent DAG/Run/hunt；不构造 Agent 模型、不新增凭据/Grant/注册表。
-- [x] Worker final rerun: related 41 passed, full 198 passed, Pi 23 passed / 1 skipped, typecheck/build and isolated Next/Auth smoke successful. Reviewer inspected `/tmp/b2-lane-*.log`, not independently rerun. Earlier real migration matrix and overlapping PostgreSQL CAS each passed 1 test; these were not rerun by reviewer.
-- [x] 独立 reviewer 执行 `node --experimental-strip-types --test tests/agent-drafts.test.ts`：8 passed、0 failed；内存 probe 复现下述 lane 回归，未调用模型/共享服务。
-- [x] Workflow hunt platform pricing lane regression fixed using a shared pure classifier. Reviewer ran `node --experimental-strip-types --test tests/provider-lane.test.ts tests/agent-drafts.test.ts`: 23 passed / 0 failed / 0 skipped (15 lane + 8 drafts), including historical Agent rejection before provider construction. Finding closed; provider authorization remains separate.
-- [ ] B3：实际 Agent 编辑器、历史/冲突交互及完整桌面/窄屏验证。当前浏览器证据仅为主 worker 回报 1440/390 的既有安全错误状态，无截图或 Agent UI 通过声明。
+- [x] Historical verification record: related 41 passed, full 198 passed, Pi 23 passed / 1 skipped, typecheck/build and isolated Next/Auth smoke successful. The record is not a current runtime or production deployment result; earlier migration matrix and overlapping PostgreSQL CAS evidence remains separately attributed.
+- [x] Historical focused draft test: `node --experimental-strip-types --test tests/agent-drafts.test.ts` yielded 8 passed / 0 failed; the in-memory probe reproduced the lane regression without model calls or shared services.
+- [x] Workflow hunt platform pricing lane regression fixed using a shared pure classifier. Historical focused test `node --experimental-strip-types --test tests/provider-lane.test.ts tests/agent-drafts.test.ts` yielded 23 passed / 0 failed / 0 skipped (15 lane + 8 drafts), including Agent rejection before provider construction. Finding closed; provider authorization remains separate.
+- [ ] B3：实际 Agent 编辑器、历史/冲突交互及完整桌面/窄屏验证。当前没有 Agent UI 通过证据；历史浏览器记录不能替代当前验收。
 - [ ] 权威组件/Profile 解析、真实 digest/许可/撤回/撤销、公开发布、凭据重新绑定与执行联合准入。
 
 精确 API、资源及证据限制见 [integration](integration.md)。历史 B1 测试数不是当前 B2 验证结果。
 
 ## C：可靠执行（AM3、AM9）
 
-- [ ] 接 EF 作业/Attempt/Outbox、幂等摘要、fencing、状态查询和确认取消；独立 SelfTestRun，不强塞竞技 Run。
+- [ ] 将 Agent-specific 流程接入现有 EF Job/Attempt/Outbox、幂等摘要、fencing、状态查询和确认取消；独立 SelfTestRun，不强塞竞技 Run。
 - [ ] 验证双 API、重复投递、Redis 故障/补投、Worker 失联/旧写回、排队撤销、取消完成竞态。
 - [ ] 验证跨用途每用户一名额、共享供应商限额、用途预算、已知/未知用量核查；不自动重调已发生调用的中断评测。
 - [ ] 验证 Q21 邮箱过渡、Q22 自测清理后的缺失证据、Q25 权威权限读取，分别复用对应基础工作包。

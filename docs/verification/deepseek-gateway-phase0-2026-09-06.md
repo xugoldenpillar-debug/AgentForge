@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录 2026-09-06 的阶段性 Gateway 基础验证，不代表当前工作区、服务、数据库或生产状态。
+
 > Historical evidence: any Portable checks describe the retired runtime, not the current Next.js application.
 
 # DeepSeek Gateway foundation verification — 2026-09-06

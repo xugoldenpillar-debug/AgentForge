@@ -1,3 +1,5 @@
+> **历史验证记录 / Historical verification record：** 本文记录 2026-09-06 的一次授权官方 Flash smoke，不代表当前运行、持续可用性、真实账单或生产验收。
+
 # DeepSeek Flash live API smoke — 2026-09-06
 
 ## Authorization and scope

@@ -15,7 +15,7 @@
 
 以下是交付依赖，不是完成记录；Phase 编号保留原有范围，不代表必须整阶段顺序实现。`G0`–`G8` 分别指下文对应 Phase Gate，只有实际证据齐备才能勾选。契约、Fake Gateway 和关闭 Feature Flag 的代码可先行开发，但不能据此越过数据库、权限或真实集成门禁。
 
-> 2026-09-06 实施边界：当前工作树交付 Phase 0 基础代码与 1.2 独立 Registry；5.3 仅先行实现 Receipt 校验器。其余业务阶段尚未交付。本地 Docker/PostgreSQL 已配置，实库迁移矩阵和认证冒烟通过；后续业务阶段未完成，因此仍不开放新的 Ranked Hidden/Verified 流程。勾选任务表示该代码交付项已实现，不代表对应 Phase Gate 全部通过。证据见 `docs/verification/deepseek-gateway-phase0-2026-09-06.md`。
+> 2026-09-06 交付边界：Phase 0 基础代码、1.2 独立 Registry 与 5.3 Receipt 校验器部分已交付；其余业务阶段尚未交付，因此仍不开放新的 Ranked Hidden/Verified 流程。对应迁移/认证结果属于历史验证记录，不代表当前运行或生产环境。勾选任务表示该代码交付项已实现，不代表对应 Phase Gate 全部通过。证据见 `docs/verification/deepseek-gateway-phase0-2026-09-06.md`。
 
 ```mermaid
 flowchart TD

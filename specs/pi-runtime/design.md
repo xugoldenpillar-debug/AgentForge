@@ -3,7 +3,7 @@
 > 2026-09-06 设计对齐：见 [全项目设计地图](../README.md) 与 [评测基础](../evaluation-foundation/README.md)。本文为分期目标，不宣称全量已实现。共享调度/容量/预算采用 Q1–Q25；领域特有授权、证据和原发布 Gate 保留。未来能力不因基础设施设计获批而自动启用。
 
 
-- 日期：2026-09-06；状态：分支已有 PI0–PI2 PoC、PI3 Bridge A 与 PI4 的部分实现/样本；不等于 PI0–PI4 全部门禁通过。本次修正及代码工作包回报见下文，非生产验收。公共 UI 选择器未做，Bridge B 保持不可用。
+- 日期：2026-09-06；状态：分支已有 PI0–PI2 PoC、PI3 Bridge A 与 PI4 的部分实现/样本；不等于 PI0–PI4 全部门禁通过。本次修正及历史验证摘要见下文，非生产验收。公共 UI 选择器未做，Bridge B 保持不可用。
 - 目标：在保留现有 DAG 的基础上提供受限的模型驱动 Agent 循环，便于 Skill 开发和未来厂商联调。
 - 不是：替换 DAG、默认运行编码 CLI、通用沙箱、可信 Gateway 或要求所有厂商使用 Pi。
 - 上游 git 快照见 [核验记录](./upstream-evidence.md)；可安装产物见 [PI0 freeze](./pi0-freeze.md)。冻结文档是安装前历史记录；当前应用清单已精确加入 Pi core 依赖，不能把冻结时状态当作当前状态。
@@ -20,15 +20,15 @@
 - 没有公开 UI 选择器、没有排行榜混榜、没有 coding-agent、没有沙箱。
 - `pnpm test:pi-runtime` 在 CI，无付费。付费样例仅 `PI_RUNTIME_LIVE=true pnpm test:pi-runtime:live`。
 
-### 2026-09-06 代码工作包回报（本次文档工作包未重跑）
+### 历史实现验证摘要 / Historical implementation verification
 
-已核对工作区 diff：protocol/events 将真实 SDK 的 assistant `error` / `aborted` 映射为 failed / cancelled；错误使用私有结构化元数据与安全固定文案，不信任 SDK/provider 错误文本。不支持的模型返回明确配置错误。Bridge A 的上游 SSE 解析按空行分派、支持多行 data 和 CR/LF，丢弃未完成 EOF 事件；这不改变应用对外 NDJSON 协议。
+历史代码检查记录显示：protocol/events 将真实 SDK 的 assistant `error` / `aborted` 映射为 failed / cancelled；错误使用私有结构化元数据与安全固定文案，不信任 SDK/provider 错误文本。不支持的模型返回明确配置错误。Bridge A 的上游 SSE 解析按空行分派、支持多行 data 和 CR/LF，丢弃未完成 EOF 事件；这不改变应用对外 NDJSON 协议。
 
-用户转交的代码工作包结果（最终离线验证；HTTP 仅内存仓储覆盖）：`pnpm test` **159 passed, 0 failed, 0 skipped**；`pnpm test:pi-runtime` **23 passed, 0 failed, 1 skipped**；`pnpm typecheck` / `pnpm build` **passed**。这些是本次代码工作包报告，不是本文作者独立重跑，也不是 CI 远端结果。未据此宣称真实付费复测、数据库迁移、浏览器、沙箱、持久化 Worker 或生产安全通过；历史 PI3 样本不增加本次付费许可。
+历史离线验证结果：`pnpm test` **159 passed, 0 failed, 0 skipped**；`pnpm test:pi-runtime` **23 passed, 0 failed, 1 skipped**；`pnpm typecheck` / `pnpm build` **passed**。这些结果只覆盖记录的代码路径，不是当前运行结果或 CI 远端结果。未据此宣称真实付费复测、数据库迁移、浏览器、沙箱、持久化 Worker 或生产安全通过；历史 PI3 样本不增加当前付费许可。
 
 ## 0. 本次核验带来的集成约束
 
-精确 npm 身份已写入 [PI0 freeze](./pi0-freeze.md)：`@earendil-works/pi-agent-core@0.85.1`，MIT，`engines.node` `>=22.19.0`。不要使用 `@mariozechner/*` 或 `@earendil-works/pi-coding-agent`。应用 `engines.node` 保持 `>=22.16.0`；Node 不满足 Pi 时拒绝启用，不抬高全应用下限。PI0 冻结步骤当时未修改清单；后续 PoC 已把精确 core 版本写入 `package.json`。冻结记录不证明当前锁文件/完整依赖树已验收。
+精确 npm 身份已写入 [PI0 freeze](./pi0-freeze.md)：`@earendil-works/pi-agent-core@0.85.1`，MIT，`engines.node` `>=22.19.0`。不要使用 `@mariozechner/*` 或 `@earendil-works/pi-coding-agent`。应用 `engines.node` 保持 `>=22.16.0`；Node 不满足 Pi 时拒绝启用，不抬高全应用下限。PI0 冻结步骤当时未修改清单；后续 PoC 已把精确 core 版本写入 `package.json`。PI0 冻结记录不证明后续锁文件或完整依赖树已经过生产级验收。
 
 建议 Pi 放可选服务端边界，明确检查运行条件，不满足就拒绝启用 Pi，而不是整个 DAG 应用不可运行。是否调整全栈 Node 基线在确切依赖版本确定后单独说明并验证 CI。
 
@@ -130,8 +130,8 @@ Pi 稳定性、启动时间、峰值内存、依赖规模需测量后记录；�
 - `src/lib/runtime/`：DAG adapter；`ArenaService.run` / `hunt` 已经由适配器调用同一引擎。
 - `src/server/runtime/pi/`：适配器、Bridge A/B 和 fail-closed 动态加载；core 已在 dependencies。当前 `tsconfig.json` 包含服务端源码，不再声称排除此目录；不允许从客户端导入 Pi。
 - `tests/runtime-contract.test.ts`、`tests/runtime-dag.test.ts`、`tests/runtime-pi-fake.test.ts`：现有离线测试文件。
-- `tests/pi-runtime.integration.ts` 与 `pnpm test:pi-runtime`：真实 SDK 离线测试入口，CI 已调用。实际通过/失败/skip 以本次代码工作包运行结果为准，不以配置存在冒充通过。
-- 组件自测协调、持久化 EF Worker、Agent Build、沙箱/artifact 仍是后续目标，不由 Pi PoC 自动提供。
+- `tests/pi-runtime.integration.ts` 与 `pnpm test:pi-runtime`：真实 SDK 离线测试入口，CI 已调用。实际通过/失败/skip 以对应历史验证记录为准，不以配置存在冒充通过。
+- EF 的持久化 Worker/Outbox 基础已在主线落地，但组件自测协调、Pi 共享持久化准入、Agent Build 执行、沙箱/artifact 仍是后续目标，不由 Pi PoC 自动提供。
 
 包名和导出路径以冻结版本为准；未授权拆包、多仓库或依赖升级。
 
@@ -147,4 +147,4 @@ Pi 稳定性、启动时间、峰值内存、依赖规模需测量后记录；�
 
 当前：Bridge A、身份列、flag、幂等助手有代码；[PI3 样本](pi3-flash-sample.md) 与 [PI4 测量](pi4-measurement.md) 是历史单次证据。幂等助手不是持久化 Job/Attempt/Outbox，import 时间/RSS 不是长期容量或故障验收；因此不能宣称 PI0–PI4 全部门禁通过。公共用户选择器仍关闭；受邀开放还需共享执行/费用 Gate 和相应实际验证。任何 Gate 失败不静默降级；关闭 Pi 不删除历史记录，不影响 DAG 运行。沙箱脚本／MCP 的执行 Gate 另立，Pi 验收通过不等于这两项已获准。
 
-Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，独立 Worker 是 EF 目标；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
+Agent Build 的首批设计与后续阶段见 [Agent mode](../agent-mode/README.md)。当前唯一应用运行时仍是 Next.js，独立 Worker 已有 EF 基础实现但尚未完成生产部署；Agent 是 Build 模式、Pi 是执行机制、Verified 是信任政策，三者互不授予资格。
