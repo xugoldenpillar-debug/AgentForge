@@ -121,29 +121,63 @@ for (const path of ['/portable/server.ts', '/.env', '/.data/portable/state.json'
 }
 console.log('Next.js boundary guards passed: draft rejection, cross-origin/auth, private prompts, credential ownership and deletion.');
 
-const agentDraft = await (await request('/api/arena/builds', {
-  problemId: 'messy-json', title: 'Agent smoke draft', visibility: 'private', mode: 'agent',
-  agentDefinition: { schemaVersion:1, mode:'agent', instructions:'Private Agent smoke instructions', profileRef:null, environmentRef:null, skillRefs:[], toolRefs:[] },
+// Agent B2 is persistence-only. The legacy client must not receive an empty DAG.
+const agentPayload = {
+  mode: 'agent', problemId: 'messy-json', title: 'Private Agent smoke draft', visibility: 'private',
+  agentDefinition: {mode: 'agent', definitionSchemaVersion: 1, instructions: 'Original private Agent smoke instructions'},
+};
+const agent = await (await request('/api/arena/builds', agentPayload)).json();
+assert.equal(agent.mode, 'agent');
+assert.equal(Object.hasOwn(agent, 'workflow'), false);
+assert.match(agent.version.definitionDigest, /^sha256:[a-f0-9]{64}$/);
+const agentV2 = await (await request('/api/arena/builds', {
+  ...agentPayload, buildId: agent.id, currentVersionId: agent.version.id,
+  agentDefinition: {...agentPayload.agentDefinition, instructions: 'Revised private Agent smoke instructions'},
 })).json();
-assert.equal(agentDraft.mode, 'agent');
-const agentRead = await (await request(`/api/arena/builds/${agentDraft.id}?mode=agent`)).json();
-assert.equal(agentRead.mode, 'agent');
-assert.equal(agentRead.agentDefinition.instructions, 'Private Agent smoke instructions');
-const agentHistory = await (await request(`/api/arena/builds/${agentDraft.id}/versions`)).json();
-assert.equal(agentHistory.length, 1);
-assert(!JSON.stringify(agentHistory).includes('Private Agent smoke instructions'));
-const agentConflict = await fetch(`${base}/api/arena/builds`, {
-  method: 'POST', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'application/json' },
-  body: JSON.stringify({ buildId: agentDraft.id, currentVersionId: 'stale-version', problemId:'messy-json', title:'Agent smoke stale', visibility:'private', mode:'agent', agentDefinition: agentRead.agentDefinition }),
+assert.equal(agentV2.version.revision, 2);
+assert(!JSON.stringify(agentV2.history).includes('instructions'));
+const selectedAgent = await (await request(`/api/arena/builds/${agent.id}?mode=agent&version=${agent.version.id}`)).json();
+assert.equal(selectedAgent.version.agentDefinition.instructions, agentPayload.agentDefinition.instructions);
+const agentFork = await (await request(`/api/arena/builds/${agent.id}/fork`, {mode: 'agent', versionId: agent.version.id})).json();
+assert.equal(agentFork.visibility, 'private');
+assert.equal(agentFork.version.revision, 1);
+assert.equal(agentFork.version.agentDefinition.instructions, agentPayload.agentDefinition.instructions);
+const unaware = await fetch(`${base}/api/arena/builds/${agent.id}`, {headers: {Cookie: cookie}});
+assert.equal(unaware.status, 409);
+for (const kind of ['public', 'hidden']) {
+  const response = await request('/api/arena/runs', {buildId: agent.id, kind});
+  const events = (await response.text()).trim().split('\n').map(line => JSON.parse(line)) as RunEvent[];
+  assert(events.some(event => event.type === 'error' && event.code === 'RUNTIME_POLICY_DENIED'));
+  assert(!events.some(event => event.type === 'complete' || event.type === 'start'));
+}
+for (const payload of [
+  {...agentPayload, visibility: 'public'},
+  {...agentPayload, workflow: starterWorkflow('json')},
+  {...agentPayload, credentialId: 'forbidden-binding'},
+  {...agentPayload, agentDefinition: {...agentPayload.agentDefinition, modelSelection: {
+    id: 'model', versionId: 'v1', contentDigest: `sha256:${'a'.repeat(64)}`,
+  }}},
+]) {
+  const rejected = await fetch(`${base}/api/arena/builds`, {
+    method: 'POST', headers: {'Content-Type': 'application/json', Origin: base, Cookie: cookie}, body: JSON.stringify(payload),
+  });
+  assert.equal(rejected.status, 400);
+}
+const stale = await fetch(`${base}/api/arena/builds`, {
+  method: 'POST', headers: {'Content-Type': 'application/json', Origin: base, Cookie: cookie},
+  body: JSON.stringify({...agentPayload, buildId: agent.id, currentVersionId: agent.version.id}),
 });
-assert.equal(agentConflict.status, 409);
-const agentFork = await (await request(`/api/arena/builds/${agentDraft.id}/fork`, { versionId: agentDraft.currentVersionId })).json();
-assert.equal(agentFork.parentBuildId, agentDraft.id);
-assert.equal(agentFork.mode, 'agent');
-const legacyRead = await fetch(`${base}/api/arena/builds/${agentDraft.id}`, { headers:{Cookie:cookie} });
-assert.equal(legacyRead.status, 409);
-const agentRun = await request('/api/arena/runs', { buildId: agentDraft.id, kind: 'public' });
-const agentRunEvents = (await agentRun.text()).trim().split('\n').map(line => JSON.parse(line)) as RunEvent[];
-assert(agentRunEvents.some(event => event.type === 'error'));
-assert(!agentRunEvents.some(event => event.type === 'complete'));
+assert.equal(stale.status, 409);
+const agentOwnerCookie = cookie;
+cookie = '';
+await request('/api/auth/sign-up/email', {name: 'Other Agent Reader', email: `b2-other-${unique}@example.invalid`, password});
+const privateRead = await fetch(`${base}/api/arena/builds/${agent.id}?mode=agent&version=${agent.version.id}`, {headers: {Cookie: cookie}});
+assert.equal(privateRead.status, 403);
+const otherFork = await fetch(`${base}/api/arena/builds/${agent.id}/fork`, {
+  method: 'POST', headers: {'Content-Type': 'application/json', Origin: base, Cookie: cookie},
+  body: JSON.stringify({mode: 'agent', versionId: agent.version.id}),
+});
+assert.equal(otherFork.status, 403);
+cookie = agentOwnerCookie;
+assert.equal((await (await request(`/api/arena/builds/${agent.id}?mode=agent`)).json()).history.length, 2);
 console.log('Agent private draft save/history/CAS/Fork, legacy-client refusal and execution/auth denial passed; no Agent model calls.');
