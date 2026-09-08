@@ -17,6 +17,8 @@ import { WorkLikeService } from './showcase/likes.ts';
 import { FileSystemArtifactStorageAdapter } from './artifacts/filesystem.ts';
 import { CreationRunService } from './creation/service.ts';
 import { creationAgentBuildResolver } from './creation/build-resolver.ts';
+import { ChallengeApplicationService } from './creation/challenge-applications.ts';
+import { CreationLeaderboardService } from './creation/leaderboard.ts';
 
 let service: ArenaService | undefined;
 let communityService: CommunityService | undefined;
@@ -41,8 +43,6 @@ export function getService(): ArenaService {
       }
     : undefined;
   const repository = new DrizzleRepository();
-  // Durable scheduling is opt-in so a web process cannot silently accept jobs
-  // without an outbox publisher and independent worker being configured.
   const competitiveRunScheduler = process.env.EVALUATION_SCHEDULER_MODE === 'outbox'
     ? createDurableOutboxCompetitiveRunScheduler(repository)
     : undefined;
@@ -70,7 +70,6 @@ export function getCommunityService(): CommunityService {
 }
 
 export interface ArtifactArenaServiceDependencies {
-  /** A real immutable object-storage adapter. No host path or URL adapter is accepted here. */
   readonly storageAdapter?: ArtifactStorageAdapter;
 }
 
@@ -84,13 +83,6 @@ const showcaseComparatorPolicy = Object.freeze({
   maxValidVotesPerHour: 30,
 });
 
-/**
- * Build the durable Artifact Arena HTTP services when the operator enables the
- * launch and configures immutable storage. Tests may inject an adapter; the
- * production route resolves the private filesystem store from
- * ARTIFACT_STORAGE_ROOT. Mutation routes still apply the dynamic availability
- * and kill-switch gates, while authorized historical reads remain available.
- */
 export function getArtifactArenaServices(
   dependencies: ArtifactArenaServiceDependencies = {},
 ): ArtifactArenaHttpServices | undefined {
@@ -125,8 +117,18 @@ export function getArtifactArenaServices(
     policy: showcaseComparatorPolicy,
   });
   const likes = new WorkLikeService(repository);
+  const challengeApplications = new ChallengeApplicationService(repository, { resolveRoles: resolveCommunityRoles });
+  const creationLeaderboard = new CreationLeaderboardService(repository, voting);
 
   artifactArenaStorageAdapter = storageAdapter;
-  artifactArenaServices = { artifacts, publications, voting, likes, creationRuns };
+  artifactArenaServices = {
+    artifacts,
+    publications,
+    voting,
+    likes,
+    creationRuns,
+    challengeApplications,
+    creationLeaderboard,
+  };
   return artifactArenaServices;
 }
