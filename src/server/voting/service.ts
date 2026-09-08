@@ -164,7 +164,7 @@ export class ShowcaseVotingService {
     const ballot = await this.repo.getBallot(id);
     if (!ballot || ballot.voterId !== voterId) notFound('Showcase ballot not found.');
     if (ballot.status === 'open' && Date.parse(ballot.expiresAt) <= Date.parse(this.now())) {
-      const expired = await this.repo.updateBallot(ballot.id, { status: 'expired' });
+      const expired = await this.repo.updateBallot(ballot.id, { status: 'expired' }, 'open');
       return clone(expired ?? { ...ballot, status: 'expired' });
     }
     return clone(ballot);
@@ -222,7 +222,8 @@ export class ShowcaseVotingService {
               if (!isBallotExpired(priorOpen, this.now())) return priorOpen;
               // Expired rows remain as audit history. They must be transitioned
               // before a new generation can use the same pair.
-              await tx.updateBallot(priorOpen.id, { status: 'expired' });
+              const expired = await tx.updateBallot(priorOpen.id, { status: 'expired' }, 'open');
+              if (!expired) continue;
             }
             if (await tx.findVoteByPair(voterId, roundId, key)) continue;
 
@@ -265,7 +266,7 @@ export class ShowcaseVotingService {
     const now = Date.parse(this.now());
     ensure(ballot.status === 'open', 'This ballot has already been cast.', 409, ERROR_CODES.CONCURRENT_SAVE);
     if (Date.parse(ballot.expiresAt) <= now) {
-      await this.repo.updateBallot(ballot.id, { status: 'expired' });
+      await this.repo.updateBallot(ballot.id, { status: 'expired' }, 'open');
       throw new AppError('This ballot has expired.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     }
     ensure(await this.repo.rateLimit(`showcase-vote:${voterId}`, this.policy.maxValidVotesPerHour, 60 * 60 * 1000), 'Vote rate limit exceeded.', 429, ERROR_CODES.RATE_LIMITED);
@@ -286,7 +287,7 @@ export class ShowcaseVotingService {
     const audit: VoteAuditEvent = { id: this.id(), action: 'showcase-vote.recorded', actorId: voterId, entityId: vote.id, occurredAt: createdAt, metadata: { ballotId: ballot.id, choice: vote.choice, pairKey: vote.pairKey } };
     const updated = await this.repo.transaction(async (tx) => {
       await tx.insertVote(vote);
-      const nextBallot = await tx.updateBallot(ballot.id, { status: 'cast', castVoteId: vote.id });
+      const nextBallot = await tx.updateBallot(ballot.id, { status: 'cast', castVoteId: vote.id }, 'open');
       if (!nextBallot) conflict('The ballot changed before the vote could be saved.');
       await tx.appendAuditEvent(audit);
       return nextBallot;

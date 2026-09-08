@@ -169,6 +169,19 @@ const ANIMATION_ATTRIBUTES = [
   'to', 'type', 'values', 'additive', 'accumulate', 'href', 'xlink:href',
 ];
 
+// sanitize-html preserves SVG tag case when lowerCaseTags is disabled, but
+// parser versions and HTML inputs may still expose the lower-case spelling.
+// Keep both spellings mapped to the same declaration so motion attributes are
+// never silently removed just because the parser normalized the tag name.
+const ANIMATION_ATTRIBUTE_ALLOWLIST = {
+  animate: ANIMATION_ATTRIBUTES,
+  animateMotion: ANIMATION_ATTRIBUTES,
+  animateTransform: ANIMATION_ATTRIBUTES,
+  animatemotion: ANIMATION_ATTRIBUTES,
+  animatetransform: ANIMATION_ATTRIBUTES,
+  set: ANIMATION_ATTRIBUTES,
+};
+
 function sanitizeMarkup(input: string, svg: boolean): string {
   const withSafeStyles = input.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/giu, (_match, css: string) => {
     return `<style>${sanitizeCss(css)}</style>`;
@@ -178,10 +191,7 @@ function sanitizeMarkup(input: string, svg: boolean): string {
     allowVulnerableTags: true,
     allowedAttributes: {
       '*': GLOBAL_ATTRIBUTES,
-      animate: ANIMATION_ATTRIBUTES,
-      animateMotion: ANIMATION_ATTRIBUTES,
-      animateTransform: ANIMATION_ATTRIBUTES,
-      set: ANIMATION_ATTRIBUTES,
+      ...ANIMATION_ATTRIBUTE_ALLOWLIST,
       use: ['href', 'xlink:href'],
       mpath: ['href', 'xlink:href'],
     },

@@ -76,9 +76,12 @@ export interface CreationRunServiceOptions {
   readonly scheduler: CreationJobScheduler;
   readonly now?: () => string;
   readonly createId?: () => string;
+  /** Grace period before a historical run without a durable job is treated as abandoned. */
+  readonly orphanGraceMs?: number;
 }
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9:_-]{0,159}$/u;
+const DEFAULT_ORPHAN_GRACE_MS = 15 * 60 * 1000;
 
 function requiredId(value: unknown, label: string): string {
   ensure(typeof value === 'string' && ID.test(value), `A valid ${label} is required.`, 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
@@ -141,12 +144,16 @@ export class CreationRunService {
   readonly #scheduler: CreationJobScheduler;
   readonly #now: () => string;
   readonly #createId: () => string;
+  readonly #orphanGraceMs: number;
 
   constructor(repository: Repository, options: CreationRunServiceOptions) {
     this.#repository = repository;
     this.#scheduler = options.scheduler;
     this.#now = options.now ?? (() => new Date().toISOString());
     this.#createId = options.createId ?? randomUUID;
+    this.#orphanGraceMs = options.orphanGraceMs ?? DEFAULT_ORPHAN_GRACE_MS;
+    ensure(Number.isSafeInteger(this.#orphanGraceMs) && this.#orphanGraceMs > 0,
+      'Creation orphan grace period must be a positive safe integer.', 500, ERROR_CODES.RUNTIME_POLICY_DENIED);
   }
 
   async schedule(ownerId: string, input: ScheduleCreationRunInput): Promise<{ created: boolean; run: CreationRunView; job: CreationJobStatusView }> {
@@ -316,7 +323,8 @@ export class CreationRunService {
   }
 
   async get(ownerId: string, runId: string): Promise<CreationRunStatusView> {
-    const run = await this.#readOwnedRun(ownerId, runId);
+    let run = await this.#readOwnedRun(ownerId, runId);
+    if (!run.evaluationJobId) run = await this.#recoverAbandonedRun(run);
     if (!run.evaluationJobId) return { run: project(run), job: null };
     const job = await this.#scheduler.getJob(asOpaqueId<'evaluation-job'>(run.evaluationJobId));
     this.#assertAssociatedJob(run, job);
@@ -362,6 +370,49 @@ export class CreationRunService {
       credentialId: job.snapshot.credentialAuthorizationId,
       idempotencyKey: idempotency(idempotencyKey),
     });
+  }
+
+  async #recoverAbandonedRun(run: CreationRun): Promise<CreationRun> {
+    if (run.evaluationJobId || (run.status !== 'queued' && run.status !== 'running')) return run;
+    const now = this.#now();
+    const updatedAtMs = Date.parse(run.updatedAt);
+    const nowMs = Date.parse(now);
+    if (!Number.isFinite(updatedAtMs) || !Number.isFinite(nowMs) || nowMs - updatedAtMs < this.#orphanGraceMs) return run;
+
+    // A committed job with this business association is authoritative even if
+    // a legacy row missed the reverse FK. Never mark or replay such a run.
+    const associatedJobs = (await this.#repository.read('evaluationJobs', {
+      associationKind: 'creation-run',
+      businessRecordId: run.id,
+    })).filter((job) => job.userId === run.ownerId && job.purpose === 'creation');
+    if (associatedJobs.length === 1) {
+      const repaired = await this.#repository.update('creationRuns', {
+        id: run.id,
+        ownerId: run.ownerId,
+        evaluationJobId: null,
+        status: run.status,
+        updatedAt: run.updatedAt,
+      }, {
+        evaluationJobId: associatedJobs[0].id,
+        updatedAt: now,
+      });
+      return repaired[0] ?? (await this.#repository.read('creationRuns', { id: run.id, ownerId: run.ownerId }))[0] ?? run;
+    }
+    // Ambiguous historical data is left untouched for operator inspection.
+    if (associatedJobs.length > 1) return run;
+
+    const recovered = await this.#repository.update('creationRuns', {
+      id: run.id,
+      ownerId: run.ownerId,
+      evaluationJobId: null,
+      status: run.status,
+      updatedAt: run.updatedAt,
+    }, {
+      status: 'failed',
+      completedAt: now,
+      updatedAt: now,
+    });
+    return recovered[0] ?? (await this.#repository.read('creationRuns', { id: run.id, ownerId: run.ownerId }))[0] ?? run;
   }
 
   async #readOwnedRun(ownerId: string, runId: string): Promise<CreationRun> {

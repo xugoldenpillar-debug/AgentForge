@@ -41,6 +41,7 @@ import {
   getPublicArtifactPreview,
   getShowcaseLeaderboard,
   issueShowcaseBallot,
+  isApiError,
   likePublication,
   listAnimationChallenges,
   listProviders,
@@ -190,6 +191,7 @@ export function AgentBuilderPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [error, setError] = useState('');
+  const [authRequired, setAuthRequired] = useState(false);
 
   const selected = useMemo(() => {
     for (const challenge of challenges) {
@@ -202,8 +204,14 @@ export function AgentBuilderPage() {
   const run = runStatus?.run ?? null;
   const jobUnknown = runStatus?.job?.state === 'unknown';
   const runActive = (run?.status === 'queued' || run?.status === 'running') && !jobUnknown;
-  const runRetryable = !jobUnknown && (run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete');
+  const runRetryable = Boolean(run?.evaluationJobId) && !jobUnknown
+    && (run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete');
   const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
+  const displayedRunStatusKey = jobUnknown
+    ? 'artifactArena.status.unknown' as const
+    : run
+      ? RUN_STATUS_KEYS[run.status]
+      : 'artifactArena.status.idle' as const;
   const isPublished = publication?.status === 'published';
   const previewReady = Boolean(
     bundle
@@ -213,6 +221,7 @@ export function AgentBuilderPage() {
   const partition = challengeVersionId ? roundId(challengeVersionId) : '';
 
   const fail = useCallback((reason: unknown) => {
+    setAuthRequired(isApiError(reason) && reason.code === 'AUTH_REQUIRED');
     const message = localizeError(reason, t);
     setError(message);
     toast(message || t('artifactArena.operationFailed'), true);
@@ -274,6 +283,7 @@ export function AgentBuilderPage() {
           listProviders(controller.signal),
         ]);
         if (controller.signal.aborted) return;
+        setAuthRequired(false);
         setChallenges(challengeRows);
         setCredentials(providerRows.credentials);
         const defaultVersion = saved.challengeVersionId || challengeRows[0]?.versions[0]?.id || '';
@@ -354,9 +364,37 @@ export function AgentBuilderPage() {
 
   const saveCredential = async (event: React.FormEvent) => {
     event.preventDefault();
-    setBusy('credential'); setError('');
+    setError('');
+    const name = credentialName.trim();
+    const urlText = baseUrl.trim();
+    const model = modelId.trim();
+    const key = apiKey.trim();
+    const invalidMessage = (() => {
+      if (!name) return t('artifactArena.providerValidation.nameRequired');
+      if (name.length > PROVIDER_FIELD_LIMITS.name) return t('artifactArena.providerValidation.nameTooLong');
+      if (!urlText || urlText.length > PROVIDER_FIELD_LIMITS.baseUrl) return t('artifactArena.providerValidation.baseUrlInvalid');
+      try {
+        const parsed = new URL(urlText);
+        if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
+          return t('artifactArena.providerValidation.baseUrlInvalid');
+        }
+      } catch {
+        return t('artifactArena.providerValidation.baseUrlInvalid');
+      }
+      if (!model) return t('artifactArena.providerValidation.modelRequired');
+      if (model.length > PROVIDER_FIELD_LIMITS.modelId) return t('artifactArena.providerValidation.modelTooLong');
+      if (!key) return t('artifactArena.providerValidation.apiKeyRequired');
+      if (key.length > PROVIDER_FIELD_LIMITS.apiKey) return t('artifactArena.providerValidation.apiKeyTooLong');
+      return '';
+    })();
+    if (invalidMessage) {
+      setError(invalidMessage);
+      toast(invalidMessage, true);
+      return;
+    }
+    setBusy('credential');
     try {
-      const saved = await addProvider({ protocol, name: credentialName.trim(), baseUrl: baseUrl.trim(), modelId: modelId.trim(), apiKey });
+      const saved = await addProvider({ protocol, name, baseUrl: urlText, modelId: model, apiKey: key });
       setCredentials((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]);
       setCredentialId(saved.id);
       setApiKey('');
@@ -547,7 +585,7 @@ export function AgentBuilderPage() {
   const reset = () => {
     window.localStorage.removeItem(STORAGE_KEY);
     setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublishConfirmed(false); setPublication(null); setEntryId(''); setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
-    setPublicTitle(''); setBuildTitle(''); setError('');
+    setPublicTitle(''); setBuildTitle(''); setError(''); setAuthRequired(false);
   };
 
   if (!UI_ENABLED) {
@@ -581,7 +619,7 @@ export function AgentBuilderPage() {
       </header>
 
       {loading && <div className={styles.banner}><LoaderCircle className={styles.spin} size={16} />{t('artifactArena.recovering')}</div>}
-      {error && <div className={`${styles.banner} ${styles.errorBanner}`} role="alert"><AlertTriangle size={16} />{error}</div>}
+      {error && <div className={`${styles.banner} ${styles.errorBanner}`} role="alert"><AlertTriangle size={16} /><span>{error}</span>{authRequired && <Link href="/login?next=/agent-builder" className={styles.bannerAction}>{t('artifactArena.signInAgain')}</Link>}</div>}
       <div className={styles.securityNote}><ShieldCheck size={18} /><p>{t('artifactArena.securityNote')}</p></div>
 
       <section className={styles.stage}>
@@ -632,7 +670,7 @@ export function AgentBuilderPage() {
       <section className={styles.stage}>
         <div className={styles.stageHeader}><span>04</span><div><h2>{t('artifactArena.runTitle')}</h2><p>{t('artifactArena.resumeHint')}</p></div></div>
         <div className={styles.runConsole}>
-          <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{run ? t(RUN_STATUS_KEYS[run.status]) : t('artifactArena.status.idle')}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
+          <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{t(displayedRunStatusKey)}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
           <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || jobUnknown || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{jobUnknown && <Button variant="outline" onClick={acknowledgeUnknownRun} disabled={busy === 'acknowledge'}>{busy === 'acknowledge' ? <LoaderCircle className={styles.spin} size={14} /> : <AlertTriangle size={14} />}{busy === 'acknowledge' ? t('artifactArena.acknowledgingUnknown') : t('artifactArena.acknowledgeUnknown')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
           {jobUnknown && <p className={styles.hint}>{t('artifactArena.unknownHelp')}</p>}
         </div>

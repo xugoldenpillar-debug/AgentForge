@@ -35,6 +35,9 @@
 .banner, .securityNote { display: flex; align-items: flex-start; gap: 10px; padding: 13px 15px; border-radius: 10px; font-size: 12px; line-height: 1.65; }
 .banner { margin-bottom: 12px; border: 1px solid #3a4b40; background: #101712; color: #c9d5cc; }
 .errorBanner { border-color: #6c3838; background: #231313; color: #ffb2b2; }
+.banner > span { flex: 1; }
+.bannerAction { flex: 0 0 auto; margin-left: auto; border-bottom: 1px solid currentColor; color: #ffd0d0; font-weight: 700; text-decoration: none; }
+.bannerAction:hover { color: #fff; }
 .securityNote { margin: 0 0 14px; border: 1px solid #24445d; background: #0d1a23; color: #9fc6df; }
 .securityNote svg { flex: 0 0 auto; margin-top: 2px; }
 .securityNote p { margin: 0; }

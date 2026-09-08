@@ -1,17 +1,30 @@
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, getTableColumns, isNull, type AnyColumn, type Table } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Repository, TableName, Tables } from '../shared/types.ts';
 import { tableRegistry } from './schema.ts';
 import { database } from './index.ts';
+type DrizzleColumn = Pick<AnyColumn, 'dataType'>;
+
+function toDatabaseValue(column: DrizzleColumn | undefined, value: unknown): unknown {
+  if (column?.dataType !== 'date' || typeof value !== 'string') return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new TypeError(`Invalid timestamp value '${value}'.`);
+  return date;
+}
+
+function tableColumns<K extends TableName>(name: K): Record<string, DrizzleColumn | undefined> {
+  // tableRegistry is intentionally keyed by domain table name. getTableColumns
+  // keeps the Drizzle column lookup tied to the actual table metadata instead
+  // of pretending a PgTable has a string index signature.
+  return getTableColumns(tableRegistry[name]) as unknown as Record<string, DrizzleColumn | undefined>;
+}
+
 function toDatabase<K extends TableName>(name: K, value: Record<string, unknown>): Record<string, unknown> {
-  const table = tableRegistry[name] as unknown as Record<string, { dataType?: unknown }>;
+  const table = tableColumns(name);
   return Object.fromEntries(
     Object.entries(value)
       .filter(([, current]) => current !== undefined)
-      .map(([key, current]) => [
-        key,
-        table[key]?.dataType === 'date' && typeof current === 'string' ? new Date(current) : current,
-      ]),
+      .map(([key, current]) => [key, toDatabaseValue(table[key], current)]),
   );
 }
 function fromDatabase<T>(value:unknown):T {return JSON.parse(JSON.stringify(value)) as T;}
@@ -19,7 +32,17 @@ function fromDatabase<T>(value:unknown):T {return JSON.parse(JSON.stringify(valu
 export class DrizzleRepository implements Repository {
   private orm:any;private sql:ReturnType<typeof database>['sql'];private nested:boolean;
   constructor(orm:any=database().db,sql=database().sql,nested=false){this.orm=orm;this.sql=sql;this.nested=nested;}
-  private condition(table:any,where:Record<string,unknown>){const entries=Object.entries(where).map(([k,v])=>v===null?isNull(table[k]):eq(table[k],v));return entries.length?and(...entries):undefined;}
+  private condition(table: Table, where: Record<string, unknown>) {
+    const columns = getTableColumns(table) as unknown as Record<string, DrizzleColumn | undefined>;
+    const entries = Object.entries(where).map(([key, value]) => {
+      const column = columns[key];
+      if (!column) throw new TypeError(`Unknown database column '${key}'.`);
+      return value === null
+        ? isNull(column as AnyColumn)
+        : eq(column as AnyColumn, toDatabaseValue(column, value));
+    });
+    return entries.length ? and(...entries) : undefined;
+  }
   async read<K extends TableName>(name:K,where:Partial<Tables[K]>={}):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.select().from(t).where(this.condition(t,where)));}
   async insert<K extends TableName>(name:K,rows:Tables[K][]):Promise<void>{if(rows.length)await this.orm.insert(tableRegistry[name]).values(rows.map(r=>toDatabase(name, r as unknown as Record<string, unknown>)));}
   async update<K extends TableName>(name:K,where:Partial<Tables[K]>,values:Partial<Tables[K]>):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.update(t).set(toDatabase(name, values as Record<string, unknown>)).where(this.condition(t,where)).returning());}

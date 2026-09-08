@@ -102,7 +102,11 @@ export interface VotingRepository {
   findBallotByIdempotencyKey(voterId: string, idempotencyKey: string): Promise<ShowcaseBallot | null>;
   findOpenBallot(voterId: string, roundId: string, pairKey: string): Promise<ShowcaseBallot | null>;
   insertBallot(ballot: ShowcaseBallot): Promise<void>;
-  updateBallot(ballotId: string, values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>): Promise<ShowcaseBallot | null>;
+  updateBallot(
+    ballotId: string,
+    values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>,
+    expectedStatus?: ShowcaseBallot['status'],
+  ): Promise<ShowcaseBallot | null>;
   findVoteByPair(voterId: string, roundId: string, pairKey: string): Promise<ShowcaseVote | null>;
   findVoteByIdempotencyKey(voterId: string, idempotencyKey: string): Promise<ShowcaseVote | null>;
   insertVote(vote: ShowcaseVote): Promise<void>;

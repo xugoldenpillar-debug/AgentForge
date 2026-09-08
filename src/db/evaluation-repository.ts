@@ -577,6 +577,17 @@ async function associateCreationRun(
   if (record.association.kind !== 'creation-run') return;
 
   const creationRunId = String(record.association.creationRunId);
+  // The job row has already been inserted in this transaction, so claim the
+  // nullable FK with one compare-and-set update. The outbox is inserted only
+  // after this succeeds; a worker can therefore never consume an event while
+  // the CreationRun still points at no job.
+  const updated = await repository.update(
+    'creationRuns',
+    { id: creationRunId, ownerId: String(record.userId), evaluationJobId: null },
+    { evaluationJobId: jobId },
+  );
+  if (updated[0]) return;
+
   const run = (await repository.read('creationRuns', { id: creationRunId }))[0];
   if (!run) {
     throw new EvaluationPersistenceError('not-found', 'The creation job points to a missing creation run.');
@@ -584,19 +595,8 @@ async function associateCreationRun(
   if (run.ownerId !== String(record.userId)) {
     throw new EvaluationPersistenceError('association-exists', 'The creation run belongs to a different user.');
   }
-  if (run.evaluationJobId && run.evaluationJobId !== jobId) {
-    throw new EvaluationPersistenceError('association-exists', 'The creation run is already associated with another evaluation job.');
-  }
-  if (!run.evaluationJobId) {
-    const updated = await repository.update(
-      'creationRuns',
-      { id: creationRunId, ownerId: String(record.userId), evaluationJobId: null },
-      { evaluationJobId: jobId },
-    );
-    if (!updated[0]) {
-      throw new EvaluationPersistenceError('association-exists', 'The creation run association could not be claimed.');
-    }
-  }
+  if (run.evaluationJobId === jobId) return;
+  throw new EvaluationPersistenceError('association-exists', 'The creation run is already associated with another evaluation job.');
 }
 
 function associationKind(record: EvaluationJobRecord): EvaluationJobRow['associationKind'] {

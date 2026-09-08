@@ -415,3 +415,71 @@ test('CreationRun scheduling failure does not leave an unassociated queued run',
   assert.equal(failed?.status, 'failed');
   assert.equal(failed?.completedAt, NOW);
 });
+
+test('stale CreationRun without a durable job is failed on recovery without replaying provider work', async () => {
+  const { repository, scheduler, service } = await harness();
+  const scheduled = await service.schedule(OWNER, input({ idempotencyKey: 'creation-stale-orphan' }));
+  const staleAt = '2026-09-07T23:00:00.000Z';
+  await repository.update('creationRuns', { id: scheduled.run.id }, {
+    evaluationJobId: null,
+    status: 'queued',
+    updatedAt: staleAt,
+    completedAt: null,
+  });
+  const recovering = new CreationRunService(repository, {
+    scheduler,
+    now: () => NOW,
+    orphanGraceMs: 60_000,
+  });
+
+  const result = await recovering.get(OWNER, scheduled.run.id);
+
+  assert.equal(result.job, null);
+  assert.equal(result.run.status, 'failed');
+  assert.equal(result.run.evaluationJobId, null);
+  assert.equal(result.run.completedAt, NOW);
+  assert.equal(scheduler.createCalls, 1, 'recovery must not schedule or replay provider work');
+});
+
+test('fresh CreationRun without a durable job remains queued during the scheduling grace period', async () => {
+  const { repository, scheduler, service } = await harness();
+  const scheduled = await service.schedule(OWNER, input({ idempotencyKey: 'creation-fresh-orphan' }));
+  await repository.update('creationRuns', { id: scheduled.run.id }, {
+    evaluationJobId: null,
+    status: 'queued',
+    updatedAt: NOW,
+    completedAt: null,
+  });
+  const recovering = new CreationRunService(repository, {
+    scheduler,
+    now: () => '2026-09-08T00:00:30.000Z',
+    orphanGraceMs: 60_000,
+  });
+
+  const result = await recovering.get(OWNER, scheduled.run.id);
+
+  assert.equal(result.job, null);
+  assert.equal(result.run.status, 'queued');
+  assert.equal(result.run.completedAt, null);
+});
+
+test('stale CreationRun repairs a single durable job association instead of failing it', async () => {
+  const { repository, scheduler, service } = await harness((base) => createDurableOutboxCompetitiveRunScheduler(base));
+  const scheduled = await service.schedule(OWNER, input({ idempotencyKey: 'creation-repair-association' }));
+  await repository.update('creationRuns', { id: scheduled.run.id }, {
+    evaluationJobId: null,
+    status: 'queued',
+    updatedAt: '2026-09-07T23:00:00.000Z',
+  });
+  const recovering = new CreationRunService(repository, {
+    scheduler,
+    now: () => NOW,
+    orphanGraceMs: 60_000,
+  });
+
+  const result = await recovering.get(OWNER, scheduled.run.id);
+
+  assert.equal(result.run.evaluationJobId, scheduled.job.id);
+  assert.equal(result.job?.id, scheduled.job.id);
+  assert.equal(result.run.status, 'queued');
+});

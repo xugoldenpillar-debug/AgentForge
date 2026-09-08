@@ -43,6 +43,10 @@ test('Artifact Arena creation UI uses the durable product APIs and contains no f
   assert.match(source, /publishConfirmed/);
   assert.match(source, /runStatus\?\.job\?\.state === 'unknown'/);
   assert.match(source, /jobUnknown && <Button[^>]+onClick=\{acknowledgeUnknownRun\}/);
+  assert.match(source, /jobUnknown[\s\S]+artifactArena\.status\.unknown/, 'unknown jobs must not render as actively running');
+  assert.match(source, /providerValidation\.baseUrlInvalid/);
+  assert.match(source, /isApiError\(reason\) && reason\.code === 'AUTH_REQUIRED'/);
+  assert.match(source, /\/login\?next=\/agent-builder/);
   assert.match(source, /\(run\?\.status === 'queued' \|\| run\?\.status === 'running'\) && !jobUnknown/, 'unknown jobs must stop the active polling state');
   assert.match(source, /publishConfirmed: true/);
   assert.match(source, /!previewReady \|\| !publishConfirmed/, 'publishing requires a loaded index.html preview and explicit owner confirmation');

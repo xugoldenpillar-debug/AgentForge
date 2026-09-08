@@ -117,8 +117,14 @@ export class DrizzleVotingRepository implements VotingRepository {
     await this.repository.insert('showcaseBallots', [ballotRow(ballot)]);
   }
 
-  async updateBallot(ballotId: string, values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>): Promise<ShowcaseBallot | null> {
-    const rows = await this.repository.update('showcaseBallots', { id: ballotId }, values as Partial<SharedBallot>);
+  async updateBallot(
+    ballotId: string,
+    values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>,
+    expectedStatus?: ShowcaseBallot['status'],
+  ): Promise<ShowcaseBallot | null> {
+    const where: Partial<SharedBallot> = { id: ballotId };
+    if (expectedStatus !== undefined) where.status = expectedStatus;
+    const rows = await this.repository.update('showcaseBallots', where, values as Partial<SharedBallot>);
     return rows[0] ? ballotDomain(rows[0]) : null;
   }
 

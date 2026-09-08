@@ -62,6 +62,18 @@
 - `scripts/deploy/worker.sh` 只创建 AgentForge 专用组/目录/unit，不修改 Docker runtime，不 prune，不触碰其他容器。
 - 部署和回滚见 `docs/deployment/hubei-byok.md`。
 
+## 2026-09-09 稳定性修复
+
+在提交前补齐以下边界：
+
+- Drizzle repository 根据真实表 schema 的 `dataType` 自动转换所有 date/timestamp 字段，覆盖封存、审核、撤回和选票签发时间；无效时间会在数据库边界明确失败。
+- Evaluation Job 创建、CreationRun 外键关联、幂等记录和可消费 Outbox 事件保持在同一可串行化事务中；Worker 不会观察到未关联的可消费任务。创作状态读取增加孤立 Run 的宽限期恢复：可唯一匹配 durable job 时修复关联，否则只将过期孤立记录标记为失败，不重放 Provider 请求。
+- 盲选领取会枚举不同作者的未投作品组合，排除自作品和已投组合；过期票先用状态 CAS 封存，再创建新的 generation，投票写入同样使用 `open` 状态 CAS。
+- SVG 清洗器同时覆盖 camel-case 与兼容小写的 `animateMotion` / `animateTransform` 标签，并保留声明式动画所需属性；脚本、事件处理器、外链和危险 CSS 仍被拒绝。
+- 创作页面将上游结果未知显示为“结果待确认”，禁止把它误显示为运行中或自动重放；Provider 表单在提交前校验 HTTPS URL、字段长度和必填项，但 API Key 仍按不透明字符串透传，公网地址校验继续由服务端安全边界执行。
+
+本轮验证：`pnpm test`（498 tests，497 passed，1 skipped）、`pnpm typecheck`、`pnpm build`、`pnpm test:provider-sdk`（31 passed）、`pnpm test:deploy`（15 passed）、`pnpm test:migrations`（4 passed）、`pnpm test:evaluation-db`（1 passed），以及目标回归测试（45 passed）。这些结果证明代码和隔离测试资源可用，不替代两题真实用户 BYOK、最终域名浏览器和自然社区票的 L7–L8 生产验收。
+
 ## 数据库迁移
 
 新增迁移：
@@ -70,6 +82,7 @@
 0015_showcase_likes_and_creation_bundle.sql
 0016_animation_build_binding.sql
 0017_drop_legacy_creation_job_check.sql
+0018_showcase_ballot_generations.sql
 ```
 
 `src/db/schema.ts`、`src/db/schema.sql`、repository、seed 与测试同步。旧 migration bytes/checksum 未修改；fresh schema 比较会显式剥离新增结构后验证历史目标。
