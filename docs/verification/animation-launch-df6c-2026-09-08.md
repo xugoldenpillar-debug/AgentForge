@@ -102,7 +102,7 @@ DELETE /api/arena/showcase/publications/qa-20260908-publication-1/like  → 200
 
 | 命令 | 结果 |
 | --- | --- |
-| `pnpm test` | 465 tests；464 通过、1 跳过、0 失败 |
+| `pnpm test` | 合并 2026-09-08 最新 `origin/main` 后 472 tests；471 通过、1 跳过、0 失败 |
 | `pnpm typecheck` | 通过 |
 | `pnpm test:provider-sdk` | 33 通过、0 失败；四协议离线 wire/auth/usage/cancel，不产生模型费用 |
 | `pnpm test:pi-runtime` | 30 tests；29 通过、1 跳过、0 失败；已安装 Pi SDK 的离线真实 loop |
