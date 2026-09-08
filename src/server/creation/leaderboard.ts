@@ -3,6 +3,9 @@ import type { PublicCreationProvenance, PublicCreationSkillRef } from '../../sha
 import { validateConfiguredAgentBuild } from '../../shared/agent-build-contract.ts';
 import type { ShowcaseVotingService } from '../voting/service.ts';
 
+type VotingLeaderboardPort = Pick<ShowcaseVotingService, 'projectLeaderboard'>;
+type VotingLeaderboard = Awaited<ReturnType<VotingLeaderboardPort['projectLeaderboard']>>;
+
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -28,7 +31,7 @@ export interface CreationLeaderboardSection {
 
 export interface CreationLeaderboardRow {
   readonly entryId: string;
-  readonly publication: Awaited<ReturnType<ShowcaseVotingService['projectLeaderboard']>>['rows'][number]['publication'];
+  readonly publication: VotingLeaderboard['rows'][number]['publication'];
   readonly comparisons: number;
   readonly halfPoints: number;
   readonly points: number;
@@ -38,16 +41,11 @@ export interface CreationLeaderboardRow {
   readonly provenance: PublicCreationProvenance | null;
 }
 
-/**
- * Adds immutable CreationRun provenance to the existing community-vote score.
- * Official API sections are projections of the same ranked rows, not a second
- * scoring system, so users can compare like-for-like outputs from one provider.
- */
 export class CreationLeaderboardService {
   readonly #repository: Repository;
-  readonly #voting: ShowcaseVotingService;
+  readonly #voting: VotingLeaderboardPort;
 
-  constructor(repository: Repository, voting: ShowcaseVotingService) {
+  constructor(repository: Repository, voting: VotingLeaderboardPort) {
     this.#repository = repository;
     this.#voting = voting;
   }
