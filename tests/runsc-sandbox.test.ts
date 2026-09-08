@@ -22,12 +22,15 @@ interface CleanupFixtureOptions {
   readonly deleteFails?: boolean;
   readonly listFails?: boolean;
   readonly listOutput?: string;
+  readonly listOutputs?: readonly string[];
+  readonly stateRetryAttempts?: number;
   readonly removeFails?: boolean;
   readonly bundleExists?: boolean;
 }
 
 function cleanupFixture(options: CleanupFixtureOptions = {}) {
   const calls: string[] = [];
+  let listIndex = 0;
   const runner: RunscCommandRunner = {
     async run(args) {
       const command = args.includes('delete') ? 'delete' : args.includes('list') ? 'list' : 'other';
@@ -35,7 +38,10 @@ function cleanupFixture(options: CleanupFixtureOptions = {}) {
       if (command === 'delete' && options.deleteFails) throw new Error('delete failed');
       if (command === 'list') {
         if (options.listFails) throw new Error('list failed');
-        return { stdout: options.listOutput ?? '[]', stderr: '' };
+        const stdout = options.listOutputs?.[Math.min(listIndex++, options.listOutputs.length - 1)]
+          ?? options.listOutput
+          ?? '[]';
+        return { stdout, stderr: '' };
       }
       return { stdout: '', stderr: '' };
     },
@@ -58,6 +64,8 @@ function cleanupFixture(options: CleanupFixtureOptions = {}) {
     workRoot: '/private/agentforge-sandboxes',
     commandRunner: runner,
     cleanupFileSystem: fileSystem,
+    stateRetryAttempts: options.stateRetryAttempts ?? 1,
+    stateRetryDelayMs: 0,
   });
   const sandboxId = 'runsc:agentforge-cleanup-test';
   const internal = provider as unknown as InjectableProvider;
@@ -83,6 +91,17 @@ test('runsc cleanup verifies absent runtime state and attempt directory before r
     stoppedProcessCount: 0,
   });
   assert.deepEqual(fixture.calls, ['delete', 'list', 'remove', 'exists']);
+  assert.equal(fixture.internal.sessions.has(fixture.sandboxId), false);
+});
+
+test('runsc cleanup retries until delayed runtime deletion becomes observable', async () => {
+  const fixture = cleanupFixture({
+    listOutputs: ['[{"id":"agentforge-cleanup-test","status":"stopped"}]', 'null'],
+    stateRetryAttempts: 2,
+  });
+  const result = await fixture.provider.dispose(fixture.sandboxId);
+  assert.equal(result.verified, true);
+  assert.deepEqual(fixture.calls, ['delete', 'list', 'delete', 'list', 'remove', 'exists']);
   assert.equal(fixture.internal.sessions.has(fixture.sandboxId), false);
 });
 
@@ -117,12 +136,14 @@ interface StopFixtureOptions {
   readonly killFails?: boolean;
   readonly stateFails?: boolean;
   readonly stateOutput?: string;
+  readonly stateOutputs?: readonly string[];
   readonly listOutput?: string;
   readonly listFails?: boolean;
 }
 
 function stopFixture(options: StopFixtureOptions = {}) {
   const calls: string[] = [];
+  let stateIndex = 0;
   const runner: RunscCommandRunner = {
     async run(args) {
       const command = args.includes('kill') ? 'kill' : args.includes('state') ? 'state' : args.includes('list') ? 'list' : 'other';
@@ -130,7 +151,10 @@ function stopFixture(options: StopFixtureOptions = {}) {
       if (command === 'kill' && options.killFails) throw new Error('kill failed');
       if (command === 'state') {
         if (options.stateFails) throw new Error('state failed');
-        return { stdout: options.stateOutput ?? '{"id":"agentforge-stop-test","status":"stopped"}', stderr: '' };
+        const stdout = options.stateOutputs?.[Math.min(stateIndex++, options.stateOutputs.length - 1)]
+          ?? options.stateOutput
+          ?? '{"id":"agentforge-stop-test","status":"stopped"}';
+        return { stdout, stderr: '' };
       }
       if (command === 'list') {
         if (options.listFails) throw new Error('list failed');
@@ -146,6 +170,8 @@ function stopFixture(options: StopFixtureOptions = {}) {
     rootfsPath: '/approved/rootfs',
     workRoot: '/private/agentforge-sandboxes',
     commandRunner: runner,
+    stateRetryAttempts: options.stateOutputs?.length ?? 1,
+    stateRetryDelayMs: 0,
   });
   const sandboxId = 'runsc:agentforge-stop-test';
   const internal = provider as unknown as InjectableProvider;
@@ -170,6 +196,19 @@ test('runsc stop reports verified only after runtime state is stopped', async ()
   assert.equal(fixture.internal.sessions.get(fixture.sandboxId)?.state, 'stopped');
 });
 
+test('runsc stop retries while kill state is still converging', async () => {
+  const fixture = stopFixture({
+    stateOutputs: [
+      '{"id":"agentforge-stop-test","status":"running"}',
+      '{"id":"agentforge-stop-test","status":"stopped"}',
+    ],
+  });
+  const result = await fixture.provider.stopAll(fixture.sandboxId);
+  assert.equal(result.verified, true);
+  assert.deepEqual(fixture.calls, ['kill', 'state', 'state']);
+  assert.equal(fixture.internal.sessions.get(fixture.sandboxId)?.state, 'stopped');
+});
+
 test('runsc stop accepts an already-absent instance only after independent list verification', async () => {
   const fixture = stopFixture({ killFails: true, stateFails: true, listOutput: '[]' });
   const result = await fixture.provider.stopAll(fixture.sandboxId);
@@ -181,7 +220,7 @@ test('runsc stop accepts an already-absent instance only after independent list 
 test('runsc stop fails closed while runtime state remains active or cannot be listed', async () => {
   const active = stopFixture({ stateOutput: '{"id":"agentforge-stop-test","status":"running"}', listOutput: '[{"id":"agentforge-stop-test","status":"running"}]' });
   await assert.rejects(() => active.provider.stopAll(active.sandboxId), isRuntimeCleanupFailure);
-  assert.deepEqual(active.calls, ['kill', 'state', 'list']);
+  assert.deepEqual(active.calls, ['kill', 'state']);
   assert.equal(active.internal.sessions.get(active.sandboxId)?.state, 'active');
 
   const unknown = stopFixture({ stateFails: true, listFails: true });

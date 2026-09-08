@@ -126,7 +126,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       provider,
       this.#options.evaluationRepository,
       context,
-      () => invocationIndex++,
+      () => ++invocationIndex,
       this.#now,
       assertAuthorized,
     );

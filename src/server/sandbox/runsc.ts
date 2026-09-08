@@ -98,6 +98,9 @@ export interface RunscSandboxProviderOptions {
   readonly commandRunner?: RunscCommandRunner;
   readonly cleanupFileSystem?: RunscCleanupFileSystem;
   readonly commandTimeoutMs?: number;
+  /** Bounded polling for runsc lifecycle state convergence after kill/delete. */
+  readonly stateRetryAttempts?: number;
+  readonly stateRetryDelayMs?: number;
   readonly now?: () => string;
 }
 
@@ -126,7 +129,8 @@ interface Session {
  * on Docker's default runtime. `runsc` must be installed on the worker host.
  */
 export class RunscSandboxProvider implements SandboxProvider {
-  private readonly options: Required<Pick<RunscSandboxProviderOptions, 'runscPath' | 'workRoot' | 'commandTimeoutMs'>> & RunscSandboxProviderOptions;
+  private readonly options: Required<Pick<RunscSandboxProviderOptions,
+    'runscPath' | 'workRoot' | 'commandTimeoutMs' | 'stateRetryAttempts' | 'stateRetryDelayMs'>> & RunscSandboxProviderOptions;
   private readonly runner: RunscCommandRunner;
   private readonly cleanupFileSystem: RunscCleanupFileSystem;
   private readonly sessions = new Map<SandboxHandle, Session>();
@@ -134,11 +138,19 @@ export class RunscSandboxProvider implements SandboxProvider {
   constructor(options: RunscSandboxProviderOptions) {
     ensure(path.isAbsolute(options.rootfsPath), 'Sandbox rootfs path must be absolute.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     ensure(path.isAbsolute(options.workRoot ?? '/var/lib/agentforge/sandboxes'), 'Sandbox work root must be absolute.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    const stateRetryAttempts = options.stateRetryAttempts ?? 30;
+    const stateRetryDelayMs = options.stateRetryDelayMs ?? 100;
+    ensure(Number.isInteger(stateRetryAttempts) && stateRetryAttempts > 0 && stateRetryAttempts <= 100,
+      'Sandbox state retry attempts are invalid.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    ensure(Number.isInteger(stateRetryDelayMs) && stateRetryDelayMs >= 0 && stateRetryDelayMs <= 1_000,
+      'Sandbox state retry delay is invalid.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     this.options = {
       ...options,
       runscPath: options.runscPath ?? '/usr/local/bin/runsc',
       workRoot: options.workRoot ?? '/var/lib/agentforge/sandboxes',
       commandTimeoutMs: options.commandTimeoutMs ?? 15_000,
+      stateRetryAttempts,
+      stateRetryDelayMs,
     };
     this.runner = options.commandRunner ?? nativeRunner;
     this.cleanupFileSystem = options.cleanupFileSystem ?? nativeCleanupFileSystem;
@@ -348,52 +360,78 @@ export class RunscSandboxProvider implements SandboxProvider {
   }
 
   private async verifyStopped(id: string, cwd: string): Promise<void> {
-    try {
-      const stateResult = await this.runner.run(this.runscArgs('state', id), {
-        cwd,
-        timeoutMs: this.options.commandTimeoutMs,
-      });
-      const state = parseRunscState(stateResult.stdout);
-      ensure(state.id === id && state.status === 'stopped',
-        'Sandbox process remains active after stop.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
-      return;
-    } catch {
-      // If state is unavailable because the instance disappeared, list is the
-      // independent source of truth. Any remaining entry fails closed.
+    let verificationUnavailable = false;
+    for (let attempt = 1; attempt <= this.options.stateRetryAttempts; attempt += 1) {
+      try {
+        const stateResult = await this.runner.run(this.runscArgs('state', id), {
+          cwd,
+          timeoutMs: this.options.commandTimeoutMs,
+        });
+        const state = parseRunscState(stateResult.stdout);
+        if (state.id === id && state.status === 'stopped') return;
+        verificationUnavailable = false;
+      } catch {
+        // A killed runsc instance can disappear before `state` observes the
+        // stopped state. `list` is the independent source of truth in that case.
+        try {
+          const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
+            cwd: this.options.workRoot,
+            timeoutMs: this.options.commandTimeoutMs,
+          });
+          const states = parseRunscList(listing.stdout);
+          if (!states.some((state) => state.id === id)) return;
+          verificationUnavailable = false;
+        } catch {
+          verificationUnavailable = true;
+        }
+      }
+      if (attempt < this.options.stateRetryAttempts) await this.waitForStateRetry();
     }
-    const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
-      cwd: this.options.workRoot,
-      timeoutMs: this.options.commandTimeoutMs,
-    }).catch(() => {
-      throw new AppError('Sandbox stop could not verify runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
-    });
-    const states = parseRunscList(listing.stdout);
-    ensure(!states.some((state) => state.id === id),
-      'Sandbox process remains active after stop.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    throw new AppError(
+      verificationUnavailable
+        ? 'Sandbox stop could not verify runtime state.'
+        : 'Sandbox process remains active after stop.',
+      503,
+      ERROR_CODES.RUNTIME_UNAVAILABLE,
+    );
   }
 
   private async cleanupBundle(bundlePath: string, id: string): Promise<void> {
-    // Delete is intentionally followed by an independent list operation. A
-    // failed delete may mean the instance was already gone, while a successful
-    // delete is not sufficient evidence that the runtime state disappeared.
-    await this.runner.run(this.runscArgs('delete', '--force', id), {
-      cwd: bundlePath,
-      timeoutMs: this.options.commandTimeoutMs,
-    }).catch(() => undefined);
+    let runtimeAbsent = false;
+    let verificationUnavailable = false;
+    // runsc may return from kill/delete before its state directory converges.
+    // Retry both delete and the independent list check for a short bounded
+    // window; the diagnostic bundle remains intact until absence is verified.
+    for (let attempt = 1; attempt <= this.options.stateRetryAttempts; attempt += 1) {
+      await this.runner.run(this.runscArgs('delete', '--force', id), {
+        cwd: bundlePath,
+        timeoutMs: this.options.commandTimeoutMs,
+      }).catch(() => undefined);
 
-    const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
-      cwd: this.options.workRoot,
-      timeoutMs: this.options.commandTimeoutMs,
-    }).catch(() => {
-      throw new AppError('Sandbox cleanup could not verify runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
-    });
-    const states = parseRunscList(listing.stdout);
-    ensure(!states.some((state) => state.id === id),
-      'Sandbox runtime state remains after cleanup.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+      try {
+        const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
+          cwd: this.options.workRoot,
+          timeoutMs: this.options.commandTimeoutMs,
+        });
+        const states = parseRunscList(listing.stdout);
+        runtimeAbsent = !states.some((state) => state.id === id);
+        verificationUnavailable = false;
+        if (runtimeAbsent) break;
+      } catch {
+        verificationUnavailable = true;
+      }
+      if (attempt < this.options.stateRetryAttempts) await this.waitForStateRetry();
+    }
+    if (!runtimeAbsent) {
+      throw new AppError(
+        verificationUnavailable
+          ? 'Sandbox cleanup could not verify runtime state.'
+          : 'Sandbox runtime state remains after cleanup.',
+        503,
+        ERROR_CODES.RUNTIME_UNAVAILABLE,
+      );
+    }
 
-    // Keep the bundle for diagnosis until runtime deletion is independently
-    // verified. Removing it earlier would destroy evidence while runsc might
-    // still own a live attempt.
     await this.cleanupFileSystem.removeBundle(bundlePath).catch(() => {
       throw new AppError('Sandbox attempt directory could not be removed.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     });
@@ -401,6 +439,11 @@ export class RunscSandboxProvider implements SandboxProvider {
       throw new AppError('Sandbox attempt directory cleanup could not be verified.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     });
     ensure(!bundleStillExists, 'Sandbox attempt directory remains after cleanup.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+
+  private async waitForStateRetry(): Promise<void> {
+    if (this.options.stateRetryDelayMs === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, this.options.stateRetryDelayMs));
   }
 
   private getSession(handle: SandboxHandle): Session {
