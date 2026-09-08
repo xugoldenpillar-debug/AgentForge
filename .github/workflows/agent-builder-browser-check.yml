@@ -41,7 +41,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.ref_name }}
-      - name: Apply reviewed accessibility correction
+      - name: Apply reviewed accessibility corrections
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -51,6 +51,10 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/git/blobs/a32189647672d889e0516c07c1c127fb83e87755" --jq .content | base64 -d > "$RUNNER_TEMP/labels.patch"
           git apply --check --index "$RUNNER_TEMP/labels.patch"
           git apply --index "$RUNNER_TEMP/labels.patch"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/a04e8446509e1025be0a45f6a1e80970818ee8f8" --jq .content | base64 -d | xz -dc > "$RUNNER_TEMP/labels2.patch"
+          echo "fcf9fe4cc8718a58d1a9e4604e63337d624502e5aa60f34b6280f007b632f2e3  $RUNNER_TEMP/labels2.patch" | sha256sum -c -
+          git apply --check --index "$RUNNER_TEMP/labels2.patch"
+          git apply --index "$RUNNER_TEMP/labels2.patch"
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.1
@@ -92,6 +96,7 @@ jobs:
             if curl --fail --silent "$BASE/api/arena/boot" > /dev/null; then break; fi
             sleep 1
           done
+          curl --fail --silent "$BASE/api/arena/boot" > /dev/null
           BUILDER_BROWSER_BASE_URL="$BASE" BUILDER_BROWSER_OUTPUT="$RUNNER_TEMP/builder-evidence/browser" PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser-tools/node_modules/playwright/index.mjs" node --experimental-strip-types scripts/agent-builder-browser.mjs 2>&1 | tee "$RUNNER_TEMP/builder-evidence/browser.log"
           python3 -c 'import json,os; r=json.load(open(os.environ["RUNNER_TEMP"]+"/builder-evidence/browser/report.json")); assert not r.get("failure") and not r["errors"] and len(r["checks"]) >= 9 and r["generationCalls"] == 0'
           SMOKE_BASE_URL="$BASE" SMOKE_EXPECT_TEST_MODE=true pnpm test:smoke 2>&1 | tee "$RUNNER_TEMP/builder-evidence/smoke-test.log"
@@ -110,7 +115,7 @@ jobs:
           git rm .github/workflows/agent-builder-browser-check.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: expose stable accessible model and credential selection labels'
+          git commit -m 'fix: stabilize accessible builder fields and language controls'
           git push origin HEAD:refs/heads/feat/agent-builder-complete-20260908
           git rev-parse HEAD > "$RUNNER_TEMP/builder-evidence/implementation-sha.txt"
           git bundle create "$RUNNER_TEMP/builder-evidence/verified-source.bundle" --all
