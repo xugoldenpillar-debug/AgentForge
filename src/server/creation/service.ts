@@ -13,7 +13,7 @@ import {
   EVALUATION_SNAPSHOT_VERSION,
   type EvaluationInputSnapshot,
 } from '../../shared/evaluation-types.ts';
-import type { CreationRun, Repository } from '../../shared/types.ts';
+import type { CreationRun, Credential, Repository } from '../../shared/types.ts';
 import type { CreationRunRef } from '../showcase/contracts.ts';
 import type {
   CreateEvaluationJobInput,
@@ -22,8 +22,10 @@ import type {
   EvaluationTransitionResult,
 } from '../evaluation/domain.ts';
 import { toCreationBriefRecord, toCreationBriefVersionRow, toCreationRunRow } from '../creation-briefs.ts';
-import { ANIMATION_CHALLENGE_VERSIONS } from '../animation-challenges.ts';
+import { animationChallengeDigest } from '../animation-challenges.ts';
 import { CREATION_ENVIRONMENT_DIGEST, CREATION_ENVIRONMENT_TEMPLATE } from './catalog.ts';
+import { resolveCreationSkills } from './skills.ts';
+import { creationProviderProvenance } from './provider-provenance.ts';
 
 export interface CreationJobScheduler {
   createJob(input: CreateEvaluationJobInput): Promise<CreateEvaluationJobResult>;
@@ -158,7 +160,7 @@ export class CreationRunService {
     const buildVersion = (await this.#repository.read('buildVersions', { id: buildVersionId }))[0];
     ensure(buildVersion && (buildVersion.mode ?? 'workflow') === 'agent', 'Agent Build version not found.', 404, ERROR_CODES.VERSION_NOT_FOUND);
     ensure(buildVersion.animationChallengeVersionId === challengeVersionId,
-      'The Build is pinned to a different animation challenge version.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+      'The Build is pinned to a different creation challenge version.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     const build = (await this.#repository.read('builds', { id: buildVersion.buildId, userId: ownerId }))[0];
     ensure(build, 'Agent Build version not found.', 404, ERROR_CODES.VERSION_NOT_FOUND);
     const definition = validateConfiguredAgentBuild(buildVersion.agentDefinition, buildVersion.visibility, {
@@ -170,13 +172,20 @@ export class CreationRunService {
     ensure(buildVersion.definitionDigest && definition.environmentRef?.id === CREATION_ENVIRONMENT_TEMPLATE.templateId
       && definition.environmentRef.versionId === CREATION_ENVIRONMENT_TEMPLATE.versionId
       && definition.environmentRef.contentDigest === CREATION_ENVIRONMENT_DIGEST,
-    'The Build does not use the approved animation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    'The Build does not use the approved creation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.runtimeSelection?.adapterVersion === CREATION_ENVIRONMENT_TEMPLATE.runtime.adapterVersion
       && definition.runtimeSelection.policyVersion === CREATION_ENVIRONMENT_TEMPLATE.runtime.policyVersion,
-    'The Build runtime does not match the approved animation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    'The Build runtime does not match the approved creation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
 
-    const challenge = ANIMATION_CHALLENGE_VERSIONS.find((candidate) => candidate.id === challengeVersionId);
-    ensure(challenge, 'Animation challenge version not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+    // Runtime lookup is repository-driven. The two launch challenges are merely
+    // seed data now; newly reviewed challenge versions require no code change.
+    const challenge = (await this.#repository.read('animationChallengeVersions', { id: challengeVersionId }))[0];
+    ensure(challenge && challenge.contentDigest === animationChallengeDigest(challenge),
+      'Creation challenge version not found or failed integrity validation.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+    const challengeRecord = (await this.#repository.read('animationChallenges', { id: challenge.challengeId, status: 'published' }))[0];
+    ensure(challengeRecord, 'Creation challenge is not published.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+
+    const skills = await resolveCreationSkills(this.#repository, definition.skillRefs);
     const credential = (await this.#repository.read('credentials', { id: credentialId, userId: ownerId }))[0];
     ensure(credential, 'A selected provider was deleted or is not yours.', 404, ERROR_CODES.PROVIDER_NOT_FOUND);
 
@@ -253,7 +262,13 @@ export class CreationRunService {
       }
     }
 
-    const snapshot = createSnapshot(run, credential.modelId, credential.id, run.createdAt);
+    const snapshot = createSnapshot(run, credential, run.createdAt, skills.map((skill) => ({
+      componentId: skill.componentId,
+      versionId: skill.versionId,
+      contentDigest: skill.contentDigest,
+      name: skill.name,
+      description: skill.description,
+    })));
     const accepted = await this.#scheduler.createJob({
       userId: asOpaqueId<'user'>(ownerId),
       purpose: 'creation',
@@ -276,10 +291,6 @@ export class CreationRunService {
     }
     ensure(associatedRun.evaluationJobId === jobId,
       'Creation evaluation association is invalid.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
-    // The durable scheduler binds the run in the same transaction as its outbox.
-    // Do not copy the returned job state here: a worker may already have advanced
-    // the run while createJob() was returning, and a stale accepted/queued view
-    // must never move it backwards.
     return { created: accepted.created, run: project(associatedRun), job: projectJob(accepted.job) };
   }
 
@@ -370,23 +381,35 @@ export class CreationRunService {
   }
 }
 
-function createSnapshot(run: CreationRun, modelId: string, credentialId: string, capturedAt: string): EvaluationInputSnapshot {
+function createSnapshot(
+  run: CreationRun,
+  credential: Credential,
+  capturedAt: string,
+  skills: readonly { componentId: string; versionId: string; contentDigest: string; name: string; description: string }[],
+): EvaluationInputSnapshot {
+  const provider = creationProviderProvenance(credential);
   const body = {
     schemaVersion: EVALUATION_SNAPSHOT_VERSION,
     buildVersionId: asOpaqueId<'build-version'>(run.buildVersionId),
     testSuiteVersionId: null,
-    skillVersionId: null,
+    skillVersionId: skills.length === 1 ? asOpaqueId<'skill-version'>(skills[0].versionId) : null,
     runtimeAdapter: run.context.runtimeSelection.adapterVersion,
-    modelOfferingId: modelId,
+    modelOfferingId: credential.modelId,
     policyVersion: run.context.runtimeSelection.policyVersion,
-    consentVersion: 'byok-creation-v1',
-    credentialAuthorizationId: credentialId,
+    consentVersion: 'byok-creation-v2-public-provenance',
+    credentialAuthorizationId: credential.id,
     capturedAt,
     metadata: {
       creationRunId: run.id,
       challengeVersionId: run.challengeVersionId,
       contextDigest: digestCreationBuildContext(run.context),
       environmentVersionId: run.environmentTemplateVersionId,
+      providerClass: provider.providerClass,
+      providerId: provider.providerId,
+      providerHost: provider.providerHost,
+      providerProtocol: provider.protocol,
+      systemPromptVersion: 'creation-pi-v1',
+      skills: skills.map((skill) => ({ ...skill })),
     },
   } as const;
   return Object.freeze({
