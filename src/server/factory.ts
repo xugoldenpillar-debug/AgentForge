@@ -26,6 +26,8 @@ let artifactArenaServices: ArtifactArenaHttpServices | undefined;
 let artifactArenaStorageAdapter: ArtifactStorageAdapter | undefined;
 let defaultArtifactStorageAdapter: FileSystemArtifactStorageAdapter | undefined;
 let defaultArtifactStorageRoot: string | undefined;
+let challengeApplications: ChallengeApplicationService | undefined;
+let creationLeaderboard: CreationLeaderboardService | undefined;
 
 function price(value: string | undefined): number | null {
   if (!value?.trim()) return null;
@@ -67,6 +69,19 @@ export function getCommunityService(): CommunityService {
   return communityService ??= new CommunityService(new DrizzleRepository(), {
     resolveRoles: resolveCommunityRoles,
   });
+}
+
+export function getChallengeApplicationService(): ChallengeApplicationService {
+  return challengeApplications ??= new ChallengeApplicationService(new DrizzleRepository(), {
+    resolveRoles: resolveCommunityRoles,
+  });
+}
+
+export function getCreationLeaderboardService(): CreationLeaderboardService | undefined {
+  if (creationLeaderboard) return creationLeaderboard;
+  const arena = getArtifactArenaServices();
+  if (!arena?.voting) return undefined;
+  return creationLeaderboard = new CreationLeaderboardService(new DrizzleRepository(), arena.voting);
 }
 
 export interface ArtifactArenaServiceDependencies {
@@ -117,18 +132,8 @@ export function getArtifactArenaServices(
     policy: showcaseComparatorPolicy,
   });
   const likes = new WorkLikeService(repository);
-  const challengeApplications = new ChallengeApplicationService(repository, { resolveRoles: resolveCommunityRoles });
-  const creationLeaderboard = new CreationLeaderboardService(repository, voting);
 
   artifactArenaStorageAdapter = storageAdapter;
-  artifactArenaServices = {
-    artifacts,
-    publications,
-    voting,
-    likes,
-    creationRuns,
-    challengeApplications,
-    creationLeaderboard,
-  };
+  artifactArenaServices = { artifacts, publications, voting, likes, creationRuns };
   return artifactArenaServices;
 }
