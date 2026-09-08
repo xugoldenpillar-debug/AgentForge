@@ -9,33 +9,34 @@ import {
 } from './catalog.ts';
 
 /**
- * Authoritative resolver for the deliberately small public animation launch.
+ * Authoritative resolver for the public Artifact Arena creation lane.
  * Provider credentials remain a separate run-time authorization and are never
- * persisted in the immutable Build definition.
+ * persisted in the immutable Build definition. Skill references are preserved
+ * here and are re-authorized against active reviewed releases when a run starts.
  */
 export const creationAgentBuildResolver: AgentBuildResolver = Object.freeze({
   async resolve(request: AgentBuildResolutionRequest) {
     const definition = parseAgentBuildDefinition(request.definition);
     ensure(request.actorId === request.ownerId || request.operation !== 'save',
       'Only the owner can save an Agent Build.', 403, ERROR_CODES.OWNERSHIP_FORBIDDEN);
-    ensure(definition.skillRefs.length === 0 && definition.requestedCapabilities.length === 0,
-      'This launch accepts prompt-only Skill instructions and fixed sandbox capabilities.',
+    ensure(definition.requestedCapabilities.length === 0,
+      'Creation challenges use fixed sandbox capabilities. Add reusable behavior through reviewed instruction Skills.',
       409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.profileRef === null,
-      'Custom execution profiles are not enabled for the animation launch.',
+      'Custom execution profiles are not enabled for the creation challenge lane.',
       409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.environmentRef?.id === CREATION_ENVIRONMENT_TEMPLATE.templateId
       && definition.environmentRef.versionId === CREATION_ENVIRONMENT_TEMPLATE.versionId
       && definition.environmentRef.contentDigest === CREATION_ENVIRONMENT_DIGEST,
-    'The Agent Build must use the approved animation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    'The Agent Build must use the approved creation sandbox.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.runtimeSelection?.kind === 'pi'
       && definition.runtimeSelection.adapterVersion === CREATION_ENVIRONMENT_TEMPLATE.runtime.adapterVersion
       && definition.runtimeSelection.policyVersion === CREATION_ENVIRONMENT_TEMPLATE.runtime.policyVersion,
-    'The Agent Build must use the approved Pi animation runtime.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    'The Agent Build must use the approved Pi creation runtime.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.outputContractRef?.id === CREATION_OUTPUT_CONTRACT_REF.id
       && definition.outputContractRef.versionId === CREATION_OUTPUT_CONTRACT_REF.versionId
       && definition.outputContractRef.contentDigest === CREATION_OUTPUT_CONTRACT_REF.contentDigest,
-    'The Agent Build must use the SVG animation output contract.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    'The Agent Build must use the approved HTML/SVG output contract.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(definition.modelSelection !== null,
       'A BYOK model selection is required.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
 
