@@ -53,7 +53,7 @@ if (testMode) for(const [problemId,judge]of [['messy-json','json'],['support-rou
   const response = await request('/api/arena/runs',{buildId:build.id,kind});
   assert(response.headers.get('content-type')?.includes('application/x-ndjson'));
   const lines=(await response.text()).trim().split('\n').map(line=>JSON.parse(line)) as RunEvent[];
-  const completed=lines.find((e):e is Extract<RunEvent,{type:'complete'}>=>e.type==='complete');assert(completed,`No completed ${kind} run for ${problemId}`);assert(!lines.some(e=>e.type==='error'));assert.equal(completed.summary.total,kind==='public'?4:12);
+  const completed=lines.find((e):e is Extract<RunEvent,{type:'complete'}>=>e.type==='complete');assert(completed,`No completed ${kind} run for ${problemId}`);assert(!lines.some(e=>e.type==='error'));assert.equal(completed.summary.total,kind==='public'?4:48);
   if(kind==='hidden'){assert(lines.every(e=>['start','progress','complete'].includes(e.type)));console.log(`${problemId}: ${completed.summary.passed}/${completed.summary.total}, ${completed.summary.score.total}/1000 (DEMO)`);}
  }
  const board=await (await request(`/api/arena/leaderboard?problemId=${problemId}&tier=demo`)).json();assert(board.some((row:{buildId:string})=>row.buildId===build.id));
