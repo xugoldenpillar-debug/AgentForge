@@ -8,21 +8,22 @@ export interface CreationProviderProvenance {
   readonly protocol: string;
 }
 
-const OFFICIAL_HOSTS: Readonly<Record<string, string>> = Object.freeze({
-  'api.openai.com': 'openai',
-  'api.anthropic.com': 'anthropic',
-  'generativelanguage.googleapis.com': 'google',
-  'api.deepseek.com': 'deepseek',
+const OFFICIAL_HOSTS: Readonly<Record<string, { providerId: string; protocols: readonly string[] }>> = Object.freeze({
+  'api.openai.com': { providerId: 'openai', protocols: ['openai-chat', 'openai-responses'] },
+  'api.anthropic.com': { providerId: 'anthropic', protocols: ['anthropic-messages'] },
+  'generativelanguage.googleapis.com': { providerId: 'google', protocols: ['google-generative-ai'] },
+  'api.deepseek.com': { providerId: 'deepseek', protocols: ['openai-chat'] },
 });
 
-/** Provider identity is derived from the snapshotted endpoint, never the secret credential id. */
+/** Provider identity is derived from the endpoint + protocol, never a user label or credential id. */
 export function creationProviderProvenance(credential: Credential): CreationProviderProvenance {
   let host = 'invalid';
   try { host = new URL(credential.baseUrl).hostname.toLowerCase(); } catch { /* validation happens earlier */ }
-  const providerId = OFFICIAL_HOSTS[host] ?? 'custom';
+  const candidate = OFFICIAL_HOSTS[host];
+  const official = candidate?.protocols.includes(credential.protocol) === true;
   return Object.freeze({
-    providerClass: providerId === 'custom' ? 'custom' : 'official',
-    providerId,
+    providerClass: official ? 'official' : 'custom',
+    providerId: official ? candidate.providerId : 'custom',
     providerHost: host,
     protocol: credential.protocol,
   });
