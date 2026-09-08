@@ -695,6 +695,14 @@ export const cancelCreationRun = (runId: string, signal?: AbortSignal) => api<Cr
   body: '{}',
   signal,
 });
+export const acknowledgeUnknownCreationRun = (runId: string, signal?: AbortSignal) => api<CreationRunStatusView>(
+  `creation-runs/${encodeURIComponent(runId)}/acknowledge-unknown`,
+  {
+    method: 'POST',
+    body: JSON.stringify({ acknowledgePotentialCharge: true }),
+    signal,
+  },
+);
 export const retryCreationRun = (runId: string, idempotencyKey: string, signal?: AbortSignal) => idempotentPost<CreateCreationRunResponse>(
   `creation-runs/${encodeURIComponent(runId)}/retry`,
   { idempotencyKey },

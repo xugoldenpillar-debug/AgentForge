@@ -5,6 +5,13 @@ export const PROVIDER_PROTOCOLS = [
 ] as const;
 export type ProviderProtocol = typeof PROVIDER_PROTOCOLS[number];
 
+export const PROVIDER_FIELD_LIMITS = Object.freeze({
+  name: 60,
+  baseUrl: 300,
+  modelId: 160,
+  apiKey: 2048,
+});
+
 /** Omitted protocol means the historical Chat Completions contract, never auto-detection. */
 export function parseProviderProtocol(value: unknown): ProviderProtocol {
   if (value === undefined) return 'openai-chat';

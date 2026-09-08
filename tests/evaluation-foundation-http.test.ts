@@ -141,6 +141,42 @@ test('async creation is idempotent and rejects a reused key with a different req
   assert.equal((conflictPayload.error as Record<string, unknown>).code, 'REQUEST_VALIDATION_FAILED');
 });
 
+test('a second active job returns RUN_ALREADY_ACTIVE instead of a field-validation error', async () => {
+  const value = await fixture();
+  const first = await createJob(value, 'http-active-one');
+  assert.equal(first.status, 202);
+
+  const second = await createJob(value, 'http-active-two');
+  assert.equal(second.status, 409);
+  const payload = await jsonResponse(second);
+  assert.equal((payload.error as Record<string, unknown>).code, 'RUN_ALREADY_ACTIVE');
+});
+
+
+test('acknowledging an unknown job releases the account active slot without replaying it', async () => {
+  const value = await fixture();
+  const first = await createJob(value, 'http-unknown-slot');
+  const firstPayload = await jsonResponse(first);
+  const jobId = String((firstPayload.job as Record<string, unknown>).id);
+  const claim = await value.scheduler.claimForExecution(jobId as never, 'http-worker');
+  assert(claim.executionToken);
+  await value.scheduler.markUnknown(jobId as never, claim.executionToken!);
+
+  const blocked = await createJob(value, 'http-before-acknowledgement');
+  assert.equal(blocked.status, 409);
+  assert.equal(
+    ((await jsonResponse(blocked)).error as Record<string, unknown>).code,
+    'RUN_ALREADY_ACTIVE',
+  );
+
+  const acknowledged = await value.scheduler.acknowledgeUnknown(jobId as never);
+  assert.equal(acknowledged.job.state, 'incomplete');
+  const next = await createJob(value, 'http-after-acknowledgement');
+  assert.equal(next.status, 202);
+  assert.equal((await jsonResponse(next)).created, true);
+  assert.equal(value.dispatch.events.length, 2, 'acknowledgement must not enqueue or replay the old job');
+});
+
 test('async mode on the legacy runs route validates and returns the durable 202 path', async () => {
   const value = await fixture();
   const response = await handleArena(request('runs?mode=async', {

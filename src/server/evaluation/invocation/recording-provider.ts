@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { AIProvider, AIRequest, AIResult } from '../../../lib/ai/types.ts';
+import { ProviderResultUnknownError, type AIProvider, type AIRequest, type AIResult } from '../../../lib/ai/types.ts';
+import { AppError } from '../../../shared/errors.ts';
 import { asOpaqueId } from '../../../shared/evaluation-types.ts';
 import type { EvaluationRepository } from '../../../db/evaluation-repository.ts';
 import type { EvaluationExecutionContext } from '../queue/ports.ts';
@@ -51,10 +52,10 @@ export class InvocationRecordingProvider implements AIProvider {
       requestDigest,
     });
     if (!created.created && created.invocation.state !== 'pending') {
-      throw new UnknownProviderResultError('INVOCATION_ALREADY_DISPATCHED');
+      throw new ProviderResultUnknownError('INVOCATION_ALREADY_DISPATCHED');
     }
     const started = await this.repository.startInvocation({ invocationId: created.invocation.id, now: this.now() });
-    if (!started) throw new UnknownProviderResultError('INVOCATION_LEASE_LOST');
+    if (!started) throw new ProviderResultUnknownError('INVOCATION_LEASE_LOST');
 
     try {
       const result = await this.provider.execute(request);
@@ -67,33 +68,34 @@ export class InvocationRecordingProvider implements AIProvider {
       });
       return result;
     } catch (error) {
+      const knownFailure = error instanceof AppError;
+      const unknownCode = error instanceof ProviderResultUnknownError
+        ? error.code
+        : 'UPSTREAM_RESULT_UNKNOWN';
       try {
         await this.repository.finalizeInvocation({
           invocationId: created.invocation.id,
-          state: 'unknown',
+          state: knownFailure ? 'failed' : 'unknown',
           providerRequestId: null,
-          usage: unknownUsageRow(this.context, created.invocation.id, this.provider.id, this.now()),
+          usage: knownFailure
+            ? failedUsageRow(this.context, created.invocation.id, this.provider.id, this.now())
+            : unknownUsageRow(this.context, created.invocation.id, this.provider.id, this.now()),
           now: this.now(),
         });
       } catch {
-        // The provider call crossed the process boundary, so conservative unknown
-        // accounting wins over a duplicate retry.
+        // If persistence of the terminal state is uncertain, reconciliation must
+        // decide whether a provider call may ever be replayed.
+        throw new ProviderResultUnknownError('INVOCATION_FINALIZATION_FAILED');
       }
-      if (error instanceof UnknownProviderResultError) throw error;
-      throw new UnknownProviderResultError('UPSTREAM_RESULT_UNKNOWN');
+      if (knownFailure) throw error;
+      if (error instanceof ProviderResultUnknownError) throw error;
+      throw new ProviderResultUnknownError(unknownCode);
     }
   }
 }
 
-export class UnknownProviderResultError extends Error {
-  readonly code: string;
 
-  constructor(code = 'UPSTREAM_RESULT_UNKNOWN') {
-    super('The provider result could not be confirmed.');
-    this.name = 'UnknownProviderResultError';
-    this.code = code;
-  }
-}
+export { ProviderResultUnknownError as UnknownProviderResultError };
 
 function digestRequest(request: AIRequest): string {
   return createHash('sha256').update(JSON.stringify({
@@ -127,6 +129,31 @@ function usageRow(
     toolCalls: result.toolCalls,
     latencyMs: result.latency,
     costUsd: result.cost,
+    providerRequestId: null,
+    evidenceRef: `evaluation:${context.attempt.id}`,
+    recordedAt,
+  };
+}
+
+function failedUsageRow(
+  context: EvaluationExecutionContext,
+  invocationId: string,
+  providerId: string,
+  recordedAt: string,
+) {
+  return {
+    id: randomUUID(),
+    jobId: context.job.id,
+    attemptId: context.attempt.id,
+    invocationId,
+    certainty: 'known' as const,
+    chargeability: providerId === 'demo' ? 'not-chargeable' as const : 'uncertain' as const,
+    inputTokens: null,
+    outputTokens: null,
+    reasoningTokens: null,
+    toolCalls: null,
+    latencyMs: null,
+    costUsd: null,
     providerRequestId: null,
     evidenceRef: `evaluation:${context.attempt.id}`,
     recordedAt,

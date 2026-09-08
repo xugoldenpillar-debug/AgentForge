@@ -29,6 +29,7 @@
   - `anthropic-messages`
   - `google-generative-ai`
 - Key 加密、owner 隔离、HTTPS/公网 DNS/IP/重定向防护保留；可配置开放自定义公网 Provider Host 或严格 allowlist；Key 只在可信 Worker 解密。
+- API Key 按不透明字符串处理，不依据前缀、长度形状或字符格式推断 Provider；前后端统一允许 trim 后 1–2048 字符，自定义模型 ID 不走平台模型白名单。
 
 ### L2–L3：真实沙箱、持久存储和 Creation 执行
 
@@ -37,7 +38,8 @@
 - `FileSystemArtifactStorageAdapter` 提供 VPS 私有不可变对象键；生产以 `2750` 目录、`0640` 文件和专用共享 GID 让宿主 Worker 写、Web 容器只读。
 - Creation v2 复用 EF jobs/attempts/invocations/usage/outbox、BullMQ、lease/fence、取消、重试与 reconciliation，不另造请求内队列。
 - `CreationEvaluationExecutor` 接通真实 Pi provider tool loop、BYOK provider、artifact collector/sealer 与 `CreationRun.artifactBundleId`。
-- 成功、失败、取消及 unknown provider result 均进入 sandbox dispose；unknown 不作为可安全自动重试的已知失败。
+- 成功、失败、取消及 unknown provider result 均进入 sandbox dispose；明确 HTTP/Provider 响应失败直接进入 failed 并释放活跃槽，只有无法确认上游结果的 transport/finalization 情况进入 unknown。
+- unknown 不自动重放；用户明确确认潜在费用后，状态转为 incomplete、释放活跃槽，再由用户决定重新开始或重试。
 - API Key 只传给 trusted provider factory，不进入 prompt、tool args、sandbox、artifact、repository projection 或执行结果。
 
 ### L4–L6：安全预览、完整 UI 和社区闭环

@@ -12,6 +12,7 @@ import {
 } from '../src/shared/artifact-contract.ts';
 import { asOpaqueId, type EvaluationInputSnapshot } from '../src/shared/evaluation-types.ts';
 import type { Credential, EvaluationJobRow } from '../src/shared/types.ts';
+import { AppError, ERROR_CODES } from '../src/shared/errors.ts';
 import { EvaluationRepositoryAdapter } from '../src/db/evaluation-repository.ts';
 import { toCreationBriefVersionRow, toCreationRunRow } from '../src/server/creation-briefs.ts';
 import {
@@ -393,6 +394,23 @@ test('Unknown provider results leave the CreationRun incomplete and are never tr
   assert.equal((await f.repository.read('evaluationUsageRecords', { jobId: JOB_ID }))[0]?.certainty, 'unknown');
   assert.equal(f.sandbox.disposeCalls, 1);
   assert.equal('failure' in outcome, false);
+});
+
+test('Known provider failures fail the invocation and run instead of occupying the unknown slot', async () => {
+  const f = await fixture({
+    replies: [new AppError('Safe provider failure.', 502, ERROR_CODES.PROVIDER_REQUEST_FAILED)],
+  });
+  const outcome = await f.executor.execute(f.execution);
+  assert.deepEqual(outcome, {
+    kind: 'failed',
+    failure: { code: ERROR_CODES.PROVIDER_REQUEST_FAILED, retryable: false },
+  });
+  assert.equal((await f.repository.read('creationRuns', { id: RUN_ID }))[0]?.status, 'failed');
+  assert.equal((await f.repository.read('evaluationInvocations', { jobId: JOB_ID }))[0]?.state, 'failed');
+  const usage = (await f.repository.read('evaluationUsageRecords', { jobId: JOB_ID }))[0];
+  assert.equal(usage?.certainty, 'known');
+  assert.equal(usage?.chargeability, 'uncertain');
+  assert.equal(f.sandbox.disposeCalls, 1);
 });
 
 test('Creation executor disposes the sandbox after output failure and cancellation', async () => {

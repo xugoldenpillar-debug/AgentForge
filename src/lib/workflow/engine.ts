@@ -1,5 +1,5 @@
 import type { Config, Constraints, Metrics, SkillId, ToolId, Trace, Workflow } from '../../shared/types.ts';
-import type { ProviderResolver } from '../ai/types.ts';
+import { ProviderResultUnknownError, type ProviderResolver } from '../ai/types.ts';
 import { validateWorkflow, topologicalOrder } from './validate.ts';
 import { JSON_SCHEMA } from '../../shared/catalog.ts';
 import { AppError, ensure, ERROR_CODES } from '../../shared/errors.ts';
@@ -80,7 +80,7 @@ export async function executeWorkflow(args:{workflow:Workflow;input:string;const
       if((node.kind==='validator'||(node.kind==='tool'&&node.config.toolId==='json-validator'))&&!state.valid)validatorFailed=true;
       ensure(metrics.latency<=args.constraints.maxLatencyMs,'Latency budget exceeded.',400,ERROR_CODES.BUDGET_EXCEEDED);
       states.set(id,state);emit({nodeId:id,kind:node.kind,label:node.label,state:'done',tokens:metrics.inputTokens+metrics.outputTokens-before,latency:metrics.latency-latencyBefore});
-    }catch(e){emit({nodeId:id,kind:node.kind,label:node.label,state:'failed'});if(e instanceof AppError)throw e;throw new AppError('The model request failed. Check the provider, model and account balance.',502,ERROR_CODES.PROVIDER_REQUEST_FAILED);}
+    }catch(e){emit({nodeId:id,kind:node.kind,label:node.label,state:'failed'});if(e instanceof AppError||e instanceof ProviderResultUnknownError)throw e;throw new AppError('The model request failed. Check the provider, model and account balance.',502,ERROR_CODES.PROVIDER_REQUEST_FAILED);}
   }
   const output=states.get(w.nodes.find(n=>n.kind==='output')!.id)!;
   return {...metrics,text:output.text,valid:output.valid&&!validatorFailed,trace};

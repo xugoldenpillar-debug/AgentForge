@@ -2,46 +2,50 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { parseProviderProtocol } from '../../shared/provider-protocol.ts';
-import { generateText, stepCountIs, type LanguageModel } from 'ai';
+import {
+  APICallError,
+  InvalidResponseDataError,
+  JSONParseError,
+  NoContentGeneratedError,
+  NoOutputGeneratedError,
+  RetryError,
+  TypeValidationError,
+  generateText,
+  stepCountIs,
+  type LanguageModel,
+} from 'ai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createGateway } from '@ai-sdk/gateway';
-import type { AIProvider, AIRequest, AIResult } from './types.ts';
+import { ProviderResultUnknownError, type AIProvider, type AIRequest, type AIResult } from './types.ts';
 import type { Credential } from '../../shared/types.ts';
 import type { Pricing } from '../scoring/index.ts';
 import { calculateCost } from '../scoring/index.ts';
 import { AppError, ensure, ERROR_CODES } from '../../shared/errors.ts';
 import { safeProviderFetch } from './safe-fetch.ts';
 import { sdkTools } from './sdk-tools.ts';
-import { resolveOfficialProviderOffering } from './provider-registry.ts';
 
 class SDKProvider implements AIProvider {
   id: string;
   pricing: Pricing;
   private model: (id: string) => LanguageModel;
   private secret: string;
-  private officialFlash: boolean;
 
   constructor(
     id: string,
     model: (id: string) => LanguageModel,
     pricing: Pricing,
     secret: string,
-    officialFlash = false,
   ) {
     this.id = id;
     this.model = model;
     this.pricing = pricing;
     this.secret = secret;
-    this.officialFlash = officialFlash;
   }
 
   async execute(r: AIRequest): Promise<AIResult> {
     const start = performance.now();
     let calls = 0;
     try {
-      if (this.officialFlash) {
-        resolveOfficialProviderOffering({ providerId: 'deepseek', modelId: r.model, thinking: false });
-      }
       const tools = sdkTools(r.tools, () => {
         ensure(calls < r.remainingToolCalls, 'Tool-call budget exceeded.', 400, ERROR_CODES.BUDGET_EXCEEDED);
         calls++;
@@ -50,8 +54,6 @@ class SDKProvider implements AIProvider {
         model: this.model(r.model),
         system: r.systemPrompt,
         prompt: r.userPrompt,
-        // DeepSeek defaults to thinking; omission would silently change the offering.
-        ...(this.officialFlash ? { providerOptions: { byok: { thinking: { type: 'disabled' } } } } : {}),
         tools,
         maxOutputTokens: r.maxTokens,
         temperature: r.temperature,
@@ -81,14 +83,6 @@ class SDKProvider implements AIProvider {
       const outputTokens = usage.outputTokens ?? Math.ceil(result.text.length / 4);
       const reportedReasoning = usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens ?? 0;
       const reasoningTokens = Math.min(outputTokens, reportedReasoning);
-      if (this.officialFlash) {
-        ensure(
-          !estimated && Number.isSafeInteger(inputTokens) && inputTokens >= 0
-            && Number.isSafeInteger(outputTokens) && outputTokens >= 0,
-          'Official provider returned invalid token usage.', 502, ERROR_CODES.PROVIDER_RESPONSE_INVALID,
-        );
-        ensure(reportedReasoning === 0, 'Official non-thinking response contained reasoning usage.', 502, ERROR_CODES.PROVIDER_RESPONSE_INVALID);
-      }
       const text = this.secret ? result.text.replaceAll(this.secret, '[credential redacted]') : result.text;
       return {
         text, inputTokens, outputTokens, reasoningTokens, toolCalls: calls,
@@ -97,28 +91,53 @@ class SDKProvider implements AIProvider {
         estimated,
       };
     } catch (error) {
-      if (error instanceof AppError) throw error;
-      throw new AppError('Model request failed. Check the provider, model, network and account balance.', 502, ERROR_CODES.PROVIDER_REQUEST_FAILED);
+      throw classifyProviderError(error);
     }
   }
 }
 
-export function byokProvider(credential: Credential, key: string): AIProvider {
-  const url = new URL(credential.baseUrl);
-  const protocol = parseProviderProtocol(credential.protocol);
-  const officialFlash = url.hostname === 'api.deepseek.com';
-  ensure(!officialFlash || protocol === 'openai-chat',
-    'Official DeepSeek requires Chat Completions.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
-  let baseURL = credential.baseUrl;
-  if (officialFlash) {
-    ensure(
-      url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash
-        && (!url.port || url.port === '443') && ['/', '/v1', '/v1/'].includes(url.pathname),
-      'Unsupported official DeepSeek endpoint.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID,
+function classifyProviderError(error: unknown): never {
+  if (error instanceof AppError) throw error;
+
+  const errors = RetryError.isInstance(error) ? error.errors : [error];
+  if (errors.some(isKnownResponseError)) {
+    throw new AppError(
+      'The provider returned an invalid response.',
+      502,
+      ERROR_CODES.PROVIDER_RESPONSE_INVALID,
     );
-    resolveOfficialProviderOffering({ providerId: 'deepseek', modelId: credential.modelId, thinking: false });
-    baseURL = 'https://api.deepseek.com';
   }
+  if (errors.some(isKnownHttpFailure)) {
+    throw new AppError(
+      'The provider request failed.',
+      502,
+      ERROR_CODES.PROVIDER_REQUEST_FAILED,
+    );
+  }
+  throw new ProviderResultUnknownError();
+}
+
+function isKnownHttpFailure(error: unknown): boolean {
+  return APICallError.isInstance(error)
+    && Number.isInteger(error.statusCode)
+    && (error.statusCode! < 200 || error.statusCode! >= 300);
+}
+
+function isKnownResponseError(error: unknown): boolean {
+  return (APICallError.isInstance(error)
+      && Number.isInteger(error.statusCode)
+      && error.statusCode! >= 200
+      && error.statusCode! < 300)
+    || InvalidResponseDataError.isInstance(error)
+    || JSONParseError.isInstance(error)
+    || NoContentGeneratedError.isInstance(error)
+    || NoOutputGeneratedError.isInstance(error)
+    || TypeValidationError.isInstance(error);
+}
+
+export function byokProvider(credential: Credential, key: string): AIProvider {
+  const protocol = parseProviderProtocol(credential.protocol);
+  const baseURL = credential.baseUrl;
   const settings = { baseURL, apiKey: key, fetch: safeProviderFetch(baseURL) };
   let model: (id: string) => LanguageModel;
   switch (protocol) {
@@ -145,7 +164,7 @@ export function byokProvider(credential: Credential, key: string): AIProvider {
   }
   return new SDKProvider(
     credential.id, model,
-    { inputPrice: credential.inputPrice, outputPrice: credential.outputPrice }, key, officialFlash,
+    { inputPrice: credential.inputPrice, outputPrice: credential.outputPrice }, key,
   );
 }
 

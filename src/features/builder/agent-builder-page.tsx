@@ -25,6 +25,7 @@ import { LanguageSwitcher, localizeError, useToast } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
   addProvider,
+  acknowledgeUnknownCreationRun,
   cancelCreationRun,
   castShowcaseVote,
   createCreationRun,
@@ -59,7 +60,7 @@ import {
   type ShowcaseLeaderboardView,
 } from '@/lib/client-api';
 import { useLocale } from '@/lib/i18n';
-import { PROVIDER_PROTOCOL_BASE_URLS, PROVIDER_PROTOCOLS } from '@/shared/provider-protocol';
+import { PROVIDER_FIELD_LIMITS, PROVIDER_PROTOCOL_BASE_URLS, PROVIDER_PROTOCOLS } from '@/shared/provider-protocol';
 import type { MessageKey } from '@/shared/i18n/types';
 import styles from './agent-builder.module.css';
 
@@ -84,6 +85,7 @@ type BusyAction =
   | 'build'
   | 'run'
   | 'cancel'
+  | 'acknowledge'
   | 'retry'
   | 'preview'
   | 'publish'
@@ -198,8 +200,9 @@ export function AgentBuilderPage() {
   }, [challengeVersionId, challenges]);
   const selectedCredential = credentials.find((credential) => credential.id === credentialId) ?? null;
   const run = runStatus?.run ?? null;
-  const runActive = run?.status === 'queued' || run?.status === 'running';
-  const runRetryable = run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete';
+  const jobUnknown = runStatus?.job?.state === 'unknown';
+  const runActive = (run?.status === 'queued' || run?.status === 'running') && !jobUnknown;
+  const runRetryable = !jobUnknown && (run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete');
   const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
   const isPublished = publication?.status === 'published';
   const previewReady = Boolean(
@@ -415,6 +418,16 @@ export function AgentBuilderPage() {
     finally { setBusy(null); }
   };
 
+  const acknowledgeUnknownRun = async () => {
+    if (!run || !jobUnknown || !window.confirm(t('artifactArena.unknownConfirm'))) return;
+    setBusy('acknowledge'); setError('');
+    try {
+      setRunStatus(await acknowledgeUnknownCreationRun(run.id));
+      toast(t('artifactArena.unknownAcknowledged'));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
   const retryRun = async () => {
     if (!run) return;
     setBusy('retry');
@@ -596,10 +609,10 @@ export function AgentBuilderPage() {
               setProtocol(next);
               if (Object.values(PROVIDER_PROTOCOL_BASE_URLS).includes(baseUrl)) setBaseUrl(PROVIDER_PROTOCOL_BASE_URLS[next]);
             }}>{PROVIDER_PROTOCOLS.map((value) => <option value={value} key={value}>{t(`providers.protocol.${value}`)}</option>)}</select></label>
-            <label><span>{t('artifactArena.credentialName')}</span><input required minLength={1} maxLength={80} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label>
-            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={300} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /><small>{t('providers.protocolUrlHelp')}</small></label>
-            <label><span>{t('artifactArena.modelId')}</span><input required maxLength={160} value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="gpt-5.2 / claude-sonnet / gemini-2.5-pro" /></label>
-            <label><span>{t('artifactArena.apiKey')}</span><input required type="password" autoComplete="off" maxLength={1000} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('providers.keyPlaceholder')} /></label>
+            <label><span>{t('artifactArena.credentialName')}</span><input required minLength={1} maxLength={PROVIDER_FIELD_LIMITS.name} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={PROVIDER_FIELD_LIMITS.baseUrl} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /><small>{t('providers.protocolUrlHelp')}</small></label>
+            <label><span>{t('artifactArena.modelId')}</span><input required maxLength={PROVIDER_FIELD_LIMITS.modelId} value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="gpt-5.2 / claude-sonnet / gemini-2.5-pro" /></label>
+            <label><span>{t('artifactArena.apiKey')}</span><input required type="password" autoComplete="off" maxLength={PROVIDER_FIELD_LIMITS.apiKey} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('providers.keyPlaceholder')} /></label>
             <div className={styles.fullField}><Button type="submit" variant="default" disabled={busy === 'credential'}>{busy === 'credential' ? <LoaderCircle className={styles.spin} size={14} /> : <KeyRound size={14} />}{busy === 'credential' ? t('artifactArena.savingCredential') : t('artifactArena.saveCredential')}</Button></div>
           </form>
           <div className={styles.savedBox}><label><span>{t('artifactArena.selectCredential')}</span><select value={credentialId} onChange={(event) => { setCredentialId(event.target.value); persist({ credentialId: event.target.value }); }}><option value="">{t('artifactArena.noCredentials')}</option>{credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.modelId} · {credential.keyMask}</option>)}</select></label>{selectedCredential && <small>{t(`providers.protocol.${selectedCredential.protocol}`)} · {selectedCredential.baseUrl}</small>}</div>
@@ -620,7 +633,8 @@ export function AgentBuilderPage() {
         <div className={styles.stageHeader}><span>04</span><div><h2>{t('artifactArena.runTitle')}</h2><p>{t('artifactArena.resumeHint')}</p></div></div>
         <div className={styles.runConsole}>
           <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{run ? t(RUN_STATUS_KEYS[run.status]) : t('artifactArena.status.idle')}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
-          <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
+          <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || jobUnknown || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{jobUnknown && <Button variant="outline" onClick={acknowledgeUnknownRun} disabled={busy === 'acknowledge'}>{busy === 'acknowledge' ? <LoaderCircle className={styles.spin} size={14} /> : <AlertTriangle size={14} />}{busy === 'acknowledge' ? t('artifactArena.acknowledgingUnknown') : t('artifactArena.acknowledgeUnknown')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
+          {jobUnknown && <p className={styles.hint}>{t('artifactArena.unknownHelp')}</p>}
         </div>
         {run && <div className={styles.timeline}><span>{run.id}</span><span>{runStatus?.job?.state ?? run.status}</span><span>{run.updatedAt}</span></div>}
       </section>

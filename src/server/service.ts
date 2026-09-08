@@ -1,4 +1,4 @@
-import { parseProviderProtocol } from '../shared/provider-protocol.ts';
+import { parseProviderProtocol, PROVIDER_FIELD_LIMITS } from '../shared/provider-protocol.ts';
 import { classifyProviderLane } from '../lib/ai/provider-lane.ts';
 import { artifactArenaAvailability } from './artifact-arena-availability.ts';
 import {
@@ -477,10 +477,11 @@ export class ArenaService {
     ensure((await this.repo.read('credentials', { userId })).length < 10,
       'At most 10 credentials may be saved.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
     const protocol = parseProviderProtocol(body.protocol);
-    const name = text(body.name, 'Provider name', 1, 60);
-    const baseUrl = text(body.baseUrl, 'Base URL', 8, 300);
-    const apiKey = text(body.apiKey, 'API key', 16, 512);
-    const modelId = text(body.modelId, 'Model ID', 1, 160);
+    const name = text(body.name, 'Provider name', 1, PROVIDER_FIELD_LIMITS.name);
+    const baseUrl = text(body.baseUrl, 'Base URL', 8, PROVIDER_FIELD_LIMITS.baseUrl);
+    // API keys are opaque provider credentials. Do not infer their provider or reject them by prefix/shape.
+    const apiKey = text(body.apiKey, 'API key', 1, PROVIDER_FIELD_LIMITS.apiKey);
+    const modelId = text(body.modelId, 'Model ID', 1, PROVIDER_FIELD_LIMITS.modelId);
     withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID,
       () => validateProviderUrl(baseUrl, this.options.allowedHosts, { allowCustomHosts: this.options.allowCustomProviderHosts }));
     const price = (value: unknown) => {

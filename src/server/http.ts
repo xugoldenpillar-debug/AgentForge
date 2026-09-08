@@ -337,7 +337,12 @@ function mapEvaluationError(error: unknown): unknown {
     const status = error.code === 'not-found' ? 404
       : error.code === 'idempotency-conflict' || error.code === 'active-job-exists' || error.code === 'association-exists' ? 409
         : 400;
-    return new AppError(error.message, status, status === 404 ? ERROR_CODES.RESOURCE_NOT_FOUND : ERROR_CODES.REQUEST_VALIDATION_FAILED);
+    const code = status === 404
+      ? ERROR_CODES.RESOURCE_NOT_FOUND
+      : error.code === 'active-job-exists'
+        ? ERROR_CODES.RUN_ALREADY_ACTIVE
+        : ERROR_CODES.REQUEST_VALIDATION_FAILED;
+    return new AppError(error.message, status, code);
   }
   if (error instanceof Error && error.message.includes('idempotency key is already associated')) {
     return new AppError('The idempotency key was already used for a different request.', 409, ERROR_CODES.REQUEST_VALIDATION_FAILED);
@@ -356,7 +361,7 @@ type ArtifactArenaPublicationPort = Pick<WorkPublicationService,
 
 type ArtifactArenaLikePort = Pick<WorkLikeService, 'summary' | 'like' | 'unlike'>;
 
-type ArtifactArenaCreationRunPort = Pick<CreationRunService, 'schedule' | 'get' | 'cancel' | 'retry'>;
+type ArtifactArenaCreationRunPort = Pick<CreationRunService, 'schedule' | 'get' | 'cancel' | 'acknowledgeUnknown' | 'retry'>;
 
 type ArtifactArenaVotingPort = Pick<ShowcaseVotingService,
   | 'getBallot'
@@ -547,6 +552,13 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       }
       if (method === 'POST' && path[0] === 'creation-runs' && path[1] && path[2] === 'cancel' && path.length === 3) {
         return json(await requireCreationRunService(artifactArena?.creationRuns, service).cancel(auth(), path[1]), 202);
+      }
+      if (method === 'POST' && path[0] === 'creation-runs' && path[1] && path[2] === 'acknowledge-unknown' && path.length === 3) {
+        return json(await requireCreationRunService(artifactArena?.creationRuns, service).acknowledgeUnknown(
+          auth(),
+          path[1],
+          body.acknowledgePotentialCharge === true,
+        ));
       }
       if (method === 'POST' && path[0] === 'creation-runs' && path[1] && path[2] === 'retry' && path.length === 3) {
         const result = await requireCreationRunService(artifactArena?.creationRuns, service).retry(auth(), path[1], body.idempotencyKey as string);

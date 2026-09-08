@@ -20,6 +20,7 @@ test('Artifact Arena creation UI uses the durable product APIs and contains no f
     'createCreationRun',
     'getCreationRun',
     'cancelCreationRun',
+    'acknowledgeUnknownCreationRun',
     'retryCreationRun',
     'getArtifactBundle',
     'getArtifactPreview',
@@ -40,6 +41,9 @@ test('Artifact Arena creation UI uses the durable product APIs and contains no f
   assert.match(source, /season-2026-launch/);
   assert.match(source, /ArtifactPreviewPanel/);
   assert.match(source, /publishConfirmed/);
+  assert.match(source, /runStatus\?\.job\?\.state === 'unknown'/);
+  assert.match(source, /jobUnknown && <Button[^>]+onClick=\{acknowledgeUnknownRun\}/);
+  assert.match(source, /\(run\?\.status === 'queued' \|\| run\?\.status === 'running'\) && !jobUnknown/, 'unknown jobs must stop the active polling state');
   assert.match(source, /publishConfirmed: true/);
   assert.match(source, /!previewReady \|\| !publishConfirmed/, 'publishing requires a loaded index.html preview and explicit owner confirmation');
   assert.match(previewSource, /requestFullscreen/);

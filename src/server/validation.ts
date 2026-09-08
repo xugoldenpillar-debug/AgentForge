@@ -1,4 +1,4 @@
-import { PROVIDER_PROTOCOLS } from '../shared/provider-protocol.ts';
+import { PROVIDER_FIELD_LIMITS, PROVIDER_PROTOCOLS } from '../shared/provider-protocol.ts';
 import { z } from 'zod';
 import { isConfiguredAgentBuild } from '../shared/agent-build-contract.ts';
 import { validateBuildEnvelope, parsePrivateAgentDefinition, privateAgentDraft } from './agent-drafts.ts';
@@ -50,13 +50,14 @@ const showcaseVote = z.object({ ballotId: id.optional(), choice: z.enum(['a', 'b
 
 const schemas: Record<string, z.ZodType> = {
 
-  providers: z.object({ protocol: z.enum(PROVIDER_PROTOCOLS).optional(), name: z.string().min(1).max(60), baseUrl: z.url().max(300), modelId: short, apiKey: z.string().min(16).max(512), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
+  providers: z.object({ protocol: z.enum(PROVIDER_PROTOCOLS).optional(), name: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.name), baseUrl: z.url().max(PROVIDER_FIELD_LIMITS.baseUrl), modelId: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.modelId), apiKey: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.apiKey), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
   runs: z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), mode: z.literal('legacy-stream').optional() }).strict(),
   'runs/async': z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), idempotencyKey }).strict(),
   'evaluation-jobs': z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), idempotencyKey }).strict(),
   'evaluation-jobs/:id/cancel': z.object({ reason: z.literal('user-requested').optional() }).strict(),
   'creation-runs': z.object({ buildVersionId: id, challengeVersionId: id, credentialId: id, idempotencyKey }).strict(),
   'creation-runs/:id/cancel': z.object({}).strict(),
+  'creation-runs/:id/acknowledge-unknown': z.object({ acknowledgePotentialCharge: z.literal(true) }).strict(),
   'creation-runs/:id/retry': z.object({ idempotencyKey }).strict(),
   'failure-cases': z.object({ problemId: id, input: z.string().min(1).max(4000), reason: z.string().min(8).max(1000), providerId: id, consent: z.boolean().optional() }).strict(),
   problems: z.object({ title: z.string().min(5).max(100), description: z.string().min(20).max(3000), why: z.string().min(10).max(2000), exampleInput: z.string().min(1).max(4000), expectedOutput: z.string().min(1).max(4000), category: z.string().min(1).max(60) }).strict(),
@@ -89,6 +90,7 @@ function schemaFor(path: string): z.ZodType | undefined {
   const normalizedPath = path
     .replace(/^evaluation-jobs\/[^/]+\/cancel$/, 'evaluation-jobs/:id/cancel')
     .replace(/^creation-runs\/[^/]+\/cancel$/, 'creation-runs/:id/cancel')
+    .replace(/^creation-runs\/[^/]+\/acknowledge-unknown$/, 'creation-runs/:id/acknowledge-unknown')
     .replace(/^creation-runs\/[^/]+\/retry$/, 'creation-runs/:id/retry');
   if (schemas[normalizedPath]) return schemas[normalizedPath];
   const parts = normalizedPath.split('/');

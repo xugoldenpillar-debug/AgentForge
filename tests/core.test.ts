@@ -8,6 +8,7 @@ import { validateWorkflow,topologicalOrder,publicWorkflow,forkWorkflow } from '.
 import { starterWorkflow,JSON_SCHEMA } from '../src/shared/catalog.ts';
 import { executeWorkflow } from '../src/lib/workflow/engine.ts';
 import { DemoProvider } from '../src/lib/ai/demo.ts';
+import { ProviderResultUnknownError } from '../src/lib/ai/types.ts';
 import { calculate,executeSafeTool,parseIsoDate } from '../src/lib/ai/tools-core.ts';
 import { isPublicAddress,validateProviderUrl } from '../src/server/url-policy.ts';
 import type { CaseResult,Workflow } from '../src/shared/types.ts';
@@ -35,6 +36,13 @@ test('SSRF policy denies private, reserved and IPv4-mapped addresses',()=>{for(c
 test('Provider URL uses exact allowlist and forbids URL credentials, query and HTTP',()=>{const hosts=['api.example.com'];assert.equal(validateProviderUrl('https://api.example.com/v1',hosts).hostname,'api.example.com');for(const url of ['http://api.example.com/v1','https://api.example.com.evil.com/v1','https://key@api.example.com/v1','https://api.example.com/v1?key=abc'])assert.throws(()=>validateProviderUrl(url,hosts));});
 test('Workflow really executes nodes and interpolates previous output',async()=>{const w=starterWorkflow('json'),seen:string[]=[];const r=await executeWorkflow({workflow:w,input:'My name is Ada.',constraints,resolve,onTrace:t=>{if(t.state==='done')seen.push(t.nodeId);}});assert.equal(r.text,'{"name":"Ada","age":null,"city":null}');assert.deepEqual(seen,['input','prompt','model','output']);assert(r.inputTokens>0);});
 test('Reflection is a real extra provider invocation',async()=>{const w=starterWorkflow('json');w.nodes.push({id:'reflect',kind:'skill',label:'Reflection',x:100,y:100,config:{skillId:'reflection'}});w.edges=w.edges.filter(e=>e.source!=='model');w.edges.push({id:'a',source:'model',target:'reflect'},{id:'b',source:'reflect',target:'output'});let calls=0;const provider=new DemoProvider();await executeWorkflow({workflow:w,input:'My name is Ada.',constraints,resolve:async()=>({model:'demo-forge',provider:{...provider,id:'counted',pricing:provider.pricing,execute:async r=>{calls++;return provider.execute(r);}}})});assert.equal(calls,2);});
+test('Workflow preserves an uncertain provider result instead of converting it to a retry-safe failure', async()=>{
+ const provider={id:'uncertain',pricing:{inputPrice:null,outputPrice:null},execute:async()=>{throw new ProviderResultUnknownError();}};
+ await assert.rejects(
+  ()=>executeWorkflow({workflow:starterWorkflow('json'),input:'hello',constraints,resolve:async()=>({model:'custom',provider})}),
+  (error:unknown)=>error instanceof ProviderResultUnknownError&&error.code==='UPSTREAM_RESULT_UNKNOWN',
+ );
+});
 test('Energy and tool budget checks are enforced',async()=>{await assert.rejects(()=>executeWorkflow({workflow:starterWorkflow('json'),input:'hello',constraints:{...constraints,tokenBudget:10},resolve}),/Energy/);const w=starterWorkflow('json');w.nodes.splice(3,0,{id:'tool',kind:'tool',label:'Check',x:700,y:200,config:{toolId:'json-validator'}});w.edges=w.nodes.slice(1).map((n,i)=>({id:`e${i}`,source:w.nodes[i].id,target:n.id}));await assert.rejects(()=>executeWorkflow({workflow:w,input:'My name is Ada.',constraints:{...constraints,toolCallLimit:0},resolve}),/Tool-call/);});
 test('Prompt interpolation is single-pass and preserves dollar replacement syntax',async()=>{
  const input='literal $& and {{previous}} must remain literal',w=starterWorkflow('json');w.nodes[1].config.userTemplate='DATA: {{input}}';let observed='';

@@ -336,6 +336,34 @@ export class EvaluationService {
     return this.finish(jobId, executionToken, 'unknown', { completion: null, failure: { code: 'UPSTREAM_RESULT_UNKNOWN', retryable: false } });
   }
 
+  /**
+   * Lets the owning product flow close an unknown result after the user has
+   * explicitly acknowledged that the dispatched provider request may already
+   * have incurred cost. This never replays the invocation.
+   */
+  async acknowledgeUnknown(jobId: EvaluationJobId): Promise<EvaluationTransitionResult> {
+    const current = await this.readRequired(jobId);
+    if (current.state === 'incomplete') return { applied: false, job: toPublicJob(current) };
+    if (current.state !== 'unknown') {
+      throw new EvaluationServiceError('INVALID_STATE_TRANSITION', `Cannot acknowledge an unknown result from ${current.state}.`);
+    }
+    const transitioned = await this.store.transition(
+      jobId,
+      ['unknown'],
+      this.patch('incomplete', {
+        executionToken: null,
+        completedAt: this.now(),
+        completion: {
+          evidence: 'partial',
+          summary: { upstreamResult: 'unknown', userAcknowledgedPotentialCharge: true },
+        },
+        failure: { code: 'UPSTREAM_RESULT_UNKNOWN_ACKNOWLEDGED', retryable: false },
+      }),
+    );
+    if (transitioned) return { applied: true, job: toPublicJob(transitioned) };
+    return { applied: false, job: toPublicJob(await this.readRequired(jobId)) };
+  }
+
   private async finish(
     jobId: EvaluationJobId,
     executionToken: string,

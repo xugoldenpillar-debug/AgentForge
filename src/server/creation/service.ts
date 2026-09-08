@@ -29,6 +29,7 @@ export interface CreationJobScheduler {
   createJob(input: CreateEvaluationJobInput): Promise<CreateEvaluationJobResult>;
   getJob(jobId: EvaluationJobView['id']): Promise<EvaluationJobView>;
   requestCancellation(jobId: EvaluationJobView['id'], reason?: 'user-requested'): Promise<EvaluationTransitionResult>;
+  acknowledgeUnknown(jobId: EvaluationJobView['id']): Promise<EvaluationTransitionResult>;
 }
 
 export interface ScheduleCreationRunInput {
@@ -128,10 +129,10 @@ function projectJob(job: EvaluationJobView): CreationJobStatusView {
 
 function jobStateToRunStatus(state: EvaluationJobView['state']): CreationRun['status'] {
   if (state === 'accepted' || state === 'queued') return 'queued';
-  if (state === 'running' || state === 'cancelling' || state === 'reconciling' || state === 'unknown') return 'running';
+  if (state === 'running' || state === 'cancelling' || state === 'reconciling') return 'running';
   if (state === 'completed') return 'completed';
   if (state === 'cancelled') return 'cancelled';
-  if (state === 'incomplete' || state === 'expired') return 'incomplete';
+  if (state === 'incomplete' || state === 'expired' || state === 'unknown') return 'incomplete';
   return 'failed';
 }
 
@@ -254,14 +255,27 @@ export class CreationRunService {
     }
 
     const snapshot = createSnapshot(run, credential.modelId, credential.id, run.createdAt);
-    const accepted = await this.#scheduler.createJob({
-      userId: asOpaqueId<'user'>(ownerId),
-      purpose: 'creation',
-      association: { kind: 'creation-run', creationRunId: asOpaqueId<'creation-run'>(run.id) },
-      snapshot,
-      idempotencyKey: `creation:${key}`,
-      budgetReservationId: null,
-    });
+    let accepted: CreateEvaluationJobResult;
+    try {
+      accepted = await this.#scheduler.createJob({
+        userId: asOpaqueId<'user'>(ownerId),
+        purpose: 'creation',
+        association: { kind: 'creation-run', creationRunId: asOpaqueId<'creation-run'>(run.id) },
+        snapshot,
+        idempotencyKey: `creation:${key}`,
+        budgetReservationId: null,
+      });
+    } catch (error) {
+      // The CreationRun must exist before the evaluation transaction can claim
+      // its foreign key. If scheduling is rejected (for example another active
+      // job owns the user's slot), do not leave a phantom queued run behind.
+      await this.#repository.update(
+        'creationRuns',
+        { id: run.id, ownerId, evaluationJobId: null },
+        { status: 'failed', completedAt: this.#now(), updatedAt: this.#now() },
+      );
+      throw error;
+    }
     const jobId = String(accepted.job.id);
     let associatedRun = (await this.#repository.read('creationRuns', { id: run.id, ownerId }))[0] ?? run;
     if (!associatedRun.evaluationJobId) {
@@ -316,6 +330,20 @@ export class CreationRunService {
     const before = await this.#scheduler.getJob(asOpaqueId<'evaluation-job'>(run.evaluationJobId));
     this.#assertAssociatedJob(run, before);
     const result = await this.#scheduler.requestCancellation(asOpaqueId<'evaluation-job'>(run.evaluationJobId), 'user-requested');
+    const synced = await this.#syncRun(run, result.job);
+    return { run: project(synced), job: projectJob(result.job) };
+  }
+
+  async acknowledgeUnknown(ownerId: string, runId: string, acknowledgePotentialCharge: boolean): Promise<CreationRunStatusView> {
+    ensure(acknowledgePotentialCharge === true,
+      'Confirm that the provider request may already have incurred cost.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+    const run = await this.#readOwnedRun(ownerId, runId);
+    ensure(run.evaluationJobId, 'Creation run has no evaluation job.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    const before = await this.#scheduler.getJob(asOpaqueId<'evaluation-job'>(run.evaluationJobId));
+    this.#assertAssociatedJob(run, before);
+    ensure(before.state === 'unknown',
+      'Only an unknown upstream result can be acknowledged.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    const result = await this.#scheduler.acknowledgeUnknown(asOpaqueId<'evaluation-job'>(run.evaluationJobId));
     const synced = await this.#syncRun(run, result.job);
     return { run: project(synced), job: projectJob(result.job) };
   }

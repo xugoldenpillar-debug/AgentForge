@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { PROVIDER_PROTOCOLS, parseProviderProtocol } from '../src/shared/provider-protocol.ts';
+import { PROVIDER_FIELD_LIMITS, PROVIDER_PROTOCOLS, parseProviderProtocol } from '../src/shared/provider-protocol.ts';
 import { MemoryRepository } from './helpers/memory-repository.ts';
 import { ArenaService } from '../src/server/service.ts';
 import { decryptCredential } from '../src/lib/crypto/credentials.ts';
@@ -76,4 +76,23 @@ test('old clients and old in-memory records default to Chat Completions', async 
   const [stored] = await repo.read('credentials', { id: result.id });
   const { protocol: _protocol, ...legacy } = stored;
   assert.equal(publicCredential(legacy).protocol, 'openai-chat');
+});
+
+test('API keys are opaque non-empty strings with one shared upper bound', async () => {
+  const { repo, service } = await fixture();
+  const shapes = ['x', 'sk-short', 'AIza', 'token.with:provider_specific/chars+='];
+  for (const [index, apiKey] of shapes.entries()) {
+    const candidate = { ...body, name: `Shape ${index}`, apiKey };
+    validateBody('providers', candidate);
+    const saved = await service.addProvider('owner', candidate);
+    assert.ok(saved.keyMask.length >= 5);
+    assert.notEqual(saved.keyMask, apiKey);
+  }
+  assert.equal((await repo.read('credentials', { userId: 'owner' })).length, shapes.length);
+
+  const oversized = 'k'.repeat(PROVIDER_FIELD_LIMITS.apiKey + 1);
+  assert.throws(() => validateBody('providers', { ...body, apiKey: oversized }));
+  await assert.rejects(() => service.addProvider('owner', { ...body, apiKey: oversized }));
+  assert.throws(() => validateBody('providers', { ...body, apiKey: '   ' }));
+  await assert.rejects(() => service.addProvider('owner', { ...body, apiKey: '   ' }));
 });

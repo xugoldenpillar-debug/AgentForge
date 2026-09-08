@@ -117,6 +117,24 @@ class FakeScheduler implements CreationJobScheduler {
     return { applied: true, job: structuredClone(cancelled) };
   }
 
+  async acknowledgeUnknown(jobId: EvaluationJobId): Promise<EvaluationTransitionResult> {
+    const job = await this.getJob(jobId);
+    assert.equal(job.state, 'unknown');
+    const incomplete: EvaluationJobView = {
+      ...job,
+      state: 'incomplete',
+      completion: {
+        evidence: 'partial',
+        summary: { upstreamResult: 'unknown', userAcknowledgedPotentialCharge: true },
+      },
+      failure: { code: 'UPSTREAM_RESULT_UNKNOWN_ACKNOWLEDGED', retryable: false },
+      completedAt: NOW,
+      updatedAt: NOW,
+    };
+    this.jobs.set(String(jobId), incomplete);
+    return { applied: true, job: structuredClone(incomplete) };
+  }
+
   setState(jobId: string, patch: Partial<EvaluationJobView>): void {
     const job = this.jobs.get(jobId);
     assert.ok(job);
@@ -148,6 +166,10 @@ class RaceObservingScheduler implements CreationJobScheduler {
 
   requestCancellation(jobId: EvaluationJobId, reason?: 'user-requested'): Promise<EvaluationTransitionResult> {
     return this.scheduler.requestCancellation(jobId, reason);
+  }
+
+  acknowledgeUnknown(jobId: EvaluationJobId): Promise<EvaluationTransitionResult> {
+    return this.scheduler.acknowledgeUnknown(jobId);
   }
 }
 
@@ -343,4 +365,53 @@ test('CreationRun retry accepts only unsuccessful terminal jobs and creates a ne
   assert.equal(repeat.created, false);
   assert.notEqual(retry.run.id, scheduled.run.id);
   assert.equal(retry.run.id, repeat.run.id);
+});
+
+test('CreationRun projects unknown jobs as incomplete and releases them only after explicit charge acknowledgement', async () => {
+  const { scheduler, service } = await harness();
+  const scheduled = await service.schedule(OWNER, input({ idempotencyKey: 'creation-unknown' }));
+  scheduler.setState(scheduled.job.id, {
+    state: 'unknown',
+    failure: { code: 'UPSTREAM_RESULT_UNKNOWN', retryable: false },
+    completedAt: null,
+  });
+
+  const projected = await service.get(OWNER, scheduled.run.id);
+  assert.equal(projected.job?.state, 'unknown');
+  assert.equal(projected.run.status, 'incomplete');
+
+  await assert.rejects(
+    () => service.acknowledgeUnknown(OWNER, scheduled.run.id, false),
+    (error: unknown) => isAppError(error, 400, ERROR_CODES.REQUEST_VALIDATION_FAILED),
+  );
+  assert.equal((await scheduler.getJob(scheduled.job.id)).state, 'unknown');
+
+  const released = await service.acknowledgeUnknown(OWNER, scheduled.run.id, true);
+  assert.equal(released.job?.state, 'incomplete');
+  assert.equal(released.run.status, 'incomplete');
+  assert.equal(released.job?.failure?.code, 'UPSTREAM_RESULT_UNKNOWN_ACKNOWLEDGED');
+});
+
+test('CreationRun scheduling failure does not leave an unassociated queued run', async () => {
+  const { repository, service } = await harness(() => ({
+    async createJob() {
+      throw new Error('active slot');
+    },
+    async getJob() {
+      throw new Error('not reached');
+    },
+    async requestCancellation() {
+      throw new Error('not reached');
+    },
+    async acknowledgeUnknown() {
+      throw new Error('not reached');
+    },
+  }));
+
+  await assert.rejects(() => service.schedule(OWNER, input({ idempotencyKey: 'creation-scheduling-failure' })));
+  const runs = await repository.read('creationRuns', { ownerId: OWNER });
+  const failed = runs.find((run) => run.id.includes('creation-run-'));
+  assert.equal(failed?.evaluationJobId, null);
+  assert.equal(failed?.status, 'failed');
+  assert.equal(failed?.completedAt, NOW);
 });
