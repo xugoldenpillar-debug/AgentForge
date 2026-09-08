@@ -40,6 +40,8 @@ jobs:
           ref: feat/agent-builder-complete-20260908
       - name: Merge current main, preserving reviewed builder conflict hunks
         run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git fetch origin main
           git merge --no-commit --no-ff -X ours origin/main
           test -f .git/MERGE_HEAD
@@ -90,7 +92,5 @@ jobs:
         run: |
           git rm .github/workflows/agent-builder-merge-main.yml
           git diff --check --cached
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'merge: reconcile agent builder with main'
           git push origin HEAD:refs/heads/feat/agent-builder-complete-20260908
