@@ -1,6 +1,7 @@
 import { getAuth } from '@/lib/auth';
-import { getChallengeApplicationService } from '@/server/factory';
-import { AppError, ERROR_CODES, ensure, safeError } from '@/shared/errors';
+import { getChallengeApplicationService, getService } from '@/server/factory';
+import { readJson } from '@/server/http';
+import { ERROR_CODES, ensure, safeError } from '@/shared/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,8 @@ function json(data: unknown, status = 200) {
 async function userId(request: Request): Promise<string> {
   const session = await getAuth().api.getSession({ headers: request.headers });
   ensure(session?.user.id, 'Sign in to continue.', 401, ERROR_CODES.AUTH_REQUIRED);
+  ensure(process.env.ARTIFACT_ARENA_ENABLED === 'true', 'Artifact Arena is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  await getService().limit(session.user.id, 'api', 120);
   return session.user.id;
 }
 
@@ -34,15 +37,14 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     sameOrigin(request);
-    ensure(request.headers.get('content-type')?.includes('application/json'), 'Use application/json.', 400, ERROR_CODES.REQUEST_CONTENT_TYPE_INVALID);
-    const body = await request.json() as Record<string, unknown>;
-    ensure(body && typeof body === 'object' && !Array.isArray(body), 'Request body must be an object.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
-    return json(await getChallengeApplicationService().submit(await userId(request), {
+    const uid = await userId(request);
+    const body = await readJson(request);
+    return json(await getChallengeApplicationService().submit(uid, {
       material: body.material,
       declaration: body.declaration,
     }), 201);
   } catch (error) {
-    const safe = safeError(error instanceof SyntaxError ? new AppError('Invalid JSON body.', 400, ERROR_CODES.INVALID_JSON_BODY) : error);
+    const safe = safeError(error);
     return json({ error: { code: safe.code, message: safe.message } }, safe.status);
   }
 }
