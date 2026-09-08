@@ -12,10 +12,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Archive tracked source only
-        run: git archive --format=tar.gz HEAD -o "$RUNNER_TEMP/agentforge-source.tar.gz"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - name: Prepare locked package cache, not node_modules
+        run: |
+          pnpm install --frozen-lockfile --store-dir "$RUNNER_TEMP/pnpm-store"
+          corepack pack pnpm@10.15.1 -o "$RUNNER_TEMP/pnpm-cache.tgz"
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/pnpm-store.tgz" pnpm-store
       - uses: actions/upload-artifact@v4
         with:
-          name: agentforge-review-source
-          path: ${{ runner.temp }}/agentforge-source.tar.gz
+          name: agentforge-offline-packages
+          path: |
+            ${{ runner.temp }}/pnpm-cache.tgz
+            ${{ runner.temp }}/pnpm-store.tgz
           retention-days: 1
