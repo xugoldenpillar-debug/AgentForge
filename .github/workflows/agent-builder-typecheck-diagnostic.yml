@@ -1,0 +1,38 @@
+name: Agent Builder typecheck diagnostic
+on:
+  push:
+    branches: [feat/agent-builder-complete-20260908]
+    paths: [.github/workflows/agent-builder-typecheck-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/agent-builder-complete-20260908
+      - name: Merge latest main in worktree
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git merge --no-commit --no-ff -X theirs origin/main
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - name: Typecheck with retained diagnostics
+        run: pnpm typecheck 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-builder-typecheck-log
+          path: ${{ runner.temp }}/typecheck.log
+          retention-days: 1
+          if-no-files-found: ignore
