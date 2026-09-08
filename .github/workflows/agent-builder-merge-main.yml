@@ -16,6 +16,8 @@ jobs:
       APP_ENV: test
       DEMO_MODE: "true"
       NEXT_TELEMETRY_DISABLED: "1"
+      MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+      REDIS_URL: redis://127.0.0.1:6379
     services:
       postgres:
         image: postgres:17-alpine
@@ -54,23 +56,26 @@ jobs:
           node-version: 22
       - run: pnpm install --frozen-lockfile
       - run: pnpm run setup
-      - name: Full regression and persistence gates
-        env:
-          MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          pnpm test:migrations
-          pnpm exec tsx --test tests/agent-drafts.integration.ts
-          pnpm test:evaluation-db
-          pnpm db
-          pnpm test
-          pnpm test:deploy
-          pnpm test:pi-runtime
-          pnpm test:provider-sdk
-      - name: Typecheck and production build
-        run: |
-          pnpm typecheck
-          pnpm build
+      - name: Migration matrix
+        run: pnpm test:migrations
+      - name: Agent draft persistence
+        run: pnpm exec tsx --test tests/agent-drafts.integration.ts
+      - name: Evaluation PostgreSQL and Redis gate
+        run: pnpm test:evaluation-db
+      - name: Initialize application database
+        run: pnpm db
+      - name: Full unit and service regression
+        run: pnpm test
+      - name: Deployment validation
+        run: pnpm test:deploy
+      - name: Pi runtime integration
+        run: pnpm test:pi-runtime
+      - name: Provider SDK integration
+        run: pnpm test:provider-sdk
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Production build
+        run: pnpm build
       - name: Smoke both runtime modes
         run: |
           BASE=http://127.0.0.1:3817
