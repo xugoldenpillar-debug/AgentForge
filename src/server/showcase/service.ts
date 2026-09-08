@@ -130,6 +130,7 @@ export class WorkPublicationService {
 
   async requestPublication(actor: PublicationActor | string | null | undefined, input: CreateWorkPublicationInput): Promise<WorkPublication> {
     const ownerId = actorId(actor);
+    ensure(input.publishConfirmed === true, 'Confirm the sealed preview before publishing.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     ensure(!input.bundleId || typeof input.bundleId === 'string', 'bundleId must be a string.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     ensure(!input.creationRunId || typeof input.creationRunId === 'string', 'creationRunId must be a string.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     ensure(Boolean(input.bundleId) !== Boolean(input.creationRunId), 'Provide exactly one source: bundleId or creationRunId.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
@@ -176,7 +177,7 @@ export class WorkPublicationService {
       description,
       entryPath,
       files: clone(files),
-      status: 'pending',
+      status: 'published',
       revision: 1,
       createdAt: now,
       updatedAt: now,

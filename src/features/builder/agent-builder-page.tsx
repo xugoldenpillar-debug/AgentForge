@@ -178,6 +178,7 @@ export function AgentBuilderPage() {
   const [publication, setPublication] = useState<OwnerPublicationView | null>(null);
   const [publicTitle, setPublicTitle] = useState('');
   const [publicDescription, setPublicDescription] = useState('A community animation created with Pi in the isolated AgentForge sandbox.');
+  const [publishConfirmed, setPublishConfirmed] = useState(false);
   const [entryId, setEntryId] = useState(restored.current.entryId ?? '');
   const [ballot, setBallot] = useState<ShowcaseBallotView | null>(null);
   const [ballotRequested, setBallotRequested] = useState(false);
@@ -201,6 +202,11 @@ export function AgentBuilderPage() {
   const runRetryable = run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete';
   const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
   const isPublished = publication?.status === 'published';
+  const previewReady = Boolean(
+    bundle
+      && previews.length > 0
+      && previews.some((file) => file.relativePath === 'index.html'),
+  );
   const partition = challengeVersionId ? roundId(challengeVersionId) : '';
 
   const fail = useCallback((reason: unknown) => {
@@ -217,6 +223,9 @@ export function AgentBuilderPage() {
 
   const loadBundle = useCallback(async (bundleId: string) => {
     setBusy('preview');
+    setBundle(null);
+    setPreviews([]);
+    setPublishConfirmed(false);
     try {
       const nextBundle = await getArtifactBundle(bundleId);
       const nextPreviews = await Promise.all(nextBundle.entries.map(async (entry) => previewFile(entry, await getArtifactPreview(entry.artifactId))));
@@ -330,6 +339,7 @@ export function AgentBuilderPage() {
     setRunStatus(null);
     setBundle(null);
     setPreviews([]);
+    setPublishConfirmed(false);
     setPublication(null);
     setEntryId('');
     setBallot(null);
@@ -378,7 +388,7 @@ export function AgentBuilderPage() {
       });
       setBuild(saved);
       persist({ challengeVersionId: selected.version.id, buildId: saved.id, buildVersionId: saved.version.id, runId: '', publicationId: '', entryId: '' });
-      setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      setRunStatus(null); setBundle(null); setPreviews([]); setPublishConfirmed(false); setPublication(null); setEntryId('');
       toast(t('artifactArena.buildSaved'));
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
@@ -391,7 +401,7 @@ export function AgentBuilderPage() {
       const key = crypto.randomUUID();
       const next = await createCreationRun({ buildVersionId: build.version.id, challengeVersionId: selected.version.id, credentialId, idempotencyKey: key }, { idempotencyKey: key });
       setRunStatus(next);
-      setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      setBundle(null); setPreviews([]); setPublishConfirmed(false); setPublication(null); setEntryId('');
       persist({ runId: next.run.id, publicationId: '', entryId: '' });
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
@@ -410,17 +420,18 @@ export function AgentBuilderPage() {
     setBusy('retry');
     try {
       const next = await retryCreationRun(run.id, crypto.randomUUID());
-      setRunStatus(next); setBundle(null); setPreviews([]);
+      setRunStatus(next); setBundle(null); setPreviews([]); setPublishConfirmed(false);
       persist({ runId: next.run.id });
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
   };
 
   const publish = async () => {
-    if (!run || !bundle) return;
+    if (!run || !bundle || !previewReady || !publishConfirmed) return;
     setBusy('publish');
     try {
       const next = await requestPublication({
+        publishConfirmed: true,
         creationRunId: run.id,
         expectedSnapshotDigest: bundle.snapshotDigest,
         expectedManifestDigest: bundle.manifestDigest,
@@ -430,8 +441,9 @@ export function AgentBuilderPage() {
         publicArtifactIds: bundle.entries.map((entry) => entry.artifactId),
       });
       setPublication(next);
+      setPublishConfirmed(false);
       persist({ publicationId: next.id });
-      toast(t('artifactArena.publication.pending'));
+      toast(t('artifactArena.publication.published'));
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
   };
@@ -457,7 +469,7 @@ export function AgentBuilderPage() {
       const fork = await forkAgentBuild(build.id, build.version.id);
       setBuild(fork);
       setBuildTitle(fork.title);
-      setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      setRunStatus(null); setBundle(null); setPreviews([]); setPublishConfirmed(false); setPublication(null); setEntryId('');
       persist({ buildId: fork.id, buildVersionId: fork.version.id, runId: '', publicationId: '', entryId: '' });
       toast(t('artifactArena.buildForked'));
     } catch (reason) { fail(reason); }
@@ -521,7 +533,7 @@ export function AgentBuilderPage() {
 
   const reset = () => {
     window.localStorage.removeItem(STORAGE_KEY);
-    setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId(''); setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
+    setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublishConfirmed(false); setPublication(null); setEntryId(''); setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
     setPublicTitle(''); setBuildTitle(''); setError('');
   };
 
@@ -549,7 +561,7 @@ export function AgentBuilderPage() {
           <StepLabel complete={Boolean(credentialId)}>{t('artifactArena.step.provider')}</StepLabel>
           <StepLabel complete={Boolean(build)}>{t('artifactArena.step.build')}</StepLabel>
           <StepLabel complete={runComplete}>{t('artifactArena.step.run')}</StepLabel>
-          <StepLabel complete={previews.length > 0}>{t('artifactArena.step.preview')}</StepLabel>
+          <StepLabel complete={previewReady}>{t('artifactArena.step.preview')}</StepLabel>
           <StepLabel complete={Boolean(publication)}>{t('artifactArena.step.publish')}</StepLabel>
           <StepLabel complete={Boolean(entryId)}>{t('artifactArena.step.community')}</StepLabel>
         </div>
@@ -585,7 +597,7 @@ export function AgentBuilderPage() {
               if (Object.values(PROVIDER_PROTOCOL_BASE_URLS).includes(baseUrl)) setBaseUrl(PROVIDER_PROTOCOL_BASE_URLS[next]);
             }}>{PROVIDER_PROTOCOLS.map((value) => <option value={value} key={value}>{t(`providers.protocol.${value}`)}</option>)}</select></label>
             <label><span>{t('artifactArena.credentialName')}</span><input required minLength={1} maxLength={80} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label>
-            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={300} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={300} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /><small>{t('providers.protocolUrlHelp')}</small></label>
             <label><span>{t('artifactArena.modelId')}</span><input required maxLength={160} value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="gpt-5.2 / claude-sonnet / gemini-2.5-pro" /></label>
             <label><span>{t('artifactArena.apiKey')}</span><input required type="password" autoComplete="off" maxLength={1000} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('providers.keyPlaceholder')} /></label>
             <div className={styles.fullField}><Button type="submit" variant="default" disabled={busy === 'credential'}>{busy === 'credential' ? <LoaderCircle className={styles.spin} size={14} /> : <KeyRound size={14} />}{busy === 'credential' ? t('artifactArena.savingCredential') : t('artifactArena.saveCredential')}</Button></div>
@@ -615,7 +627,7 @@ export function AgentBuilderPage() {
 
       <section className={styles.stage}>
         <div className={styles.stageHeader}><span>05</span><div><h2>{t('artifactArena.previewTitle')}</h2><p>{t('artifactArena.previewDescription')}</p></div></div>
-        {busy === 'preview' && previews.length === 0 ? <div className={styles.empty}><LoaderCircle className={styles.spin} />{t('artifactArena.previewLoading')}</div> : <ArtifactPreviewPanel files={previews} heading={t('artifactArena.previewTitle')} description={t('artifactArena.previewDescription')} sourceLabel="sealed / no-script" emptyMessage={t('artifactArena.previewEmpty')} />}
+        {busy === 'preview' && previews.length === 0 ? <div className={styles.empty}><LoaderCircle className={styles.spin} />{t('artifactArena.previewLoading')}</div> : <ArtifactPreviewPanel files={previews} heading={t('artifactArena.previewTitle')} description={t('artifactArena.previewDescription')} sourceLabel={t('artifactPreview.sealedSource')} emptyMessage={t('artifactArena.previewEmpty')} featured />}
         {bundle && <div className={styles.fileActions}>{bundle.entries.map((entry) => <Button key={entry.artifactId} variant="ghost" size="sm" onClick={async () => {
           try { const blob = await downloadArtifact(entry.artifactId); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = entry.relativePath.split('/').pop() || 'artifact'; anchor.click(); URL.revokeObjectURL(url); } catch (reason) { fail(reason); }
         }}><Download size={13} />{t('artifactArena.download')} {entry.relativePath}</Button>)}</div>}
@@ -627,7 +639,8 @@ export function AgentBuilderPage() {
           <div className={styles.formGrid}>
             <label className={styles.fullField}><span>{t('artifactArena.publicTitle')}</span><input minLength={1} maxLength={160} value={publicTitle} onChange={(event) => setPublicTitle(event.target.value)} /></label>
             <label className={styles.fullField}><span>{t('artifactArena.publicDescription')}</span><textarea minLength={1} maxLength={2000} rows={5} value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></label>
-            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={publish} disabled={!runComplete || !bundle || Boolean(publication) || busy === 'publish'}>{busy === 'publish' ? <LoaderCircle className={styles.spin} size={14} /> : <Sparkles size={14} />}{busy === 'publish' ? t('artifactArena.requestingReview') : t('artifactArena.requestReview')}</Button>{publication && <Button variant="outline" onClick={refreshPublication} disabled={busy === 'publication'}><RefreshCw className={busy === 'publication' ? styles.spin : ''} size={14} />{t('artifactArena.refreshStatus')}</Button>}</div>
+            <label className={`${styles.fullField} ${styles.publishConsent}`}><input type="checkbox" checked={publishConfirmed} onChange={(event) => setPublishConfirmed(event.target.checked)} disabled={!runComplete || !previewReady || Boolean(publication)} /><span><strong>{t('artifactArena.publishConsent')}</strong><small>{t('artifactArena.publishConsentHelp')}</small></span></label>
+            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={publish} disabled={!runComplete || !previewReady || !publishConfirmed || !publicTitle.trim() || !publicDescription.trim() || Boolean(publication) || busy === 'publish'}>{busy === 'publish' ? <LoaderCircle className={styles.spin} size={14} /> : <Sparkles size={14} />}{busy === 'publish' ? t('artifactArena.publishing') : t('artifactArena.publishNow')}</Button></div>
           </div>
           {publication && <div className={`${styles.publicationState} ${isPublished ? styles.published : ''}`}><span>{t('artifactArena.publicationStatus')}</span><strong>{t(PUBLICATION_STATUS_KEYS[publication.status])}</strong><code>{publication.releaseDigest.slice(0, 24)}…</code></div>}
         </section>
@@ -636,7 +649,7 @@ export function AgentBuilderPage() {
           <div className={styles.stageHeader}><span>07</span><div><h2>{t('artifactArena.communityTitle')}</h2><p>{t('artifactArena.communityHelp')}</p></div></div>
           <div className={styles.communityActions}><Button variant="default" onClick={enterRanking} disabled={!isPublished || Boolean(entryId) || busy === 'entry'}>{busy === 'entry' ? <LoaderCircle className={styles.spin} size={14} /> : <Trophy size={14} />}{busy === 'entry' ? t('artifactArena.enteringRanking') : entryId ? t('artifactArena.enteredRanking') : t('artifactArena.enterRanking')}</Button><Button variant="outline" onClick={issueBallot} disabled={!partition || busy === 'ballot'}>{busy === 'ballot' ? <LoaderCircle className={styles.spin} size={14} /> : <Vote size={14} />}{busy === 'ballot' ? t('artifactArena.issuingBallot') : t('artifactArena.issueBallot')}</Button></div>
           {ballot && ballot.candidates ? <div className={styles.ballot}>
-            {(['a', 'b'] as const).map((side) => <article key={side} className={styles.candidate}><div className={styles.candidateHeader}><span>{side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')}</span><ShieldCheck size={14} /></div><ArtifactPreviewPanel files={ballotPreviews[side]} heading={side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')} description={t('artifactArena.previewDescription')} sourceLabel="blind / published" emptyMessage={t('artifactArena.previewLoading')} /></article>)}
+            {(['a', 'b'] as const).map((side) => <article key={side} className={styles.candidate}><div className={styles.candidateHeader}><span>{side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')}</span><ShieldCheck size={14} /></div><ArtifactPreviewPanel files={ballotPreviews[side]} heading={side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')} description={t('artifactArena.previewDescription')} sourceLabel={t('artifactPreview.publishedSource')} emptyMessage={t('artifactArena.previewLoading')} /></article>)}
             <div className={styles.voteRow}><Button onClick={() => vote('a')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteA')}</Button><Button onClick={() => vote('tie')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteTie')}</Button><Button onClick={() => vote('b')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteB')}</Button><Button variant="ghost" onClick={() => vote('skip')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteSkip')}</Button></div>
           </div> : ballotRequested ? <div className={styles.empty}>{t('artifactArena.noBallot')}</div> : null}
         </section>

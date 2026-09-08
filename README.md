@@ -70,7 +70,7 @@ Verified Gateway implementation.
 
 Use the **full Next.js runtime**, sign in, and open **Providers**. Save a name, OpenAI-compatible base URL, API key and model ID. Select that credential on the Builder's Model node. Real runs require an explicit token-spending consent checkbox. An unavailable or failed real provider produces an error; it never falls back to simulation.
 
-Only administrator-allowlisted HTTPS hosts on port 443 are accepted. Add a trusted gateway's exact hostname to `PROVIDER_ALLOWED_HOSTS` in `.env`, then restart the app. URL credentials, query/fragment, literal IPs, private/reserved DNS answers and redirects are rejected. DNS addresses are rechecked and pinned by the actual HTTP connection. This means local model endpoints and LAN gateways are **deliberately not supported by this V1 security policy**.
+Production can run in either strict-host or public-custom-provider mode. With `PROVIDER_ALLOW_CUSTOM_HOSTS=false`, add each trusted gateway hostname to `PROVIDER_ALLOWED_HOSTS`. With `PROVIDER_ALLOW_CUSTOM_HOSTS=true`, users may save any public HTTPS DNS hostname on port 443, including OpenAI-compatible gateways they operate themselves. URL credentials, query/fragment, literal IPs, private/reserved DNS answers and redirects are still rejected; DNS is rechecked and pinned by the actual HTTP connection. Local model endpoints and LAN gateways remain deliberately unsupported.
 
 User-supplied pricing is optional and is interpreted as dollars per 1 million input/output tokens. Missing prices remain `unknown`, not zero. Changing a Model node to a different ID than its credential's priced model clears effective pricing for that run. Unknown pricing cannot support a reliable monetary cap; token, tool and duration limits still apply. Provider-reported usage and BYOK prices are untrusted measurements, so BYOK results never enter the verified lane.
 
@@ -208,9 +208,10 @@ to all normal registered users while anonymous visitors remain read-only. See th
 Provider settings now offer explicit OpenAI-compatible Chat Completions, OpenAI
 Responses, Anthropic Messages and Gemini native protocols. Existing credentials
 remain Chat Completions after migration 0013. API keys stay encrypted and server-side.
-Every protocol uses the same HTTPS host allowlist, pinned public DNS and redirect
-restrictions; selecting a protocol does **not** grant a new host access. Configure
-the exact trusted host through the existing operator allowlist before use.
+Every protocol uses the same HTTPS, pinned-public-DNS and no-redirect restrictions.
+When `PROVIDER_ALLOW_CUSTOM_HOSTS=true`, users may connect their own public HTTPS
+gateway without an operator adding its hostname first; strict deployments can keep
+that flag false and use `PROVIDER_ALLOWED_HOSTS` only.
 
 Native SDK wire/authentication/usage/cancellation tests run offline through
 `pnpm test:provider-sdk` in CI. They are not live vendor acceptance. The

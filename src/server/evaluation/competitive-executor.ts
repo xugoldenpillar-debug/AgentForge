@@ -343,7 +343,7 @@ export class CompetitiveEvaluationExecutor implements EvaluationAttemptExecutor 
       ensure(options.createRealProvider, 'Real model provider is not configured.', 503, ERROR_CODES.PROVIDER_NOT_CONFIGURED);
       const credential = (await this.repository.read('credentials', { id: credentialId, userId }))[0];
       ensure(credential, 'A selected provider was deleted or is not yours.', 409, ERROR_CODES.PROVIDER_NOT_FOUND);
-      withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(credential.baseUrl, options.allowedHosts));
+      withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(credential.baseUrl, options.allowedHosts, { allowCustomHosts: options.allowCustomProviderHosts }));
       const apiKey = decryptCredential(credential.ciphertext, options.encryptionKey, userId, credential.id);
       const model = node.config.modelId && node.config.modelId !== 'demo-forge'
         ? node.config.modelId

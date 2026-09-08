@@ -22,6 +22,7 @@ const REQUIRED = [
   'ARTIFACT_STORAGE_ROOT',
   'ARTIFACT_STORAGE_GID',
   'PROVIDER_ALLOWED_HOSTS',
+  'PROVIDER_ALLOW_CUSTOM_HOSTS',
 ];
 const ABSOLUTE_PATHS = [
   'SANDBOX_RUNSC_PATH',
@@ -123,6 +124,9 @@ export function validateProductionEnvironment(env) {
   }
   if (!/^[1-9][0-9]{0,9}$/u.test(env.ARTIFACT_STORAGE_GID ?? '')) {
     errors.push('ARTIFACT_STORAGE_GID: positive numeric shared group id required / 必须是共享组数字 GID');
+  }
+  if (!['true', 'false'].includes(env.PROVIDER_ALLOW_CUSTOM_HOSTS ?? '')) {
+    errors.push('PROVIDER_ALLOW_CUSTOM_HOSTS: must be true or false / 必须为 true 或 false');
   }
   const hosts = (env.PROVIDER_ALLOWED_HOSTS ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
   if (hosts.length === 0 || new Set(hosts).size !== hosts.length || hosts.some((host) => !HOST.test(host) || host === 'localhost')) {

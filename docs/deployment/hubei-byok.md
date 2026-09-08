@@ -22,7 +22,7 @@ Internet
 
 Host systemd: agentforge-evaluation-worker.service (trusted root process)
   ├─ PostgreSQL + Redis/BullMQ through dedicated loopback high ports
-  ├─ BYOK provider HTTPS calls (allowlisted public hosts only)
+  ├─ BYOK provider HTTPS calls (public HTTPS hosts; strict allowlist mode remains available)
   ├─ /usr/local/bin/runsc --network=none
   │    └─ one OCI sandbox per attempt, read-only digest-pinned rootfs
   └─ /var/lib/agentforge/artifacts (write 0640, directories 2750)
@@ -89,7 +89,7 @@ ARTIFACT_ARENA_KILL_SWITCH=false
 PI_RUNTIME_ENABLED=true
 ```
 
-The same root-only environment file is consumed by the dedicated dependency stack, web container and trusted Worker so queue names, encryption key, database, Redis, storage path and launch flags cannot drift. PostgreSQL and Redis each have two equivalent URLs: `DATABASE_URL` / `REDIS_URL` use loopback high ports for the host Worker, while `AGENTFORGE_WEB_DATABASE_URL` / `AGENTFORGE_WEB_REDIS_URL` use the service names on `agentforge-production-backend` for the web container. Their protocol, credentials, database/index and URL options must match; production preflight rejects drift. The file must also include the sandbox paths/digest, `ARTIFACT_STORAGE_GID`, and exact provider host allowlist. User API keys are stored encrypted in PostgreSQL; never place a user's key in this file.
+The same root-only environment file is consumed by the dedicated dependency stack, web container and trusted Worker so queue names, encryption key, database, Redis, storage path and launch flags cannot drift. PostgreSQL and Redis each have two equivalent URLs: `DATABASE_URL` / `REDIS_URL` use loopback high ports for the host Worker, while `AGENTFORGE_WEB_DATABASE_URL` / `AGENTFORGE_WEB_REDIS_URL` use the service names on `agentforge-production-backend` for the web container. Their protocol, credentials, database/index and URL options must match; production preflight rejects drift. The file must also include the sandbox paths/digest, `ARTIFACT_STORAGE_GID`, `PROVIDER_ALLOW_CUSTOM_HOSTS`, and the fallback provider host allowlist. User API keys are stored encrypted in PostgreSQL; never place a user's key in this file.
 
 For the dedicated same-VPS data services, set strong random PostgreSQL/Redis passwords and pin both images to exact repository digests. The high ports stay bound to `127.0.0.1`; do not publish them to `0.0.0.0` and do not reuse the existing `deeix-chat-postgres` or `deeix-chat-redis` services.
 
@@ -102,7 +102,7 @@ anthropic-messages
 google-generative-ai
 ```
 
-Protocol selection is explicit; the platform does not infer provider semantics from an API-key prefix. Custom OpenAI-compatible providers require an operator-reviewed exact host in `PROVIDER_ALLOWED_HOSTS`. DNS resolution to private, loopback, link-local or metadata ranges remains rejected.
+Protocol selection is explicit; the platform does not infer provider semantics from an API-key prefix. `PROVIDER_ALLOW_CUSTOM_HOSTS=true` allows users to select their own public HTTPS OpenAI-compatible gateway; set it to `false` to require an operator-reviewed exact hostname in `PROVIDER_ALLOWED_HOSTS`. Both modes reject URL credentials, query/hash, literal IPs, redirects, and DNS resolution to private, loopback, link-local or metadata ranges.
 
 This BYOK release has no platform USD model-spend cap. That does **not** remove token, tool-call, duration, memory, disk, process, queue, cancellation, concurrency or unknown-result retry limits. `RUN_MAX_TOTAL_COST` remains the legacy DAG setting and is not an animation-CreationRun budget.
 
@@ -247,7 +247,7 @@ The rule was inserted immediately before the existing `http_status:404` fallback
 For every CreationRun attempt:
 
 1. Worker claims a fenced EF attempt from PostgreSQL/BullMQ.
-2. Trusted Worker decrypts the owner's BYOK key and calls only the selected allowlisted provider protocol.
+2. Trusted Worker decrypts the owner's BYOK key and calls only the selected provider protocol and validated public HTTPS origin.
 3. A new `runsc --network=none` OCI sandbox starts with a read-only digest-pinned rootfs and per-attempt output mount.
 4. Pi can invoke only approved bounded artifact tools; the API key is never inserted into prompt, tool args, sandbox environment, files or logs.
 5. Worker stops all sandbox processes and computes a stable snapshot.

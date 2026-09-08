@@ -46,7 +46,7 @@ import {
   piSelfTestStatusFor
 } from './runtime/pi/self-test.ts';
 export interface ServiceOptions {
-  demoMode:boolean; encryptionKey:string; allowedHosts:string[];
+  demoMode:boolean; encryptionKey:string; allowedHosts:string[]; allowCustomProviderHosts?: boolean;
   githubEnabled?:boolean; maxRunCost?:number; maxCases?:number;
   platform?:{model:string;inputPrice:number|null;outputPrice:number|null};
   createRealProvider?:(credential:Credential,apiKey:string)=>AIProvider;
@@ -470,7 +470,7 @@ export class ArenaService {
       await this.badge(tx, userId, 'first-build');
     });return this.build(newId,userId);
   }
-  async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:'next'};}
+  async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,customHostsEnabled:this.options.allowCustomProviderHosts === true,runtime:'next'};}
   async addProvider(userId: string, body: Record<string, unknown>) {
     await this.user(userId);
     await this.limit(userId, 'provider', 10);
@@ -482,7 +482,7 @@ export class ArenaService {
     const apiKey = text(body.apiKey, 'API key', 16, 512);
     const modelId = text(body.modelId, 'Model ID', 1, 160);
     withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID,
-      () => validateProviderUrl(baseUrl, this.options.allowedHosts));
+      () => validateProviderUrl(baseUrl, this.options.allowedHosts, { allowCustomHosts: this.options.allowCustomProviderHosts }));
     const price = (value: unknown) => {
       if (value === null || value === undefined || value === '') return null;
       ensure(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 10000,
@@ -518,7 +518,7 @@ export class ArenaService {
       }else{
         ensure(this.options.createRealProvider,'Real model provider is not configured.',503,ERROR_CODES.PROVIDER_NOT_CONFIGURED);
         const credential=(await this.repo.read('credentials',{id:credentialId,userId}))[0];ensure(credential,'A selected provider was deleted or is not yours.',404,ERROR_CODES.PROVIDER_NOT_FOUND);
-        withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(credential.baseUrl,this.options.allowedHosts));
+        withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(credential.baseUrl,this.options.allowedHosts,{ allowCustomHosts: this.options.allowCustomProviderHosts }));
         const apiKey=decryptCredential(credential.ciphertext,this.options.encryptionKey,userId,credential.id);
         const effectiveModel=override?credential.modelId:(node.config.modelId&&node.config.modelId!=='demo-forge'?node.config.modelId:credential.modelId);
         const pricedCredential=effectiveModel===credential.modelId?credential:{...credential,inputPrice:null,outputPrice:null};

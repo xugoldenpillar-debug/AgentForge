@@ -191,23 +191,29 @@ test('publication validates sealed fixed bundle references and safely projects o
   const repo = new MemoryShowcaseRepository();
   repo.bundles.set('bundle-1', bundle());
   const service = publicationService(repo);
+  await assert.rejects(() => service.requestPublication('author', {
+    publishConfirmed: false,
+    bundleId: 'bundle-1', expectedSnapshotDigest: 'sha256:snapshot', expectedManifestDigest: 'sha256:manifest',
+    title: 'Unconfirmed', description: 'Must not publish.', entryPath: 'index.html', publicArtifactIds: ['bundle-1-html'],
+  } as never), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.REQUEST_VALIDATION_FAILED);
   const publication = await service.requestPublication('author', {
+    publishConfirmed: true,
     bundleId: 'bundle-1', expectedSnapshotDigest: 'sha256:snapshot', expectedManifestDigest: 'sha256:manifest',
     title: 'Pelican rides a bicycle', description: 'A static visual.', entryPath: 'index.html', publicArtifactIds: ['bundle-1-html'],
   });
-  assert.equal(publication.status, 'pending');
+  assert.equal(publication.status, 'published');
   assert.equal(publication.sourceBundleId, 'bundle-1');
   await assert.rejects(() => service.requestPublication('author', {
+    publishConfirmed: true,
     bundleId: 'bundle-1', expectedSnapshotDigest: 'sha256:wrong', expectedManifestDigest: 'sha256:manifest',
     title: 'Wrong', description: 'Wrong', entryPath: 'index.html', publicArtifactIds: ['bundle-1-html'],
   }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.CONCURRENT_SAVE);
   await assert.rejects(() => service.requestPublication('author', {
+    publishConfirmed: true,
     bundleId: 'bundle-1', expectedSnapshotDigest: 'sha256:snapshot', expectedManifestDigest: 'sha256:manifest',
     title: 'Private', description: 'Private', entryPath: 'prompt.txt', publicArtifactIds: ['bundle-1-private'],
   }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.ACCESS_FORBIDDEN);
-  const reviewer = await service.reviewPublication('reviewer', { publicationId: publication.id, expectedStatus: 'pending', expectedRevision: 1, decision: 'approve', reason: 'safe static artifact' });
   const publicView = await service.getPublicPublication(publication.id);
-  assert.equal(reviewer.publication.status, 'published');
   assert.equal(publicView.files[0]?.relativePath, 'index.html');
   assert.equal('sourceBundleId' in publicView, false);
   assert.doesNotMatch(JSON.stringify(publicView), /prompt|hidden|attempt-fence|storage|credential|provider/i);
@@ -218,15 +224,15 @@ test('publication state changes are role-gated, revision-checked and auditable',
   repo.bundles.set('bundle-1', bundle());
   const service = publicationService(repo);
   const publication = await service.requestPublication('author', {
+    publishConfirmed: true,
     bundleId: 'bundle-1', expectedSnapshotDigest: 'sha256:snapshot', expectedManifestDigest: 'sha256:manifest',
     title: 'A', description: 'B', entryPath: 'index.html', publicArtifactIds: ['bundle-1-html'],
   });
-  await assert.rejects(() => service.reviewPublication('outsider', { publicationId: publication.id, expectedStatus: 'pending', expectedRevision: 1, decision: 'approve', reason: 'no' }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.ACCESS_FORBIDDEN);
-  const approved = await service.reviewPublication('admin', { publicationId: publication.id, expectedStatus: 'pending', expectedRevision: 1, decision: 'approve', reason: 'approved' });
+  await assert.rejects(() => service.reviewPublication('outsider', { publicationId: publication.id, expectedStatus: 'published', expectedRevision: 1, decision: 'take-down', reason: 'no' }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.ACCESS_FORBIDDEN);
   await assert.rejects(() => service.reviewPublication('admin', { publicationId: publication.id, expectedStatus: 'pending', expectedRevision: 1, decision: 'take-down', reason: 'stale' }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.CONCURRENT_SAVE);
-  const withdrawn = await service.withdrawPublication('author', approved.publication.id, approved.publication.revision);
+  const withdrawn = await service.withdrawPublication('author', publication.id, publication.revision);
   assert.equal(withdrawn.publication.status, 'withdrawn');
-  assert.deepEqual(repo.audits.map((event) => event.action), ['work-publication.requested', 'work-publication.reviewed', 'work-publication.withdrawn']);
+  assert.deepEqual(repo.audits.map((event) => event.action), ['work-publication.requested', 'work-publication.withdrawn']);
   await assert.rejects(() => service.getPublicPublication(publication.id), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.RESOURCE_NOT_FOUND);
 });
 

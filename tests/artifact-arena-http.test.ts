@@ -228,6 +228,7 @@ test('the kill switch stops new Arena work without revoking historical artifact 
     method: 'POST',
     headers: { Origin: ORIGIN },
     body: JSON.stringify({
+      publishConfirmed: true,
       bundleId: bundle.bundleId,
       expectedSnapshotDigest: manifest.snapshotDigest,
       expectedManifestDigest: manifest.manifestDigest,
@@ -281,10 +282,27 @@ test('canonical publication routes dispatch through the narrow service seam and 
   requestedBundleId = undefined;
   reviewedPublicationId = undefined;
   const options = { ...baseOptions, userId: OWNER, artifactArena: { publications } } satisfies Parameters<typeof handleArena>[1];
+  const unconfirmedResponse = await handleArena(request('work-publications', {
+    method: 'POST',
+    headers: { Origin: ORIGIN },
+    body: JSON.stringify({
+      bundleId: bundle.bundleId,
+      expectedSnapshotDigest: manifest.snapshotDigest,
+      expectedManifestDigest: manifest.manifestDigest,
+      title: publication.title,
+      description: publication.description,
+      entryPath: publication.entryPath,
+      publicArtifactIds: [htmlEntry.artifactId],
+    }),
+  }), options);
+  assert.equal(unconfirmedResponse.status, 400);
+  assert.equal(requestedBundleId, undefined);
+
   const createResponse = await handleArena(request('work-publications', {
     method: 'POST',
     headers: { Origin: ORIGIN },
     body: JSON.stringify({
+      publishConfirmed: true,
       bundleId: bundle.bundleId,
       expectedSnapshotDigest: manifest.snapshotDigest,
       expectedManifestDigest: manifest.manifestDigest,

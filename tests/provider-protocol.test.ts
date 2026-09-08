@@ -62,6 +62,13 @@ test('unrecognized protocol and network/authentication overrides fail at API and
   assert.equal((await repo.read('credentials')).length, 0);
 });
 
+test('public custom provider mode accepts opaque keys and public HTTPS gateway hostnames', async () => {
+  const { repo, encryptionKey } = await fixture();
+  const service = new ArenaService(repo, { demoMode: false, encryptionKey, allowedHosts: [], allowCustomProviderHosts: true });
+  const result = await service.addProvider('owner', { ...body, baseUrl: 'https://custom-gateway.example.net/v1', apiKey: 'AIzaSyOpaqueKeyShape1234567890' });
+  assert.equal(result.baseUrl, 'https://custom-gateway.example.net/v1');
+});
+
 test('old clients and old in-memory records default to Chat Completions', async () => {
   const { service, repo } = await fixture();
   const result = await service.addProvider('owner', body);

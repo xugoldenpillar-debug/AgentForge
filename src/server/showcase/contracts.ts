@@ -138,6 +138,8 @@ export interface WorkPublicationServiceOptions {
 }
 
 export interface CreateWorkPublicationInput {
+  /** Explicit user attestation that the sealed safe preview was reviewed before publication. */
+  publishConfirmed: true;
   bundleId?: string;
   creationRunId?: string;
   expectedSnapshotDigest: string;

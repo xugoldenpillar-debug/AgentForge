@@ -11,7 +11,7 @@
 ```text
 选题 → 配置 Pi / 模型 / Skill → 保存不可变 Build
 → CreationRun v2 / EF outbox → Pi 工具循环 → runsc 沙箱
-→ 封存安全动画 → 发布/审核 → 点赞/盲选
+→ 封存安全动画 → owner 明确确认发布 → 点赞/盲选
 → 社区分/分榜 → Fork
 ```
 
@@ -28,7 +28,7 @@
   - `openai-responses`
   - `anthropic-messages`
   - `google-generative-ai`
-- Key 加密、owner 隔离、HTTPS/host allowlist/DNS/IP/重定向防护保留；Key 只在可信 Worker 解密。
+- Key 加密、owner 隔离、HTTPS/公网 DNS/IP/重定向防护保留；可配置开放自定义公网 Provider Host 或严格 allowlist；Key 只在可信 Worker 解密。
 
 ### L2–L3：真实沙箱、持久存储和 Creation 执行
 
@@ -91,7 +91,7 @@
 
 1. **两题真实模型 L7**：每题至少一次用户明确授权的 BYOK 调用，记录 run/attempt、协议/模型、Pi 版本、环境 digest、用量、artifact digest；当前没有可借用的用户 Key。
 2. **目标域名真实浏览器 G4/G7**：本地 production Next.js 的桌面/窄屏、中英文、点赞和榜单已验证；仍需在最终 Cloudflare HTTPS 域名完成真实 BYOK 的选题到 Fork，并用间隔截图或录屏证明两题 SVG 动画实际变化。
-3. **自然多账号社区 G6**：服务与 PostgreSQL 集成测试已覆盖发布/审核、禁自赞、like/unlike、盲选、门槛、撤下重算和并发唯一约束；仍需目标环境的自然用户票，固定 QA 票不得冒充自然社区票。
+3. **自然多账号社区 G6**：服务与 PostgreSQL 集成测试已覆盖 owner 确认发布、管理员撤下、禁自赞、like/unlike、盲选、门槛、撤下重算和并发唯一约束；仍需目标环境的自然用户票，固定 QA 票不得冒充自然社区票。
 4. **生产运维 G8**：确定实际数据库/Redis/域名/Cloudflare Tunnel、备份恢复、监控告警和审核值守负责人；记录部署 SHA、迁移结果、开启范围与回滚演练。
 5. **最终部署身份复核**：Hubei 已验证等价只读 bind 的 Worker 写/Web 读不可写模型，当前代码 provider smoke 也确认 `runsc list` 为空且 attempt 目录清理；正式上线后仍须以最终 Web 容器 UID/GID 和每个真实终态运行复核。
 

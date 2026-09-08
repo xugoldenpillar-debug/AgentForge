@@ -358,6 +358,7 @@ export interface ProviderCatalogView {
   demo: boolean;
   platform: { id: string; name: string; modelId: string; inputPrice: number | null; outputPrice: number | null } | null;
   allowedHosts: string[];
+  customHostsEnabled: boolean;
   runtime: 'next';
 }
 
@@ -714,6 +715,7 @@ export async function downloadArtifact(artifactId: string, signal?: AbortSignal)
 }
 
 export const requestPublication = (body: {
+  publishConfirmed: true;
   creationRunId: string;
   expectedSnapshotDigest: string;
   expectedManifestDigest: string;

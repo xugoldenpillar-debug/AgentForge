@@ -7,11 +7,14 @@ export function isPublicAddress(address:string):boolean {
   if(isIP(a)===6)return /^[23][0-9a-f]{0,3}:/.test(a)&&!/^2001:(?:db8|0|10|20):/i.test(a)&&!/^2002:/i.test(a);
   return false;
 }
-export function validateProviderUrl(raw:string,allowedHosts:string[]):URL {
+export function validateProviderUrl(raw:string,allowedHosts:string[],options: { allowCustomHosts?: boolean } = {}):URL {
   let url:URL;try{url=new URL(raw);}catch{throw new AppError('Invalid provider URL.',400,ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);}
   ensure(url.protocol==='https:'&&!url.username&&!url.password&&!url.hash&&!url.search,'Use an HTTPS provider URL without credentials, query parameters or fragments.');
   ensure(!url.port||url.port==='443','Only HTTPS port 443 is supported.');
-  ensure(allowedHosts.map(x=>x.toLowerCase().trim()).includes(url.hostname.toLowerCase()),'Provider host is not allowlisted. Add the exact trusted hostname to PROVIDER_ALLOWED_HOSTS on the server.');
-  ensure(!isIP(url.hostname)&&url.hostname.includes('.'),'Use an allowlisted public hostname.');
+  const hostname = url.hostname.toLowerCase();
+  const allowlisted = allowedHosts.map(x=>x.toLowerCase().trim()).includes(hostname);
+  ensure(!isIP(hostname)&&hostname.includes('.'),'Use a public DNS hostname, not an IP address.');
+  ensure(allowlisted || options.allowCustomHosts === true,
+    'Custom provider hosts are disabled on this deployment. Ask the administrator to enable public custom providers or allowlist this hostname.');
   return url;
 }

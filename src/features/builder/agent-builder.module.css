@@ -64,6 +64,7 @@
 .formGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; padding: 18px; }
 .formGrid label, .savedBox label { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .formGrid label > span, .savedBox label > span { color: #a6b0a9; font: 700 9px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.formGrid label > small { color: #748078; font-size: 10px; line-height: 1.55; }
 .formGrid input, .formGrid select, .formGrid textarea, .savedBox select { width: 100%; min-height: 40px; border: 1px solid #2b3730; border-radius: 8px; outline: none; background: #080d0a; color: #edf3ee; font: 12px var(--sans); padding: 10px 11px; }
 .formGrid textarea { min-height: 118px; resize: vertical; line-height: 1.65; }
 .formGrid input:focus, .formGrid select:focus, .formGrid textarea:focus, .savedBox select:focus { border-color: #77a855; box-shadow: 0 0 0 3px rgba(145, 201, 99, .09); }
@@ -71,6 +72,12 @@
 .savedBox { margin: 0 18px 18px; padding: 14px; border: 1px solid #28342c; border-radius: 10px; background: #090f0b; }
 .savedBox small { display: block; margin-top: 9px; color: #78857c; font: 9px var(--mono); overflow-wrap: anywhere; }
 .buttonRow { gap: 8px; flex-wrap: wrap; }
+.publishConsent { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid #344237; border-radius: 9px; background: #0b120d; cursor: pointer; }
+.publishConsent input { width: 17px; height: 17px; margin-top: 1px; accent-color: var(--lime); }
+.publishConsent > span { display: grid; gap: 4px; }
+.publishConsent strong { color: #cbe7b2; font-size: 11px; }
+.publishConsent small { color: #7e8c82; font-size: 10px; line-height: 1.5; }
+
 .digestLine, .timeline { flex-wrap: wrap; gap: 10px; margin: 0 18px 18px; color: #718078; font: 9px var(--mono); }
 .digestLine code, .timeline code { color: #abc994; }
 

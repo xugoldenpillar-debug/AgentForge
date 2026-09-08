@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Braces,
   FileCode2,
   FileJson,
   FileText,
   Image as ImageIcon,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   RotateCcw,
@@ -64,6 +66,7 @@ type ArtifactPreviewPanelProps = {
   description?: string;
   sourceLabel?: string;
   emptyMessage?: string;
+  featured?: boolean;
 };
 
 const FORMAT_ICONS: Record<ArtifactPreviewFormat, typeof FileText> = {
@@ -114,9 +117,10 @@ function buildSandboxDocument(content: string, format: 'html' | 'svg', paused = 
   }
   const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' blob:; font-src 'none'; connect-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
   const pauseRule = paused ? '*,*::before,*::after{animation-play-state:paused!important}' : '';
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}"><style>${pauseRule}@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-play-state:paused!important}svg *{animation-play-state:paused!important}}</style>`;
+  const stageRule = 'html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#080d0a}body{display:grid;place-items:center}svg{display:block;max-width:100%;max-height:100%;width:auto;height:auto}';
+  const meta = `<meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${policy}"><style>${stageRule}${pauseRule}@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-play-state:paused!important}svg *{animation-play-state:paused!important}}</style>`;
   if (format === 'svg') {
-    return `<!doctype html><html><head><meta charset="utf-8">${meta}</head><body style="margin:0;background:#0b100d;display:grid;place-items:center;min-height:100vh">${safe}</body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8">${meta}</head><body>${safe}</body></html>`;
   }
   if (/<\s*head\b[^>]*>/iu.test(safe)) return safe.replace(/<\s*head\b[^>]*>/iu, (head) => `${head}${meta}`);
   return `<!doctype html><html><head><meta charset="utf-8">${meta}</head><body>${safe}</body></html>`;
@@ -249,14 +253,14 @@ function BinaryProjection({ projection, binaryLabel, disabledLabel }: { projecti
   return <img className={styles.image} src={`data:${projection.plan.mediaType};base64,${projection.body.kind === 'binary' ? projection.body.base64 : ''}`} alt={`${projection.plan.relativePath} preview`} />;
 }
 
-function ProjectionBody({ projection, paused, replayKey, binaryLabel, binaryDisabledLabel }: { projection: ArtifactPreviewProjection; paused: boolean; replayKey: number; binaryLabel: string; binaryDisabledLabel: string }) {
+function ProjectionBody({ projection, paused, replayKey, binaryLabel, binaryDisabledLabel, frameTitle }: { projection: ArtifactPreviewProjection; paused: boolean; replayKey: number; binaryLabel: string; binaryDisabledLabel: string; frameTitle: string }) {
   if (projection.body.kind === 'binary') return <BinaryProjection projection={projection} binaryLabel={binaryLabel} disabledLabel={binaryDisabledLabel} />;
   const content = projection.body.content;
   switch (projection.plan.renderer) {
     case 'html-sandbox':
-      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={`${projection.plan.relativePath} sandboxed preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'html', paused)} />;
+      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={frameTitle} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'html', paused)} />;
     case 'svg-animation-sandbox':
-      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={`${projection.plan.relativePath} isolated preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'svg', paused)} />;
+      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={frameTitle} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'svg', paused)} />;
     case 'markdown-sanitized':
       return <MarkdownProjection content={content} />;
     case 'json-tree':
@@ -272,15 +276,24 @@ function ProjectionBody({ projection, paused, replayKey, binaryLabel, binaryDisa
 
 export function ArtifactPreviewPanel({
   files,
-  heading = 'Artifact preview',
-  description = 'Data-only projection · no scripts, navigation, forms, popups, or remote resources',
-  sourceLabel = 'static / no-script',
-  emptyMessage = 'No previewable artifacts are available.',
+  heading,
+  description,
+  sourceLabel,
+  emptyMessage,
+  featured = false,
 }: ArtifactPreviewPanelProps) {
   const { t } = useLocale();
+  const resolvedHeading = heading ?? t('artifactPreview.defaultHeading');
+  const resolvedDescription = description ?? t('artifactPreview.defaultDescription');
+  const resolvedSourceLabel = sourceLabel ?? t('artifactPreview.defaultSource');
+  const resolvedEmptyMessage = emptyMessage ?? t('artifactPreview.empty');
   const [selectedId, setSelectedId] = useState(files[0]?.artifactId ?? '');
   const [paused, setPaused] = useState(false);
   const [replayKey, setReplayKey] = useState(0);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState('');
+  const panelRef = useRef<HTMLElement>(null);
+  const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const selected = useMemo(
     () => files.find((file) => file.artifactId === selectedId) ?? files[0],
     [files, selectedId],
@@ -294,45 +307,73 @@ export function ArtifactPreviewPanel({
     }
   }, [files, selectedId]);
 
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = document.fullscreenElement === panelRef.current;
+      setIsFullscreen(active);
+      if (!active) fullscreenButtonRef.current?.focus();
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement === panelRef.current) {
+        await document.exitFullscreen();
+        return;
+      }
+      if (!panelRef.current?.requestFullscreen) throw new Error('fullscreen unavailable');
+      await panelRef.current.requestFullscreen();
+    } catch {
+      setFullscreenError(t('artifactPreview.fullscreenUnavailable'));
+    }
+  };
+
   if (!selected) {
-    return <section className={styles.panel} aria-label={heading}><div className={styles.header}><div><strong>{heading}</strong><span>{emptyMessage}</span></div></div></section>;
+    return <section className={styles.panel} aria-label={resolvedHeading}><div className={styles.header}><div><strong>{resolvedHeading}</strong><span>{resolvedEmptyMessage}</span></div></div></section>;
   }
 
   const PreviewIcon = FORMAT_ICONS[selected.projection.plan.format];
+  const frameTitle = t('artifactPreview.frameTitle', { path: selected.relativePath });
   return (
-    <section className={styles.panel} aria-label={heading}>
+    <section ref={panelRef} className={`${styles.panel} ${featured ? styles.featured : ''}`} aria-label={resolvedHeading}>
       <div className={styles.header}>
-        <div><strong>{heading}</strong><span>{description}</span></div>
-        <span className={styles.source}>{sourceLabel}</span>
+        <div><strong>{resolvedHeading}</strong><span>{resolvedDescription}</span></div>
+        <span className={styles.source}>{resolvedSourceLabel}</span>
       </div>
       <div className={styles.main}>
-        <aside className={styles.tree} aria-label="Artifact files">
+        <aside className={styles.fileTree} aria-label={t('artifactPreview.filesLabel')}>
           <div className={styles.treeTitle}>{t('artifactPreview.files', { count: String(files.length).padStart(2, '0') })}</div>
           <div className={styles.fileList}>
             {files.map((file) => {
               const Icon = FORMAT_ICONS[file.projection.plan.format];
               const active = file.artifactId === selected.artifactId;
-              return <button className={`${styles.fileRow} ${active ? styles.active : ''}`} key={file.artifactId} type="button" aria-pressed={active} onClick={() => setSelectedId(file.artifactId)}><Icon size={13} /><span>{file.relativePath}</span><small>{file.bytes} B</small></button>;
+              return <button className={`${styles.fileRow} ${active ? styles.active : ''}`} key={file.artifactId} type="button" aria-pressed={active} title={file.relativePath} onClick={() => { setSelectedId(file.artifactId); setPaused(false); setFullscreenError(''); }}><Icon size={13} /><span>{file.relativePath}</span><small>{file.bytes} B</small></button>;
             })}
           </div>
         </aside>
         <div className={styles.viewport}>
           <div className={styles.canvas}>
             <div className={styles.canvasHeader}>
-              <PreviewIcon size={13} /><span>{selected.relativePath}</span>
+              <PreviewIcon size={13} /><span className={styles.currentFile}>{selected.relativePath}</span>
               {(selected.projection.plan.renderer === 'html-sandbox' || selected.projection.plan.renderer === 'svg-animation-sandbox') && (
                 <div className={styles.animationControls} aria-label={t('artifactPreview.animationControls')}>
-                  <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? t('artifactPreview.resume') : t('artifactPreview.pause')}>
+                  <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? t('artifactPreview.resume') : t('artifactPreview.pause')} title={paused ? t('artifactPreview.resume') : t('artifactPreview.pause')}>
                     {paused ? <Play size={12} /> : <Pause size={12} />}<span>{paused ? t('artifactPreview.resume') : t('artifactPreview.pause')}</span>
                   </button>
-                  <button type="button" onClick={() => { setPaused(false); setReplayKey((value) => value + 1); }} aria-label={t('artifactPreview.replay')}>
+                  <button type="button" onClick={() => { setPaused(false); setReplayKey((value) => value + 1); }} aria-label={t('artifactPreview.replay')} title={t('artifactPreview.replay')}>
                     <RotateCcw size={12} /><span>{t('artifactPreview.replay')}</span>
+                  </button>
+                  <button ref={fullscreenButtonRef} type="button" onClick={() => void toggleFullscreen()} aria-label={isFullscreen ? t('artifactPreview.exitFullscreen') : t('artifactPreview.fullscreen')} title={isFullscreen ? t('artifactPreview.exitFullscreen') : t('artifactPreview.fullscreen')}>
+                    {isFullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />}<span>{isFullscreen ? t('artifactPreview.exitFullscreen') : t('artifactPreview.fullscreen')}</span>
                   </button>
                 </div>
               )}
               <span className={styles.format}>{formatLabel(selected.projection.plan.format)}</span>
             </div>
-            <div className={styles.content}><ProjectionBody projection={selected.projection} paused={paused} replayKey={replayKey} binaryLabel={t('artifactPreview.binary')} binaryDisabledLabel={t('artifactPreview.binaryDisabled')} /></div>
+            <div className={styles.content}>{fullscreenError && <div className={styles.controlError} role="status">{fullscreenError}</div>}<ProjectionBody projection={selected.projection} paused={paused} replayKey={replayKey} binaryLabel={t('artifactPreview.binary')} binaryDisabledLabel={t('artifactPreview.binaryDisabled')} frameTitle={frameTitle} /></div>
           </div>
         </div>
       </div>

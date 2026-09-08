@@ -27,6 +27,7 @@ const publicationReview = z.object({
 }).strict();
 
 const workPublication = z.object({
+  publishConfirmed: z.literal(true),
   bundleId: id.optional(),
   creationRunId: id.optional(),
   expectedSnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/u),

@@ -18,6 +18,7 @@ export interface ProductionWorkerConfig {
   readonly failedJobRetentionSeconds: number;
   readonly encryptionKey: string;
   readonly allowedHosts: string[];
+  readonly allowCustomProviderHosts: boolean;
   readonly maxRunCost: number;
   readonly maxCases: number;
   readonly platformModel?: string;
@@ -165,6 +166,7 @@ export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Producti
       .split(',')
       .map((host) => host.trim())
       .filter(Boolean),
+    allowCustomProviderHosts: env.PROVIDER_ALLOW_CUSTOM_HOSTS === 'true',
     maxRunCost: nonNegativeNumber(env, 'RUN_MAX_TOTAL_COST', 2.5),
     maxCases: positiveInteger(env, 'RUN_MAX_CASES', 50),
     platformModel: env.PLATFORM_MODEL?.trim() || undefined,

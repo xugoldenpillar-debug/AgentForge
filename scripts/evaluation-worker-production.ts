@@ -123,6 +123,7 @@ export function createProductionWorkerService(
     demoMode: testModelsEnabled(env),
     encryptionKey: config.encryptionKey,
     allowedHosts: config.allowedHosts,
+    allowCustomProviderHosts: config.allowCustomProviderHosts,
     platform,
     createRealProvider: byokProvider,
     createPlatformProvider: platform

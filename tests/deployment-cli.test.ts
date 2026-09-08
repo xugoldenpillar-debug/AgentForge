@@ -33,6 +33,7 @@ function fixture() {
     'SANDBOX_IMAGE_DIGEST=sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0',
     'ARTIFACT_STORAGE_ROOT=/var/lib/agentforge/artifacts',
     'ARTIFACT_STORAGE_GID=987',
+    'PROVIDER_ALLOW_CUSTOM_HOSTS=true',
     'PROVIDER_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com,openrouter.ai',
     `AGENTFORGE_POSTGRES_IMAGE=postgres@sha256:${'a'.repeat(64)}`,
     `AGENTFORGE_REDIS_IMAGE=redis@sha256:${'b'.repeat(64)}`,

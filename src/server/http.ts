@@ -556,6 +556,7 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'publications' && path.length === 2)
         || (path[0] === 'work-publications' && path.length === 1))) {
         return json(await requirePublicationService(artifactArena?.publications, service).requestPublication(auth(), {
+          publishConfirmed: body.publishConfirmed as true,
           bundleId: body.bundleId as string | undefined,
           creationRunId: body.creationRunId as string | undefined,
           expectedSnapshotDigest: body.expectedSnapshotDigest as string,

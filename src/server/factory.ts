@@ -50,6 +50,7 @@ export function getService(): ArenaService {
     demoMode: testModelsEnabled(process.env),
     encryptionKey: process.env.CREDENTIAL_ENCRYPTION_KEY || '',
     allowedHosts: (process.env.PROVIDER_ALLOWED_HOSTS || 'api.openai.com,openrouter.ai').split(',').map((s) => s.trim()).filter(Boolean),
+    allowCustomProviderHosts: process.env.PROVIDER_ALLOW_CUSTOM_HOSTS === 'true',
     githubEnabled: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
     platform,
     createRealProvider: byokProvider,

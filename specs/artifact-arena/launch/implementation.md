@@ -14,7 +14,7 @@
 | CreationRun v2 challengeVersionId | 可空关联，固定两题时必填；服务端解析 brief/环境，禁止客户端伪造 |
 | Showcase season/comparator 持久政策 | 服务端拥有政策版本、预算档、信任分区、活动窗口，不能用客户端 comparator 字符串授权 |
 | WorkLike | publicationId + userId 唯一；外键、时间，幂等删除；统计按有效作品计算 |
-| 审核/举报/限流记录 | 沿用现有社区角色与审计机制，必要时 additive 扩展，不由客户端传管理员身份 |
+| 发布确认/举报/限流记录 | 作品由 owner 明确确认后直接发布；新题目审核沿用社区角色与审计机制，不由客户端传管理员身份 |
 
 保持 `schema.ts` / `schema.sql` / repository / seed 同步；使用现有迁移台账新增下一个未占用编号，不编辑 0010/0011 checksum。初始化只写两题和平台目录版本，不制造用户、作品、票数。全新库、旧库升级、重复执行、旧数据保留都要验收。
 
@@ -58,8 +58,8 @@ Next.js API → 身份/配额/版本解析 → EF durable job/outbox + 预算预
 | Agent Build API | 复用配置版保存/CAS/读取/Fork；challenge version 绑定由服务端验证 |
 | /api/arena/creation-runs | POST 带 buildVersionId、challengeVersionId、idempotencyKey、consent；owner 从 session 取 |
 | /api/arena/creation-runs/:id | GET owner 状态；/events NDJSON 游标；/cancel POST 幂等确认 |
-| Artifact API | owner 文件/下载/预览；公开按 publication 和审核状态再次核权 |
-| /api/arena/publications | POST 申请发布；撤下、详情、审核、举报复用/补齐领域服务 |
+| Artifact API | owner 文件/下载/预览；公开按 owner-confirmed publication 状态再次核权 |
+| /api/arena/publications | POST 明确确认并直接发布；撤回、详情、管理员撤下、举报复用/补齐领域服务 |
 | /api/arena/publications/:id/like | PUT/DELETE 登录幂等点赞；GET 详情只返回计数和本人状态 |
 | /api/arena/ballots | 创建配对、提交选择，服务端 token/过期/身份/comparator 校验 |
 | /api/arena/leaderboard | 按题目版本/赛季/lane 分页，返回政策、样本、revision/asOf |
