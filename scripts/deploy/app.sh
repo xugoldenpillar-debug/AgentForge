@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
+node_bin=${AGENTFORGE_DEPLOY_NODE:-$(command -v node || true)}
+if [[ -z $node_bin && -x /opt/agentforge/node-v22.19.0-linux-x64/bin/node ]]; then
+  node_bin=/opt/agentforge/node-v22.19.0-linux-x64/bin/node
+fi
+[[ -n $node_bin && -x $node_bin ]] || {
+  echo 'Deployment Node.js is missing; set AGENTFORGE_DEPLOY_NODE / 缺少部署 Node.js' >&2
+  exit 1
+}
 usage() {
   echo 'Usage / 用法: app.sh check|release|rollback ABS_ENV_FILE IMAGE_TAG [--backup-confirmed]'
 }
@@ -9,7 +17,7 @@ mode=$1
 case "$mode" in check|release|rollback) ;; *) usage; exit 2;; esac
 [[ $2 == /* && -f $2 ]] || { usage; exit 2; }
 # Secrets must not accidentally enter the Docker build context.
-node --input-type=module - "$root" "$2" <<'JS'
+"$node_bin" --input-type=module - "$root" "$2" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
 const root = fs.realpathSync(process.argv[2]);
@@ -23,7 +31,7 @@ export AGENTFORGE_ENV_FILE=$2 AGENTFORGE_IMAGE=$3
 [[ $AGENTFORGE_IMAGE =~ ^agentforge:[a-zA-Z0-9][a-zA-Z0-9_.-]+$ && $AGENTFORGE_IMAGE != agentforge:latest ]] || {
   echo 'Use agentforge:<release-id>, not latest / 请使用明确发布版本' >&2; exit 2;
 }
-node "$root/scripts/deploy/preflight.mjs" "$AGENTFORGE_ENV_FILE"
+"$node_bin" "$root/scripts/deploy/preflight.mjs" "$AGENTFORGE_ENV_FILE"
 compose=(docker compose --project-name agentforge-production --env-file "$AGENTFORGE_ENV_FILE" -f "$root/deploy/compose.production.yml")
 "${compose[@]}" config --quiet
 if [[ $mode == check ]]; then

@@ -2,6 +2,14 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
+node_bin=${AGENTFORGE_DEPLOY_NODE:-$(command -v node || true)}
+if [[ -z $node_bin && -x /opt/agentforge/node-v22.19.0-linux-x64/bin/node ]]; then
+  node_bin=/opt/agentforge/node-v22.19.0-linux-x64/bin/node
+fi
+[[ -n $node_bin && -x $node_bin ]] || {
+  echo 'Deployment Node.js is missing; set AGENTFORGE_DEPLOY_NODE / 缺少部署 Node.js' >&2
+  exit 1
+}
 usage() {
   cat <<'USAGE'
 Usage / 用法:
@@ -19,7 +27,7 @@ mode=$1
 env_file=$2
 case "$mode" in check|up|status|backup|restore-check) ;; *) usage; exit 2 ;; esac
 [[ $env_file == /* && -f $env_file ]] || { usage; exit 2; }
-node --input-type=module - "$root" "$env_file" <<'JS'
+"$node_bin" --input-type=module - "$root" "$env_file" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';

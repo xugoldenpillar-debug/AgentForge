@@ -63,7 +63,7 @@ sudo scripts/deploy/install-gvisor.sh --apply
 sudo scripts/deploy/prepare-sandbox-rootfs.sh --apply
 ```
 
-The installer pins a release; the rootfs script pins the BusyBox image digest, exports a never-started image, removes all write bits, and records the digest in `rootfs-metadata.json`. It does not install packages, edit Docker `daemon.json`, change the default runtime, restart Docker, or prune images/containers.
+The installer pins a release; the rootfs script pins the BusyBox image digest, exports a never-started image, removes all write bits, and records the digest in `rootfs-metadata.json`. It does not install packages, edit Docker `daemon.json`, change the default runtime, restart Docker, or prune images/containers. Deployment scripts accept `AGENTFORGE_DEPLOY_NODE`; when it is not set they use `node` from `PATH`, then the verified portable Hubei path above. They fail closed if no executable Node is available.
 
 Re-running either command is idempotent when the installed version/digest matches. A mismatch fails closed. Use `--replace` only after explicit review; the previous rootfs is preserved as a timestamped backup.
 

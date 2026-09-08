@@ -124,6 +124,15 @@ test('dedicated dependency check is render-only and requires immutable images', 
   } finally { rmSync(f.dir, { recursive: true }); }
 });
 
+test('deployment scripts support the pinned portable Node path used on Hubei', () => {
+  for (const path of ['scripts/deploy/app.sh', 'scripts/deploy/data.sh']) {
+    const script = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+    assert.match(script, /AGENTFORGE_DEPLOY_NODE/);
+    assert.match(script, /\/opt\/agentforge\/node-v22\.19\.0-linux-x64\/bin\/node/);
+    assert.match(script, /\"\$node_bin\"/);
+  }
+});
+
 test('dependency topology is isolated and backup script never destroys volumes', () => {
   const compose = readFileSync(new URL('../deploy/compose.dependencies.yml', import.meta.url), 'utf8');
   const script = readFileSync(new URL('../scripts/deploy/data.sh', import.meta.url), 'utf8');
