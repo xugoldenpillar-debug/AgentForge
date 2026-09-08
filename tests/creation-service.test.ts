@@ -1,0 +1,276 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { AppError, ERROR_CODES } from '../src/shared/errors.ts';
+import { asOpaqueId, type EvaluationJobId } from '../src/shared/evaluation-types.ts';
+import type {
+  CreateEvaluationJobInput,
+  CreateEvaluationJobResult,
+  EvaluationJobView,
+  EvaluationTransitionResult,
+} from '../src/server/evaluation/domain.ts';
+import { digestAgentBuildDefinition } from '../src/lib/agent-build/digest.ts';
+import { CREATION_AGENT_BUILD_CONTRACT } from '../src/server/creation/catalog.ts';
+import { CreationRunService, type CreationJobScheduler } from '../src/server/creation/service.ts';
+import { ANIMATION_CHALLENGE_VERSIONS } from '../src/server/animation-challenges.ts';
+import type { Credential, User } from '../src/shared/types.ts';
+import { MemoryRepository } from './helpers/memory-repository.ts';
+
+const NOW = '2026-09-08T00:00:00.000Z';
+const OWNER = 'creation-owner';
+const OTHER = 'creation-other';
+const BUILD_ID = 'creation-build';
+const BUILD_VERSION_ID = 'creation-build-v1';
+const CREDENTIAL_ID = 'creation-credential';
+const OTHER_CREDENTIAL_ID = 'creation-credential-two';
+const challengeVersion = ANIMATION_CHALLENGE_VERSIONS[0];
+
+const user = (id: string): User => ({
+  id,
+  name: id,
+  email: `${id}@example.invalid`,
+  emailVerified: true,
+  image: null,
+  createdAt: NOW,
+  updatedAt: NOW,
+  elo: 1000,
+  reputation: 0,
+  isSeed: false,
+});
+
+const definition = Object.freeze({
+  mode: 'agent' as const,
+  definitionSchemaVersion: 1 as const,
+  instructions: 'Use a clear silhouette and smooth declarative motion.',
+  ...CREATION_AGENT_BUILD_CONTRACT,
+  skillRefs: [],
+  requestedCapabilities: [],
+  profileRef: null,
+});
+
+function credential(id = CREDENTIAL_ID, modelId = 'model-one'): Credential {
+  return {
+    id,
+    userId: OWNER,
+    protocol: 'openai-chat',
+    name: id,
+    baseUrl: 'https://api.example.invalid/v1',
+    modelId,
+    ciphertext: 'not-read-by-creation-service',
+    lastFour: 'test',
+    inputPrice: null,
+    outputPrice: null,
+    createdAt: NOW,
+  };
+}
+
+class FakeScheduler implements CreationJobScheduler {
+  readonly jobs = new Map<string, EvaluationJobView>();
+  createCalls = 0;
+
+  async createJob(input: CreateEvaluationJobInput): Promise<CreateEvaluationJobResult> {
+    this.createCalls += 1;
+    const id = asOpaqueId<'evaluation-job'>(`creation-job-${this.createCalls}`);
+    const job: EvaluationJobView = {
+      id,
+      userId: input.userId,
+      purpose: input.purpose,
+      association: input.association,
+      state: 'queued',
+      snapshot: input.snapshot,
+      idempotency: {
+        scope: 'evaluation-job-create',
+        key: input.idempotencyKey,
+        requestDigest: input.snapshot.snapshotDigest,
+      },
+      budgetReservationId: input.budgetReservationId ?? null,
+      cancellationReason: null,
+      cancellationRequestedAt: null,
+      completion: null,
+      failure: null,
+      acceptedAt: NOW,
+      createdAt: NOW,
+      updatedAt: NOW,
+      completedAt: null,
+    };
+    this.jobs.set(String(id), job);
+    return { created: true, job };
+  }
+
+  async getJob(jobId: EvaluationJobId): Promise<EvaluationJobView> {
+    const job = this.jobs.get(String(jobId));
+    if (!job) throw new Error('job not found');
+    return structuredClone(job);
+  }
+
+  async requestCancellation(jobId: EvaluationJobId): Promise<EvaluationTransitionResult> {
+    const job = await this.getJob(jobId);
+    const cancelled: EvaluationJobView = {
+      ...job,
+      state: 'cancelled',
+      cancellationReason: 'user-requested',
+      cancellationRequestedAt: NOW,
+      completedAt: NOW,
+      updatedAt: NOW,
+    };
+    this.jobs.set(String(jobId), cancelled);
+    return { applied: true, job: structuredClone(cancelled) };
+  }
+
+  setState(jobId: string, patch: Partial<EvaluationJobView>): void {
+    const job = this.jobs.get(jobId);
+    assert.ok(job);
+    this.jobs.set(jobId, { ...job, ...patch });
+  }
+}
+
+async function harness() {
+  const repository = new MemoryRepository();
+  const scheduler = new FakeScheduler();
+  await repository.insert('users', [user(OWNER), user(OTHER)]);
+  await repository.insert('builds', [{
+    id: BUILD_ID,
+    problemId: null,
+    animationChallengeId: challengeVersion.challengeId,
+    userId: OWNER,
+    title: 'Animation builder',
+    visibility: 'private',
+    currentVersionId: BUILD_VERSION_ID,
+    parentBuildId: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+  }]);
+  await repository.insert('buildVersions', [{
+    id: BUILD_VERSION_ID,
+    buildId: BUILD_ID,
+    revision: 1,
+    title: 'Animation builder',
+    visibility: 'private',
+    createdAt: NOW,
+    mode: 'agent',
+    agentDefinition: definition,
+    definitionDigest: digestAgentBuildDefinition(definition),
+    animationChallengeVersionId: challengeVersion.id,
+  }]);
+  await repository.insert('credentials', [credential(), credential(OTHER_CREDENTIAL_ID, 'model-two')]);
+  const service = new CreationRunService(repository, { scheduler, now: () => NOW });
+  return { repository, scheduler, service };
+}
+
+function input(overrides: Partial<Parameters<CreationRunService['schedule']>[1]> = {}) {
+  return {
+    buildVersionId: BUILD_VERSION_ID,
+    challengeVersionId: challengeVersion.id,
+    credentialId: CREDENTIAL_ID,
+    idempotencyKey: 'creation-request-one',
+    ...overrides,
+  };
+}
+
+function isAppError(error: unknown, status: number, code: string): boolean {
+  return error instanceof AppError && error.status === status && error.code === code;
+}
+
+test('CreationRun scheduling is idempotent and its safe projection excludes credentials, prompts, context and execution tokens', async () => {
+  const { scheduler, service } = await harness();
+  const first = await service.schedule(OWNER, input());
+  const second = await service.schedule(OWNER, input());
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.equal(second.run.id, first.run.id);
+  assert.equal(second.job.id, first.job.id);
+  assert.equal(scheduler.createCalls, 1);
+
+  const serialized = JSON.stringify(second);
+  assert.doesNotMatch(serialized, new RegExp(CREDENTIAL_ID));
+  assert.doesNotMatch(serialized, /smooth declarative motion/i);
+  assert.doesNotMatch(serialized, /executionToken|credentialAuthorizationId|contextDigest/i);
+});
+
+test('CreationRun idempotency rejects a different challenge, build, or provider authorization', async () => {
+  const { repository, service } = await harness();
+  await service.schedule(OWNER, input());
+
+  await assert.rejects(
+    () => service.schedule(OWNER, input({ challengeVersionId: ANIMATION_CHALLENGE_VERSIONS[1].id })),
+    (error: unknown) => isAppError(error, 409, ERROR_CODES.RUNTIME_POLICY_DENIED)
+      || isAppError(error, 409, ERROR_CODES.REQUEST_VALIDATION_FAILED),
+  );
+  await assert.rejects(
+    () => service.schedule(OWNER, input({ credentialId: OTHER_CREDENTIAL_ID })),
+    (error: unknown) => isAppError(error, 409, ERROR_CODES.REQUEST_VALIDATION_FAILED),
+  );
+
+  const copiedVersionId = 'creation-build-v2';
+  await repository.insert('buildVersions', [{
+    ...(await repository.read('buildVersions', { id: BUILD_VERSION_ID }))[0],
+    id: copiedVersionId,
+    revision: 2,
+  }]);
+  await assert.rejects(
+    () => service.schedule(OWNER, input({ buildVersionId: copiedVersionId })),
+    (error: unknown) => isAppError(error, 409, ERROR_CODES.REQUEST_VALIDATION_FAILED),
+  );
+});
+
+test('CreationRun enforces owner, challenge binding, and credential ownership/deletion', async () => {
+  const { repository, service } = await harness();
+  await assert.rejects(
+    () => service.schedule(OTHER, input()),
+    (error: unknown) => isAppError(error, 404, ERROR_CODES.VERSION_NOT_FOUND),
+  );
+  await assert.rejects(
+    () => service.schedule(OWNER, input({ challengeVersionId: ANIMATION_CHALLENGE_VERSIONS[1].id, idempotencyKey: 'wrong-challenge' })),
+    (error: unknown) => isAppError(error, 409, ERROR_CODES.RUNTIME_POLICY_DENIED),
+  );
+  await repository.remove('credentials', { id: CREDENTIAL_ID });
+  await assert.rejects(
+    () => service.schedule(OWNER, input({ idempotencyKey: 'deleted-credential' })),
+    (error: unknown) => isAppError(error, 404, ERROR_CODES.PROVIDER_NOT_FOUND),
+  );
+});
+
+test('CreationRun get recovers terminal state and artifact bundle, cancel is durable, and owner isolation is enforced', async () => {
+  const { scheduler, service } = await harness();
+  const scheduled = await service.schedule(OWNER, input());
+
+  await assert.rejects(
+    () => service.get(OTHER, scheduled.run.id),
+    (error: unknown) => isAppError(error, 404, ERROR_CODES.RESOURCE_NOT_FOUND),
+  );
+
+  const cancelled = await service.cancel(OWNER, scheduled.run.id);
+  assert.equal(cancelled.run.status, 'cancelled');
+  assert.equal(cancelled.job?.state, 'cancelled');
+
+  scheduler.setState(scheduled.job.id, {
+    state: 'completed',
+    completion: { evidence: 'complete', summary: { artifactBundleId: 'bundle-one', artifactCount: 1 } },
+    completedAt: NOW,
+  });
+  const recovered = await service.get(OWNER, scheduled.run.id);
+  assert.equal(recovered.run.status, 'completed');
+  assert.equal(recovered.run.artifactBundleId, 'bundle-one');
+});
+
+test('CreationRun retry accepts only unsuccessful terminal jobs and creates a new idempotent run', async () => {
+  const { scheduler, service } = await harness();
+  const scheduled = await service.schedule(OWNER, input());
+
+  await assert.rejects(
+    () => service.retry(OWNER, scheduled.run.id, 'retry-too-early'),
+    (error: unknown) => isAppError(error, 409, ERROR_CODES.RUNTIME_POLICY_DENIED),
+  );
+
+  scheduler.setState(scheduled.job.id, {
+    state: 'failed',
+    failure: { code: 'PROVIDER_REQUEST_FAILED', retryable: false },
+    completedAt: NOW,
+  });
+  const retry = await service.retry(OWNER, scheduled.run.id, 'retry-one');
+  const repeat = await service.retry(OWNER, scheduled.run.id, 'retry-one');
+  assert.equal(retry.created, true);
+  assert.equal(repeat.created, false);
+  assert.notEqual(retry.run.id, scheduled.run.id);
+  assert.equal(retry.run.id, repeat.run.id);
+});

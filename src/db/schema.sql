@@ -73,16 +73,41 @@ CREATE TABLE IF NOT EXISTS "test_cases" (
   "input" TEXT NOT NULL,
   "expected" JSONB NOT NULL
 );
+-- Additive catalog only. Does not enable execution or create simulated activity.
+CREATE TABLE IF NOT EXISTS animation_challenges (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL UNIQUE,
+  position INTEGER NOT NULL CHECK (position > 0),
+  status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'retired'))
+);
+CREATE TABLE IF NOT EXISTS animation_challenge_versions (
+  id TEXT PRIMARY KEY,
+  challenge_id TEXT NOT NULL REFERENCES animation_challenges(id) ON DELETE RESTRICT,
+  version_number INTEGER NOT NULL CHECK (version_number > 0),
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 120),
+  title_en TEXT NOT NULL CHECK (length(title_en) BETWEEN 1 AND 120),
+  instructions TEXT NOT NULL CHECK (length(instructions) BETWEEN 1 AND 16384),
+  instructions_en TEXT NOT NULL CHECK (length(instructions_en) BETWEEN 1 AND 16384),
+  output_policy_version TEXT NOT NULL CHECK (output_policy_version = 'svg-animation-v1'),
+  content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[a-f0-9]{64}$'),
+  UNIQUE (challenge_id, version_number)
+);
+
 CREATE TABLE IF NOT EXISTS "builds" (
   "id" TEXT PRIMARY KEY,
-  "problem_id" TEXT NOT NULL REFERENCES "problems"("id") ON DELETE CASCADE,
+  "problem_id" TEXT REFERENCES "problems"("id") ON DELETE CASCADE,
+  "animation_challenge_id" TEXT REFERENCES "animation_challenges"("id") ON DELETE RESTRICT,
   "user_id" TEXT NOT NULL REFERENCES "users"("id") ON DELETE CASCADE,
   "title" TEXT NOT NULL,
   "visibility" TEXT NOT NULL,
   "current_version_id" TEXT NOT NULL,
   "parent_build_id" TEXT,
   "created_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
-  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now()
+  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT builds_target_check CHECK (
+    (problem_id IS NOT NULL AND animation_challenge_id IS NULL)
+    OR (problem_id IS NULL AND animation_challenge_id IS NOT NULL)
+  )
 );
 CREATE TABLE IF NOT EXISTS "build_versions" (
   "id" TEXT PRIMARY KEY,
@@ -90,6 +115,7 @@ CREATE TABLE IF NOT EXISTS "build_versions" (
   "mode" TEXT NOT NULL DEFAULT 'workflow',
   "agent_definition" JSONB,
   "definition_digest" TEXT,
+  "animation_challenge_version_id" TEXT REFERENCES "animation_challenge_versions"("id") ON DELETE RESTRICT,
   "revision" INTEGER NOT NULL,
   "title" TEXT NOT NULL,
   "visibility" TEXT NOT NULL,
@@ -102,6 +128,12 @@ CREATE TABLE IF NOT EXISTS "build_versions" (
       AND definition_digest IS NOT NULL AND definition_digest ~ '^sha256:[0-9a-f]{64}$')
   )
 );
+CREATE INDEX IF NOT EXISTS builds_animation_challenge_idx
+  ON public.builds(animation_challenge_id, updated_at DESC)
+  WHERE animation_challenge_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS build_versions_animation_challenge_version_idx
+  ON public.build_versions(animation_challenge_version_id, created_at DESC)
+  WHERE animation_challenge_version_id IS NOT NULL;
 CREATE TABLE IF NOT EXISTS "workflow_nodes" (
   "id" TEXT NOT NULL,
   "version_id" TEXT NOT NULL REFERENCES "build_versions"("id") ON DELETE CASCADE,
@@ -460,7 +492,7 @@ CREATE TABLE IF NOT EXISTS public.evaluation_jobs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ,
-  CHECK (
+  CONSTRAINT evaluation_jobs_association_check CHECK (
     (purpose = 'competitive' AND association_kind = 'competitive-run' AND competitive_run_id IS NOT NULL AND business_record_id = competitive_run_id AND association_visibility IS NOT NULL)
     OR (purpose = 'author-self-test' AND association_kind = 'self-test-run' AND competitive_run_id IS NULL AND association_visibility IS NULL)
     OR (purpose = 'component-evaluation' AND association_kind = 'component-evaluation' AND competitive_run_id IS NULL AND association_visibility IS NULL)
@@ -676,6 +708,7 @@ CREATE TABLE IF NOT EXISTS public.creation_runs (
   environment_template_id TEXT NOT NULL REFERENCES public.environment_templates(id) ON DELETE RESTRICT,
   environment_template_version_id TEXT NOT NULL REFERENCES public.environment_template_versions(id) ON DELETE RESTRICT,
   evaluation_job_id TEXT UNIQUE REFERENCES public.evaluation_jobs(id) ON DELETE RESTRICT,
+  artifact_bundle_id TEXT,
   status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled', 'incomplete')),
   context JSONB NOT NULL CHECK (jsonb_typeof(context) = 'object' AND context->>'kind' = 'creation' AND (context->>'schemaVersion')::INTEGER = 1),
   context_digest TEXT NOT NULL CHECK (context_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -710,6 +743,14 @@ CREATE TABLE IF NOT EXISTS public.artifact_bundles (
 CREATE INDEX IF NOT EXISTS artifact_bundles_owner_created_idx ON public.artifact_bundles(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS artifact_bundles_creation_run_idx ON public.artifact_bundles(creation_run_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS artifact_bundles_run_idx ON public.artifact_bundles(run_id, created_at DESC);
+
+ALTER TABLE public.creation_runs
+  DROP CONSTRAINT IF EXISTS creation_runs_artifact_bundle_id_fkey;
+ALTER TABLE public.creation_runs
+  ADD CONSTRAINT creation_runs_artifact_bundle_id_fkey
+  FOREIGN KEY (artifact_bundle_id) REFERENCES public.artifact_bundles(id) ON DELETE RESTRICT;
+CREATE UNIQUE INDEX IF NOT EXISTS creation_runs_artifact_bundle_unique
+  ON public.creation_runs(artifact_bundle_id) WHERE artifact_bundle_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS public.artifacts (
   id TEXT PRIMARY KEY,
@@ -754,6 +795,15 @@ CREATE TABLE IF NOT EXISTS public.work_publications (
 );
 CREATE INDEX IF NOT EXISTS work_publications_owner_created_idx ON public.work_publications(owner_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS work_publications_status_created_idx ON public.work_publications(status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public.work_likes (
+  id TEXT PRIMARY KEY,
+  publication_id TEXT NOT NULL REFERENCES public.work_publications(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, publication_id)
+);
+CREATE INDEX IF NOT EXISTS work_likes_publication_idx ON public.work_likes(publication_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.showcase_entries (
   id TEXT PRIMARY KEY,
@@ -839,23 +889,4 @@ CREATE TABLE IF NOT EXISTS public.schema_migrations (
   name TEXT NOT NULL,
   checksum TEXT NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
   applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
--- Additive catalog only. Does not enable execution or create simulated activity.
-CREATE TABLE IF NOT EXISTS animation_challenges (
-  id TEXT PRIMARY KEY,
-  slug TEXT NOT NULL UNIQUE,
-  position INTEGER NOT NULL CHECK (position > 0),
-  status TEXT NOT NULL CHECK (status IN ('draft', 'published', 'retired'))
-);
-CREATE TABLE IF NOT EXISTS animation_challenge_versions (
-  id TEXT PRIMARY KEY,
-  challenge_id TEXT NOT NULL REFERENCES animation_challenges(id) ON DELETE RESTRICT,
-  version_number INTEGER NOT NULL CHECK (version_number > 0),
-  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 120),
-  title_en TEXT NOT NULL CHECK (length(title_en) BETWEEN 1 AND 120),
-  instructions TEXT NOT NULL CHECK (length(instructions) BETWEEN 1 AND 16384),
-  instructions_en TEXT NOT NULL CHECK (length(instructions_en) BETWEEN 1 AND 16384),
-  output_policy_version TEXT NOT NULL CHECK (output_policy_version = 'svg-animation-v1'),
-  content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[a-f0-9]{64}$'),
-  UNIQUE (challenge_id, version_number)
 );

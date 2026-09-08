@@ -1,5 +1,5 @@
 import type { Repository, ShowcaseBallot as SharedBallot, ShowcaseEntry as SharedEntry, ShowcaseVote as SharedVote } from '../../shared/types.ts';
-import type { PublicWorkPublication } from '../showcase/contracts.ts';
+import type { PublishedWorkPublicationSource, PublicWorkPublication } from '../showcase/contracts.ts';
 import type {
   ShowcaseBallot,
   ShowcaseEntry,
@@ -52,29 +52,29 @@ function voteDomain(row: SharedVote): ShowcaseVote {
 export class DrizzleVotingRepository implements VotingRepository {
   constructor(
     private readonly repository: Repository,
-    private readonly getPublication: (publicationId: string) => Promise<PublicWorkPublication | null>,
+    private readonly getPublication: (publicationId: string) => Promise<PublishedWorkPublicationSource | null>,
   ) {}
 
   async transaction<T>(fn: (tx: VotingRepository) => Promise<T>): Promise<T> {
     return this.repository.transaction(async (tx) => fn(new DrizzleVotingRepository(tx, this.getPublication)));
   }
 
-  async getPublishedPublication(publicationId: string): Promise<PublicWorkPublication | null> {
+  async getPublishedPublication(publicationId: string): Promise<PublishedWorkPublicationSource | null> {
     return this.getPublication(publicationId);
   }
 
   async getEntry(entryId: string): Promise<ShowcaseEntry | null> {
     const row = (await this.repository.read('showcaseEntries', { id: entryId }))[0];
     if (!row) return null;
-    const publication = await this.getPublication(row.publicationId);
-    return publication ? entryDomain(row, publication) : null;
+    const source = await this.getPublication(row.publicationId);
+    return source ? entryDomain(row, source.publication) : null;
   }
 
   async findEntryByPublication(publicationId: string, roundId: string, comparatorKey: string, policyVersion: string): Promise<ShowcaseEntry | null> {
     const row = (await this.repository.read('showcaseEntries', { publicationId, roundId, comparatorKey, policyVersion }))[0];
     if (!row) return null;
-    const publication = await this.getPublication(row.publicationId);
-    return publication ? entryDomain(row, publication) : null;
+    const source = await this.getPublication(row.publicationId);
+    return source ? entryDomain(row, source.publication) : null;
   }
 
   async insertEntry(entry: ShowcaseEntry): Promise<void> {
@@ -85,15 +85,15 @@ export class DrizzleVotingRepository implements VotingRepository {
     const rows = await this.repository.update('showcaseEntries', { id: entryId }, values as Partial<SharedEntry>);
     const row = rows[0];
     if (!row) return null;
-    const publication = await this.getPublication(row.publicationId);
-    return publication ? entryDomain(row, publication) : null;
+    const source = await this.getPublication(row.publicationId);
+    return source ? entryDomain(row, source.publication) : null;
   }
 
   async listActiveEntries(roundId: string, comparatorKey: string, policyVersion: string): Promise<ShowcaseEntryCandidate[]> {
     const rows = await this.repository.read('showcaseEntries', { roundId, comparatorKey, policyVersion, status: 'active' });
     const entries = await Promise.all(rows.map(async (row) => {
-      const publication = await this.getPublication(row.publicationId);
-      return publication ? entryDomain(row, publication) : null;
+      const source = await this.getPublication(row.publicationId);
+      return source ? entryDomain(row, source.publication) : null;
     }));
     return entries.filter((entry): entry is ShowcaseEntryCandidate => entry !== null);
   }

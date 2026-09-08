@@ -10,11 +10,28 @@ function fixture() {
   const envFile = join(dir, 'production.env');
   const calls = join(dir, 'calls');
   writeFileSync(envFile, [
-    'DATABASE_URL=postgres://db.example.invalid/agentforge',
+    'DATABASE_URL=postgres://operator:secret@db.example.invalid/agentforge',
+    'REDIS_URL=redis://worker:secret@redis.example.invalid:6379/0',
     'BETTER_AUTH_URL=https://arena.example.invalid',
     'BETTER_AUTH_SECRET=offline-test-secret-never-use-in-production',
     `CREDENTIAL_ENCRYPTION_KEY=${Buffer.alloc(32, 1).toString('base64')}`,
-    'APP_ENV=production', 'DEMO_MODE=false', 'PI_RUNTIME_ENABLED=false', 'ARTIFACT_ARENA_ENABLED=false',
+    'APP_ENV=production',
+    'DEMO_MODE=false',
+    'EVALUATION_SCHEDULER_MODE=outbox',
+    'EVALUATION_QUEUE_NAME=agentforge-evaluations',
+    'EVALUATION_QUEUE_PREFIX=agentforge-production',
+    'EVALUATION_WORKER_ID=hubei-worker-1',
+    'PI_RUNTIME_ENABLED=true',
+    'ARTIFACT_ARENA_ENABLED=true',
+    'ARTIFACT_ARENA_KILL_SWITCH=false',
+    'SANDBOX_RUNSC_PATH=/usr/local/bin/runsc',
+    'SANDBOX_ROOTFS=/opt/agentforge/rootfs',
+    'SANDBOX_WORK_ROOT=/var/lib/agentforge/sandboxes',
+    'SANDBOX_OCI_TEMPLATE=/opt/agentforge/oci-template.json',
+    'SANDBOX_IMAGE_DIGEST=sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0',
+    'ARTIFACT_STORAGE_ROOT=/var/lib/agentforge/artifacts',
+    'ARTIFACT_STORAGE_GID=987',
+    'PROVIDER_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.deepseek.com,openrouter.ai',
   ].join('\n'), { mode: 0o600 });
   // This command spy never builds images, connects to databases or changes Docker.
   writeFileSync(join(dir, 'docker'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_CALLS"\nif [ "$1 $2" = "image inspect" ]; then exit "${TEST_IMAGE_EXISTS:-1}"; fi\nexit 0\n', { mode: 0o700 });
@@ -45,7 +62,21 @@ test('deployment release orders build, migration and health wait without restart
     const calls = f.readCalls();
     assert.ok(calls.indexOf('build app') < calls.indexOf('run --rm --no-deps app pnpm db'));
     assert.ok(calls.indexOf('pnpm db') < calls.indexOf('up -d --no-build --wait'));
-    assert.doesNotMatch(calls, /prune|down|restart|docker.sock/);
+    assert.doesNotMatch(calls, /prune|down|restart|docker\.sock/);
+  } finally { rmSync(f.dir, { recursive: true }); }
+});
+
+test('deployment rollback reuses an existing immutable image and does not run migration', () => {
+  const f = fixture();
+  try {
+    const result = spawnSync('bash', ['scripts/deploy/app.sh', 'rollback', f.envFile, 'agentforge:previous-release'], {
+      cwd: process.cwd(), encoding: 'utf8',
+      env: { ...process.env, PATH: `${f.dir}:${process.env.PATH}`, TEST_CALLS: f.calls, TEST_IMAGE_EXISTS: '0' },
+    });
+    assert.equal(result.status, 0);
+    assert.match(f.readCalls(), /image inspect agentforge:previous-release/);
+    assert.match(f.readCalls(), /up -d --no-build --wait/);
+    assert.doesNotMatch(f.readCalls(), /build app|pnpm db|prune|down/);
   } finally { rmSync(f.dir, { recursive: true }); }
 });
 

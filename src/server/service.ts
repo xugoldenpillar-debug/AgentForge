@@ -295,8 +295,18 @@ export class ArenaService {
       'Invalid version selection.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
     const b=(await this.repo.read('builds',{id:buildId}))[0];ensure(b,'Build not found.',404,ERROR_CODES.BUILD_NOT_FOUND);
     const owner=b.userId===viewerId,versionId=requestedVersion??b.currentVersionId;
-    const [versions,creator,problem,submissions,forks]=await Promise.all([this.repo.read('buildVersions',{buildId}),this.user(b.userId),this.getProblem(b.problemId),this.repo.read('submissions',{buildId}),this.repo.read('forkRelations',{parentBuildId:buildId})]);
+    const [versions,creator,problem,animationChallenge,submissions,forks]=await Promise.all([
+      this.repo.read('buildVersions',{buildId}),
+      this.user(b.userId),
+      b.problemId ? this.getProblem(b.problemId) : Promise.resolve(null),
+      b.animationChallengeId ? this.repo.read('animationChallenges', { id: b.animationChallengeId }).then(rows => rows[0] ?? null) : Promise.resolve(null),
+      this.repo.read('submissions',{buildId}),
+      this.repo.read('forkRelations',{parentBuildId:buildId}),
+    ]);
     const version=versions.find(v=>v.id===versionId);ensure(version,'Version not found.',404,ERROR_CODES.VERSION_NOT_FOUND);
+    const animationChallengeVersion = version.animationChallengeVersionId
+      ? (await this.repo.read('animationChallengeVersions', { id: version.animationChallengeVersionId }))[0] ?? null
+      : null;
     const expose=owner||(b.visibility==='public'&&version.visibility==='public');
     const history = versions.sort((a,b)=>b.revision-a.revision).map(versionMetadata);
     const metadata = versionMetadata(version);
@@ -309,7 +319,7 @@ export class ArenaService {
         buildVersionId: version.id,
         operation: 'read',
       });
-      return {...b, mode: 'agent' as const, owner, creator: publicUser(creator), problem,
+      return {...b, mode: 'agent' as const, owner, creator: publicUser(creator), problem, animationChallenge, animationChallengeVersion,
         version: {...metadata, ...draft},
         history, submissions: [], forkCount: forks.length, canFork: true, promptVisible: true};
     }
@@ -352,7 +362,20 @@ export class ArenaService {
     await this.user(userId);
     await this.limit(userId, 'save', 40);
     const title = text(body.title, 'Build title', 1, 80);
-    const problem = await this.getProblem(text(body.problemId, 'Challenge ID'));
+    const animationChallengeVersionId = typeof body.animationChallengeVersionId === 'string'
+      ? text(body.animationChallengeVersionId, 'Animation challenge version ID', 1, 100)
+      : null;
+    const animationChallengeVersion = animationChallengeVersionId
+      ? (await this.repo.read('animationChallengeVersions', { id: animationChallengeVersionId }))[0]
+      : null;
+    const animationChallenge = animationChallengeVersion
+      ? (await this.repo.read('animationChallenges', { id: animationChallengeVersion.challengeId, status: 'published' }))[0]
+      : null;
+    if (animationChallengeVersionId) {
+      ensure(mode === 'agent' && animationChallengeVersion && animationChallenge,
+        'Animation challenge version not found.', 404, ERROR_CODES.CHALLENGE_NOT_FOUND);
+    }
+    const problem = animationChallengeVersionId ? null : await this.getProblem(text(body.problemId, 'Challenge ID'));
     const workflow = agentDefinition ? null : validateWorkflow(body.workflow);
     ensure(body.visibility === 'public' || body.visibility === 'private',
       'Choose public or private visibility.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
@@ -372,7 +395,7 @@ export class ArenaService {
       let revision = 1;
       if (old) {
         ensure(old.userId === userId, 'This build belongs to another player.', 403, ERROR_CODES.OWNERSHIP_FORBIDDEN);
-        ensure(old.problemId === problem.id, 'A build cannot change its challenge.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+        ensure(old.problemId === problem?.id && (old.animationChallengeId ?? null) === (animationChallenge?.id ?? null), 'A build cannot change its challenge.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
         ensure(body.currentVersionId === old.currentVersionId,
           'This build changed in another tab. Reload before saving.', 409, ERROR_CODES.BUILD_VERSION_CONFLICT);
         const current = (await tx.read('buildVersions', {id: old.currentVersionId, buildId}))[0];
@@ -382,7 +405,7 @@ export class ArenaService {
         revision = current.revision + 1;
       } else {
         ensure(!body.buildId, 'Build not found.', 404, ERROR_CODES.BUILD_NOT_FOUND);
-        await tx.insert('builds', [{id: buildId, problemId: problem.id, userId, title, visibility,
+        await tx.insert('builds', [{id: buildId, problemId: problem?.id ?? null, animationChallengeId: animationChallenge?.id ?? null, userId, title, visibility,
           currentVersionId: versionId, parentBuildId: null, createdAt: now(), updatedAt: now()}]);
       }
       const draft = agentDefinition
@@ -396,7 +419,7 @@ export class ArenaService {
         : null;
       if (draft) {
         await tx.insert('buildVersions', [{id: versionId, buildId, revision, title, visibility,
-          createdAt: now(), mode: 'agent', ...draft}]);
+          createdAt: now(), mode: 'agent', animationChallengeVersionId, ...draft}]);
       } else if (workflow) {
         await this.persistVersion(tx, buildId, versionId, revision, title, visibility, workflow);
       }
@@ -433,12 +456,12 @@ export class ArenaService {
             operation: 'fork',
           })
         : null;
-      await tx.insert('builds', [{id: newId, problemId: source.problemId, userId, title, visibility: 'private',
+      await tx.insert('builds', [{id: newId, problemId: source.problemId, animationChallengeId: source.animationChallengeId ?? null, userId, title, visibility: 'private',
         currentVersionId: versionId, parentBuildId: buildId, createdAt: now(), updatedAt: now()}]);
       if (draft) {
         // Bindings and grants have no storage/API in B2 and cannot be copied.
         await tx.insert('buildVersions', [{id: versionId, buildId: newId, revision: 1, title,
-          visibility: 'private', createdAt: now(), mode: 'agent', ...draft}]);
+          visibility: 'private', createdAt: now(), mode: 'agent', animationChallengeVersionId: version.animationChallengeVersionId ?? null, ...draft}]);
       } else {
         await this.persistVersion(tx, newId, versionId, 1, title, 'private', forkWorkflow(await this.workflow(selected, tx)));
       }
@@ -521,6 +544,7 @@ export class ArenaService {
     const buildId=text(body.buildId,'Build ID');
     const b=(await this.repo.read('builds',{id:buildId,userId}))[0];
     ensure(b,'Save your own build before running tests.',404,ERROR_CODES.BUILD_NOT_FOUND);
+    ensure(b.problemId, 'Creation Builds cannot run legacy DAG evaluations.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     const [p,w]=await Promise.all([this.getProblem(b.problemId),this.workflow(b.currentVersionId)]);
     validateWorkflow(w);
     const provider=await this.executionProviders(userId,w);
@@ -556,6 +580,7 @@ export class ArenaService {
     await this.user(userId);
     ensure(body.kind==='public'||body.kind==='hidden','Run kind must be public or hidden.',400,ERROR_CODES.REQUEST_VALIDATION_FAILED);const kind=body.kind;
     const b=(await this.repo.read('builds',{id:text(body.buildId,'Build ID'),userId}))[0];ensure(b,'Save your own build before running tests.',404,ERROR_CODES.BUILD_NOT_FOUND);
+    ensure(b.problemId, 'Creation Builds cannot run legacy DAG evaluations.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     const [p,w]=await Promise.all([this.getProblem(b.problemId),this.workflow(b.currentVersionId)]);validateWorkflow(w);
     await this.limit(userId, 'run', 10);
     const provider=await this.executionProviders(userId,w);

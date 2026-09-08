@@ -83,7 +83,8 @@ export const testCases = pgTable("test_cases", {
 
 export const builds = pgTable("builds", {
   id: text("id").primaryKey(),
-  problemId: text("problem_id").notNull().references(() => problems.id, { onDelete: "cascade" }),
+  problemId: text("problem_id").references(() => problems.id, { onDelete: "cascade" }),
+  animationChallengeId: text("animation_challenge_id").references(() => animationChallenges.id, { onDelete: "restrict" }),
   userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   visibility: text("visibility").notNull(),
@@ -91,7 +92,9 @@ export const builds = pgTable("builds", {
   parentBuildId: text("parent_build_id"),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
-});
+}, (t) => [
+  check("builds_target_check", sql`(${t.problemId} IS NOT NULL AND ${t.animationChallengeId} IS NULL) OR (${t.problemId} IS NULL AND ${t.animationChallengeId} IS NOT NULL)`),
+]);
 
 export const buildVersions = pgTable("build_versions", {
   id: text("id").primaryKey(),
@@ -99,6 +102,7 @@ export const buildVersions = pgTable("build_versions", {
   mode: text("mode").notNull().default("workflow"),
   agentDefinition: jsonb("agent_definition"),
   definitionDigest: text("definition_digest"),
+  animationChallengeVersionId: text("animation_challenge_version_id").references(() => animationChallengeVersions.id, { onDelete: "restrict" }),
   revision: integer("revision").notNull(),
   title: text("title").notNull(),
   visibility: text("visibility").notNull(),
@@ -714,6 +718,7 @@ export const creationRuns = pgTable("creation_runs", {
   environmentTemplateId: text("environment_template_id").notNull().references(() => environmentTemplates.id, { onDelete: "restrict" }),
   environmentTemplateVersionId: text("environment_template_version_id").notNull().references(() => environmentTemplateVersions.id, { onDelete: "restrict" }),
   evaluationJobId: text("evaluation_job_id").references(() => evaluationJobs.id, { onDelete: "restrict" }),
+  artifactBundleId: text("artifact_bundle_id"),
   status: text("status").notNull().default("queued"),
   context: jsonb("context").notNull(),
   contextDigest: text("context_digest").notNull(),
@@ -819,6 +824,16 @@ export const workPublications = pgTable("work_publications", {
   check("work_publications_status_check", sql`${t.status} in ('pending', 'published', 'rejected', 'withdrawn', 'taken-down')`),
   check("work_publications_revision_check", sql`${t.revision} > 0`),
   check("work_publications_withdrawn_check", sql`${t.status} <> 'withdrawn' OR ${t.withdrawnAt} IS NOT NULL`),
+]);
+
+export const workLikes = pgTable("work_likes", {
+  id: text("id").primaryKey(),
+  publicationId: text("publication_id").notNull().references(() => workPublications.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex("work_likes_user_publication_unique").on(t.userId, t.publicationId),
+  index("work_likes_publication_idx").on(t.publicationId, t.createdAt.desc()),
 ]);
 
 export const showcaseEntries = pgTable("showcase_entries", {
@@ -1005,6 +1020,7 @@ export const tableRegistry = {
   artifactBundles,
   artifacts,
   workPublications,
+  workLikes,
   showcaseEntries,
   showcaseBallots,
   showcaseVotes,

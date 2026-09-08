@@ -58,7 +58,7 @@ export type PreviewRenderer =
   | 'html-sandbox'
   | 'css-text'
   | 'markdown-sanitized'
-  | 'svg-rasterized'
+  | 'svg-animation-sandbox'
   | 'json-tree'
   | 'csv-table'
   | 'plain-text'

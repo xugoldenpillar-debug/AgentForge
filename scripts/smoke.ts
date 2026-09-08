@@ -150,18 +150,18 @@ for (const kind of ['public', 'hidden']) {
   assert(events.some(event => event.type === 'error' && event.code === 'RUNTIME_POLICY_DENIED'));
   assert(!events.some(event => event.type === 'complete' || event.type === 'start'));
 }
-for (const payload of [
-  {...agentPayload, visibility: 'public'},
-  {...agentPayload, workflow: starterWorkflow('json')},
-  {...agentPayload, credentialId: 'forbidden-binding'},
-  {...agentPayload, agentDefinition: {...agentPayload.agentDefinition, modelSelection: {
+for (const { payload, status } of [
+  { payload: {...agentPayload, visibility: 'public'}, status: 400 },
+  { payload: {...agentPayload, workflow: starterWorkflow('json')}, status: 400 },
+  { payload: {...agentPayload, credentialId: 'forbidden-binding'}, status: 400 },
+  { payload: {...agentPayload, agentDefinition: {...agentPayload.agentDefinition, modelSelection: {
     id: 'model', versionId: 'v1', contentDigest: `sha256:${'a'.repeat(64)}`,
-  }}},
+  }}}, status: 409 },
 ]) {
   const rejected = await fetch(`${base}/api/arena/builds`, {
     method: 'POST', headers: {'Content-Type': 'application/json', Origin: base, Cookie: cookie}, body: JSON.stringify(payload),
   });
-  assert.equal(rejected.status, 400);
+  assert.equal(rejected.status, status, `unexpected rejection for fields: ${Object.keys(payload).join(',')}`);
 }
 const stale = await fetch(`${base}/api/arena/builds`, {
   method: 'POST', headers: {'Content-Type': 'application/json', Origin: base, Cookie: cookie},

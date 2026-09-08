@@ -1,4 +1,5 @@
-import { piRuntimeEnabled, resolvePiRuntimeGate } from './environment.ts';
+import path from 'node:path';
+import { resolvePiRuntimeGate } from './environment.ts';
 
 export type ArtifactArenaFeatureReason =
   | 'enabled'
@@ -29,66 +30,79 @@ function exactTrue(env: Record<string, string | undefined>, key: string): boolea
   return env[key] === 'true';
 }
 
-function disabledState(
-  env: Record<string, string | undefined>,
-  killSwitchActive: boolean
-): ArtifactArenaFeatureState {
-  return killSwitchActive
-    ? { enabled: false, reason: 'kill_switch' }
-    : exactTrue(env, 'ARTIFACT_ARENA_ENABLED')
-      ? { enabled: false, reason: 'dependency_unavailable' }
-      : { enabled: false, reason: 'feature_disabled' };
+function value(env: Record<string, string | undefined>, key: string): string | undefined {
+  return env[key]?.trim() || undefined;
+}
+
+function absoluteConfigured(env: Record<string, string | undefined>, key: string): boolean {
+  const configured = value(env, key);
+  return Boolean(configured && path.isAbsolute(configured));
+}
+
+function state(enabled: boolean, reason: ArtifactArenaFeatureReason): ArtifactArenaFeatureState {
+  return Object.freeze({ enabled, reason });
+}
+
+function inactiveState(configured: boolean, killSwitchActive: boolean): ArtifactArenaFeatureState {
+  if (killSwitchActive) return state(false, 'kill_switch');
+  return state(false, configured ? 'dependency_unavailable' : 'feature_disabled');
 }
 
 /**
  * Public, non-secret capability projection for boot/UI decisions.
  *
- * This function intentionally reports the current implementation gates rather
- * than treating environment variables as proof that production dependencies
- * exist. In particular, live artifact storage, CreationRun EF wiring,
- * Showcase/Voting persistence, and Pi execution remain disabled until their
- * durable providers are injected and verified.
+ * A feature flag expresses operator intent. Durable features are advertised only
+ * when their non-secret configuration is complete; the concrete composition
+ * root and worker still validate connectivity, paths, ownership and digests.
  */
 export function artifactArenaAvailability(
   env: Record<string, string | undefined>,
-  nodeVersion = process.version
+  nodeVersion = process.version,
 ): ArtifactArenaAvailability {
-  const killSwitchActive = exactTrue(env, 'ARTIFACT_ARENA_KILL_SWITCH');
   const configured = exactTrue(env, 'ARTIFACT_ARENA_ENABLED');
+  const killSwitchActive = exactTrue(env, 'ARTIFACT_ARENA_KILL_SWITCH');
   const active = configured && !killSwitchActive;
-  const unavailable = disabledState(env, killSwitchActive);
-  const projectionState: ArtifactArenaFeatureState = active
-    ? { enabled: true, reason: 'enabled' }
-    : unavailable;
-  const dependencyUnavailable: ArtifactArenaFeatureState = {
-    enabled: false,
-    reason: 'dependency_unavailable',
-  };
+  const inactive = inactiveState(configured, killSwitchActive);
+  const enabled = state(true, 'enabled');
+  const dependencyUnavailable = state(false, 'dependency_unavailable');
+
+  const storageConfigured = absoluteConfigured(env, 'ARTIFACT_STORAGE_ROOT');
+  const schedulerConfigured = value(env, 'EVALUATION_SCHEDULER_MODE') === 'outbox';
+  const workerControlPlaneConfigured = schedulerConfigured
+    && ['DATABASE_URL', 'REDIS_URL', 'EVALUATION_QUEUE_NAME', 'EVALUATION_QUEUE_PREFIX',
+      'EVALUATION_WORKER_ID', 'CREDENTIAL_ENCRYPTION_KEY', 'ARTIFACT_STORAGE_GID']
+      .every((key) => Boolean(value(env, key)));
+  const sandboxConfigured = ['SANDBOX_RUNSC_PATH', 'SANDBOX_ROOTFS', 'SANDBOX_WORK_ROOT',
+    'SANDBOX_OCI_TEMPLATE'].every((key) => absoluteConfigured(env, key))
+    && /^sha256:[a-f0-9]{64}$/u.test(value(env, 'SANDBOX_IMAGE_DIGEST') ?? '');
+
+  const durableRead = configured && storageConfigured ? enabled : configured ? dependencyUnavailable : inactive;
+  const mutableDurable = active && storageConfigured ? enabled : inactive;
+  const creationRuns = active && storageConfigured && schedulerConfigured ? enabled : inactive;
 
   const piGate = resolvePiRuntimeGate(env, nodeVersion);
-  const piRuntime: ArtifactArenaFeatureState = !active
-    ? unavailable
-    : piGate.ok
-      ? dependencyUnavailable
-      : piGate.reason === 'node_engine'
-        ? { enabled: false, reason: 'node_engine' }
-        : { enabled: false, reason: 'feature_disabled' };
-  const historicalReads: ArtifactArenaFeatureState = {
-    enabled: true,
-    reason: 'enabled',
-  };
+  let piRuntime = inactive;
+  if (active) {
+    if (!piGate.ok) {
+      piRuntime = state(false, piGate.reason === 'node_engine' ? 'node_engine' : 'feature_disabled');
+    } else if (storageConfigured && workerControlPlaneConfigured && sandboxConfigured) {
+      piRuntime = enabled;
+    } else {
+      piRuntime = dependencyUnavailable;
+    }
+  }
 
   return Object.freeze({
     killSwitchActive,
-    historicalReads,
-    builderDesign: projectionState,
-    artifactPreviewProjection: projectionState,
-    // These are deliberately false even when the top-level flag is true. A
-    // flag expresses operator intent; it cannot substitute for durable wiring.
-    artifactRead: active ? dependencyUnavailable : unavailable,
-    creationRuns: active ? dependencyUnavailable : unavailable,
-    showcase: active ? dependencyUnavailable : unavailable,
-    voting: active ? dependencyUnavailable : unavailable,
+    historicalReads: enabled,
+    builderDesign: active ? enabled : inactive,
+    artifactPreviewProjection: active ? enabled : inactive,
+    // Reads remain available through a kill switch when immutable storage is
+    // configured. All mutation routes use the separate active-state gates.
+    artifactRead: durableRead,
+    creationRuns,
+    showcase: mutableDurable,
+    voting: mutableDurable,
     piRuntime,
   });
 }

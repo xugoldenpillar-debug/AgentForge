@@ -3,6 +3,8 @@ import type { AnimationChallenge, AnimationChallengeVersion } from '../shared/an
 import { SVG_ANIMATION_POLICY } from '../shared/animation-challenge.ts';
 import { ensure, ERROR_CODES } from '../shared/errors.ts';
 import type { Repository } from '../shared/types.ts';
+import { CREATION_AGENT_BUILD_CONTRACT } from './creation/catalog.ts';
+import { artifactArenaAvailability } from './artifact-arena-availability.ts';
 
 type VersionContent = Omit<AnimationChallengeVersion, 'contentDigest'>;
 
@@ -57,15 +59,21 @@ export async function seedAnimationChallenges(repo: Repository): Promise<void> {
   }
 }
 
-export async function listAnimationChallenges(repo: Repository) {
+export async function listAnimationChallenges(
+  repo: Repository,
+  env: Record<string, string | undefined> = process.env,
+) {
   const challenges = await repo.read('animationChallenges', { status: 'published' });
   const versions = await repo.read('animationChallengeVersions');
+  const availability = artifactArenaAvailability(env);
   return challenges.sort((a, b) => a.position - b.position || a.id.localeCompare(b.id)).map(challenge => ({
     ...challenge,
     versions: versions.filter(version => version.challengeId === challenge.id)
       .sort((a, b) => b.versionNumber - a.versionNumber),
     outputPolicy: SVG_ANIMATION_POLICY,
-    // Catalog publication must not imply that the execution dependency gates passed.
-    runAvailability: { enabled: false as const, reason: 'dependency_unavailable' as const },
+    agentBuildContract: CREATION_AGENT_BUILD_CONTRACT,
+    runAvailability: availability.creationRuns.enabled && availability.piRuntime.enabled
+      ? { enabled: true as const, reason: 'enabled' as const }
+      : { enabled: false as const, reason: availability.piRuntime.reason },
   }));
 }

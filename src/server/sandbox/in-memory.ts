@@ -93,6 +93,31 @@ export class InMemorySandboxProvider implements SandboxProvider {
     ensure(serializedArgsBytes <= session.environment.limits.maxInvocationArgsBytes, 'Tool arguments exceed the sandbox limit.', 400, ERROR_CODES.REQUEST_BODY_TOO_LARGE);
     ensure(session.invocations < session.environment.limits.maxInvocations, 'Sandbox invocation limit exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
     session.invocations += 1;
+    if (approvedTool.toolId === 'artifact.write') {
+      ensure(typeof boundedArgs.path === 'string' && typeof boundedArgs.content === 'string', 'Invalid artifact.write arguments.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+      const relativePath = validateRelativePath(boundedArgs.path);
+      const key = normalizedPathKey(relativePath);
+      ensure(!session.files.has(key), 'Sandbox output paths are immutable within an attempt.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+      const bytes = new TextEncoder().encode(boundedArgs.content);
+      validateBoundedLimit(bytes.byteLength, session.environment.limits.maxFileBytes, 'sandbox file size');
+      const total = [...session.files.values()].reduce((sum, file) => sum + file.bytes.byteLength, 0) + bytes.byteLength;
+      validateBoundedLimit(total, session.environment.limits.maxOutputBytes, 'sandbox output size');
+      ensure(session.files.size < session.environment.limits.maxEntries, 'Sandbox entry limit exceeded.', 413, ERROR_CODES.REQUEST_BODY_TOO_LARGE);
+      const sha256 = digestBytes(bytes);
+      session.files.set(key, {
+        bytes,
+        entry: {
+          relativePath,
+          kind: 'file',
+          bytes: bytes.byteLength,
+          mediaType: mediaTypeFor(relativePath),
+          classification: 'public-feedback',
+          objectVersion: `memory-v1-${sha256.slice('sha256:'.length, 24)}`,
+          sha256,
+        },
+      });
+      return { invocationId, status: 'completed', outputBytes: bytes.byteLength, outputDigest: sha256 };
+    }
     return {
       invocationId,
       status: 'completed',
@@ -193,4 +218,13 @@ function digestBytes(bytes: Uint8Array): string {
 
 function digestText(value: string): string {
   return digestBytes(new TextEncoder().encode(value));
+}
+
+
+function mediaTypeFor(relativePath: string): string {
+  const extension = relativePath.slice(relativePath.lastIndexOf('.')).toLowerCase();
+  return ({
+    '.html': 'text/html', '.htm': 'text/html', '.svg': 'image/svg+xml', '.css': 'text/css',
+    '.md': 'text/markdown', '.txt': 'text/plain', '.json': 'application/json',
+  } as Record<string, string>)[extension] ?? 'text/plain';
 }

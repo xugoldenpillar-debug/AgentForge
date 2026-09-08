@@ -25,6 +25,8 @@ import { projectPreviewContent } from './artifacts/preview.ts';
 import type { WorkPublicationService } from './showcase/service.ts';
 import type { ShowcaseVotingService } from './voting/service.ts';
 import type { AgentBuildResolver } from './agent-build-resolver.ts';
+import type { WorkLikeService } from './showcase/likes.ts';
+import type { CreationRunService } from './creation/service.ts';
 
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   ensure(request.headers.get('content-type')?.includes('application/json'), 'Use application/json.', 400, ERROR_CODES.REQUEST_CONTENT_TYPE_INVALID);
@@ -111,6 +113,19 @@ function requireVotingService(service: ArtifactArenaVotingPort | undefined, aren
   if (historicalRead) requireArtifactArenaHistoricalRead(arenaService);
   else requireArtifactArenaEnabled(arenaService);
   ensure(service, 'Showcase voting is not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return service;
+}
+
+function requireLikeService(service: ArtifactArenaLikePort | undefined, arenaService: ArenaService, historicalRead = false): ArtifactArenaLikePort {
+  if (historicalRead) requireArtifactArenaHistoricalRead(arenaService);
+  else requireArtifactArenaEnabled(arenaService);
+  ensure(service, 'Work likes are not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return service;
+}
+
+function requireCreationRunService(service: ArtifactArenaCreationRunPort | undefined, arenaService: ArenaService): ArtifactArenaCreationRunPort {
+  requireArtifactArenaEnabled(arenaService);
+  ensure(service, 'Artifact Arena creation runs are not available.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
   return service;
 }
 
@@ -336,10 +351,16 @@ type ArtifactArenaPublicationPort = Pick<WorkPublicationService,
   | 'reviewPublication'
   | 'getOwnerPublication'
   | 'getPublicPublication'
+  | 'resolvePublishedArtifact'
 >;
+
+type ArtifactArenaLikePort = Pick<WorkLikeService, 'summary' | 'like' | 'unlike'>;
+
+type ArtifactArenaCreationRunPort = Pick<CreationRunService, 'schedule' | 'get' | 'cancel' | 'retry'>;
 
 type ArtifactArenaVotingPort = Pick<ShowcaseVotingService,
   | 'getBallot'
+  | 'projectBallot'
   | 'projectLeaderboard'
   | 'createEntry'
   | 'withdrawEntry'
@@ -351,6 +372,8 @@ export interface ArtifactArenaHttpServices {
   readonly artifacts?: ArtifactReadPort;
   readonly publications?: ArtifactArenaPublicationPort;
   readonly voting?: ArtifactArenaVotingPort;
+  readonly likes?: ArtifactArenaLikePort;
+  readonly creationRuns?: ArtifactArenaCreationRunPort;
 }
 
 interface ArenaValidationOptions {
@@ -382,6 +405,9 @@ export async function handleArena(request: Request, options: { service: ArenaSer
     };
 
     if (method === 'GET') {
+      if (path[0] === 'creation-runs' && path[1] && path.length === 2) {
+        return json(await requireCreationRunService(artifactArena?.creationRuns, service).get(auth(), path[1]));
+      }
       if (path[0] === 'artifact-bundles' && path.length === 2) {
         const bundle = await requireArtifactRead(artifactArena?.artifacts, service, true).getBundleForOwner(auth(), path[1]);
         ensure(bundle, 'Artifact bundle not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
@@ -394,6 +420,21 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         if (path[2] === 'content') return artifactContentResponse(artifact);
         return json(projectPreviewContent(artifact.bundle.manifest, artifact.entry.artifactId, artifact.bytes, artifact.entry.bytes));
       }
+      if (path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'likes' && path.length === 4) {
+        return json(await requireLikeService(artifactArena?.likes, service, true).summary(path[2], userId));
+      }
+      if (path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'preview' && path.length === 4) {
+        const publicationService = requirePublicationService(artifactArena?.publications, service, true);
+        const target = await publicationService.resolvePublishedArtifact(path[2], url.searchParams.get('path') ?? '');
+        const artifact = await requireArtifactRead(artifactArena?.artifacts, service, true).getArtifactForOwner(target.ownerId, target.artifactId, MAX_ARTIFACT_READ_BYTES);
+        ensure(artifact, 'Published artifact not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+        assertArtifactReadIntegrity(artifact, MAX_ARTIFACT_READ_BYTES);
+        const projection = projectPreviewContent(artifact.bundle.manifest, artifact.entry.artifactId, artifact.bytes, artifact.entry.bytes);
+        return json({
+          ...projection,
+          plan: { ...projection.plan, artifactId: `${path[2]}:${artifact.entry.relativePath}` },
+        });
+      }
       if (path[0] === 'showcase' && path[1] === 'publications' && path[2] && path.length === 3) {
         return json(await requirePublicationService(artifactArena?.publications, service, true).getPublicPublication(path[2]));
       }
@@ -401,7 +442,7 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         return json(await requirePublicationService(artifactArena?.publications, service, true).getOwnerPublication(auth(), path[2]));
       }
       if (path[0] === 'showcase' && path[1] === 'ballots' && path[2] && path.length === 3) {
-        return json(await requireVotingService(artifactArena?.voting, service, true).getBallot(auth(), path[2]));
+        return json(await requireVotingService(artifactArena?.voting, service, true).projectBallot(auth(), path[2]));
       }
       if ((path[0] === 'showcase' && path[1] === 'leaderboard' && path.length === 2)
         || (path[0] === 'showcase-leaderboard' && path.length === 1)) {
@@ -445,7 +486,7 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         return json(await evaluationStatus(service, uid, row));
       }
       if (path[0] === 'animation-challenges' && path.length === 1) {
-        return json(await listAnimationChallenges(service.repo));
+        return json(await listAnimationChallenges(service.repo, service.options?.env ?? process.env));
       }
       if (path[0] === 'boot') return json(await service.boot());
       if (path[0] === 'overview') return json(await service.overview());
@@ -471,23 +512,45 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       if (path[0] === 'failures') return json(await service.failures(url.searchParams.get('problemId') || undefined));
     }
 
+    if (method === 'PUT' && path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'like' && path.length === 4) {
+      return json(await requireLikeService(artifactArena?.likes, service).like(auth(), path[2]));
+    }
+
+    if (method === 'DELETE' && path[0] === 'showcase' && path[1] === 'publications' && path[2] && path[3] === 'like' && path.length === 4) {
+      return json(await requireLikeService(artifactArena?.likes, service).unlike(auth(), path[2]));
+    }
+
     if (method === 'DELETE' && path[0] === 'providers' && path[1]) return json(await service.deleteProvider(auth(), path[1]));
 
     if (method === 'POST' || method === 'PATCH') {
       const isCancellation = path[0] === 'evaluation-jobs' && path[1] && path[2] === 'cancel';
+      const isCreationIdempotent = path[0] === 'creation-runs' && (path.length === 1 || path[2] === 'retry');
       const isShowcaseIdempotent =
         (path[0] === 'showcase' && ((path[1] === 'ballots' && path.length === 2) || path[1] === 'votes' || (path[1] === 'ballots' && path[3] === 'votes')))
         || path[0] === 'showcase-ballots'
         || path[0] === 'showcase-votes';
       const rawBody = request.body ? await readJson(request) : {};
-      const body = isCancellation ? rawBody : (path[0] === 'evaluation-jobs' || (path[0] === 'runs' && url.searchParams.get('mode') === 'async') || isShowcaseIdempotent ? withIdempotencyKey(request, rawBody) : rawBody);
+      const body = isCancellation ? rawBody : (path[0] === 'evaluation-jobs' || (path[0] === 'runs' && url.searchParams.get('mode') === 'async') || isShowcaseIdempotent || isCreationIdempotent ? withIdempotencyKey(request, rawBody) : rawBody);
       const validationPath = path[0] === 'runs' && url.searchParams.get('mode') === 'async'
         ? 'runs/async'
         : path.join('/');
       options.validateBody?.(validationPath, body, { agentBuildResolver: service.options.agentBuildResolver });
 
       if (method === 'POST' && path[0] === 'creation-runs' && path.length === 1) {
-        throw new AppError('Creation runs are unavailable until the Creation Evaluation Foundation contract is enabled.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+        const result = await requireCreationRunService(artifactArena?.creationRuns, service).schedule(auth(), {
+          buildVersionId: body.buildVersionId as string,
+          challengeVersionId: body.challengeVersionId as string,
+          credentialId: body.credentialId as string,
+          idempotencyKey: body.idempotencyKey as string,
+        });
+        return json(result, result.created ? 202 : 200);
+      }
+      if (method === 'POST' && path[0] === 'creation-runs' && path[1] && path[2] === 'cancel' && path.length === 3) {
+        return json(await requireCreationRunService(artifactArena?.creationRuns, service).cancel(auth(), path[1]), 202);
+      }
+      if (method === 'POST' && path[0] === 'creation-runs' && path[1] && path[2] === 'retry' && path.length === 3) {
+        const result = await requireCreationRunService(artifactArena?.creationRuns, service).retry(auth(), path[1], body.idempotencyKey as string);
+        return json(result, result.created ? 202 : 200);
       }
 
       if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'publications' && path.length === 2)
@@ -532,21 +595,25 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       }
       if (method === 'POST' && ((path[0] === 'showcase' && path[1] === 'ballots' && path.length === 2)
         || (path[0] === 'showcase-ballots' && path.length === 1))) {
-        return json(await requireVotingService(artifactArena?.voting, service).issueBallot(auth(), {
+        const voting = requireVotingService(artifactArena?.voting, service);
+        const ballot = await voting.issueBallot(auth(), {
           roundId: body.roundId as string,
           comparatorKey: body.comparatorKey as string,
           policyVersion: body.policyVersion as string,
           idempotencyKey: body.idempotencyKey as string,
-        }), 201);
+        });
+        return json(ballot ? await voting.projectBallot(auth(), ballot.id) : null, 201);
       }
       if (method === 'POST' && ((path[0] === 'showcase' && ((path[1] === 'votes' && path.length === 2) || (path[1] === 'ballots' && path[2] && path[3] === 'votes' && path.length === 4)))
         || (path[0] === 'showcase-votes' && path.length === 1)
         || (path[0] === 'showcase-ballots' && path[1] && path[2] === 'votes' && path.length === 3))) {
-        return json(await requireVotingService(artifactArena?.voting, service).castBallot(auth(), {
+        const voting = requireVotingService(artifactArena?.voting, service);
+        const result = await voting.castBallot(auth(), {
           ballotId: path[0] === 'showcase-votes' || path[1] === 'votes' ? body.ballotId as string : path[2],
           choice: body.choice as import('./voting/contracts.ts').BallotChoice,
           idempotencyKey: body.idempotencyKey as string,
-        }));
+        });
+        return json({ ...result, ballot: await voting.projectBallot(auth(), result.ballot.id) });
       }
       if (method === 'POST' && path[0] === 'components' && path.length === 1) {
         return json(await requireCommunity(communityService).createDraft(auth(), { definition: body.definition }), 201);

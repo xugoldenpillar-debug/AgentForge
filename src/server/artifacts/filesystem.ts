@@ -17,21 +17,32 @@ import type {
  * never accepted from a browser. Production can replace this adapter with S3,
  * COS or R2 without changing the durable artifact contract.
  */
+export interface FileSystemArtifactStorageOptions {
+  readonly directoryMode?: number;
+  readonly fileMode?: number;
+}
+
 export class FileSystemArtifactStorageAdapter implements ArtifactStorageAdapterWithWriter {
   private readonly root: string;
+  private readonly directoryMode: number;
+  private readonly fileMode: number;
 
-  constructor(root: string) {
+  constructor(root: string, options: FileSystemArtifactStorageOptions = {}) {
     ensure(path.isAbsolute(root), 'Artifact storage root must be absolute.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     this.root = path.resolve(root);
+    this.directoryMode = options.directoryMode ?? 0o700;
+    this.fileMode = options.fileMode ?? 0o600;
+    ensure((this.directoryMode & 0o007) === 0 && (this.fileMode & 0o007) === 0,
+      'Artifact storage must not grant access to other users.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
   }
 
   async write(request: ArtifactStorageWriteRequest): Promise<ArtifactStorageWriteResult> {
     validateRequest(request);
     const target = this.resolve(request.storageKey);
-    await fs.mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+    await fs.mkdir(path.dirname(target), { recursive: true, mode: this.directoryMode });
     const temp = `${target}.tmp-${process.pid}-${Math.random().toString(16).slice(2)}`;
     try {
-      await fs.writeFile(temp, request.bytes, { mode: 0o600, flag: 'wx' });
+      await fs.writeFile(temp, request.bytes, { mode: this.fileMode, flag: 'wx' });
       await fs.rename(temp, target).catch((error: unknown) => {
         if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
           throw new AppError('Artifact object already exists.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);

@@ -72,6 +72,12 @@ export interface PublicWorkPublication {
   createdAt: string;
 }
 
+/** Internal ownership-bearing source used for mutations; never serialize this wrapper to public or blind-vote clients. */
+export interface PublishedWorkPublicationSource {
+  ownerId: string;
+  publication: PublicWorkPublication;
+}
+
 export interface PublicArtifactProjection {
   relativePath: string;
   mediaType: string;

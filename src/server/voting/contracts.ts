@@ -1,4 +1,4 @@
-import type { PublicWorkPublication } from '../showcase/contracts.ts';
+import type { PublishedWorkPublicationSource, PublicWorkPublication } from '../showcase/contracts.ts';
 
 export type BallotChoice = 'a' | 'b' | 'tie' | 'skip';
 export type BallotStatus = 'open' | 'cast' | 'expired';
@@ -46,6 +46,19 @@ export interface ShowcaseBallot {
   castVoteId: string | null;
 }
 
+
+export interface BlindBallotCandidate {
+  readonly entryId: string;
+  readonly publication: PublicWorkPublication;
+}
+
+export interface ShowcaseBallotProjection extends ShowcaseBallot {
+  readonly candidates: null | {
+    readonly a: BlindBallotCandidate;
+    readonly b: BlindBallotCandidate;
+  };
+}
+
 export interface ShowcaseVote {
   id: string;
   ballotId: string;
@@ -79,7 +92,7 @@ export interface VoteAuditEvent {
 
 export interface VotingRepository {
   transaction<T>(fn: (tx: VotingRepository) => Promise<T>): Promise<T>;
-  getPublishedPublication(publicationId: string): Promise<PublicWorkPublication | null>;
+  getPublishedPublication(publicationId: string): Promise<PublishedWorkPublicationSource | null>;
   getEntry(entryId: string): Promise<ShowcaseEntry | null>;
   findEntryByPublication(publicationId: string, roundId: string, comparatorKey: string, policyVersion: string): Promise<ShowcaseEntry | null>;
   insertEntry(entry: ShowcaseEntry): Promise<void>;

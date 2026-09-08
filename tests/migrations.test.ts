@@ -51,7 +51,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
@@ -69,6 +69,12 @@ test('migration files are frozen, ordered and checksummed independently of targe
   assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.showcase_ballots/);
   assert.match(migrations[10].sql, /CREATE TABLE IF NOT EXISTS public\.showcase_votes/);
   assert.match(migrations[10].sql, /showcase_entries_active_owner_partition_unique/);
+  assert.match(migrations[14].sql, /ADD COLUMN IF NOT EXISTS artifact_bundle_id TEXT/);
+  assert.match(migrations[14].sql, /CREATE TABLE IF NOT EXISTS public\.work_likes/);
+  assert.match(migrations[15].sql, /ADD COLUMN IF NOT EXISTS animation_challenge_id TEXT/);
+  assert.match(migrations[15].sql, /ADD COLUMN IF NOT EXISTS animation_challenge_version_id TEXT/);
+  assert.match(migrations[15].sql, /ADD CONSTRAINT builds_target_check CHECK/);
+  assert.match(migrations[16].sql, /DROP CONSTRAINT IF EXISTS evaluation_jobs_check/);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -191,17 +197,35 @@ test('versioned migrations match the fresh schema phases and preserve legacy upg
   "protocol" TEXT NOT NULL DEFAULT 'openai-chat' CHECK (protocol IN ('openai-chat', 'openai-responses', 'anthropic-messages', 'google-generative-ai')),`;
   assert.ok(baseline.includes(protocolColumn));
   assert.match(migrations[12].sql, /ADD COLUMN IF NOT EXISTS protocol TEXT NOT NULL DEFAULT 'openai-chat'/);
-  const legacyBaseline = baseline.replace(protocolColumn, '')
+  const animationCatalog = /\n-- Additive catalog only\. Does not enable execution or create simulated activity\.[\s\S]*?\n(?=CREATE TABLE IF NOT EXISTS "builds")/;
+  assert.match(baseline, animationCatalog);
+  const legacyBaseline = baseline.replace(animationCatalog, '\n')
+    .replace(protocolColumn, '')
     .replace(/\n  "runtime_kind" TEXT,\n  "adapter_version" TEXT,\n  "policy_version" TEXT,/, '')
     .replace(/,\n  "pi_runtime_access" TEXT/, '')
     .replace(/\n  "mode" TEXT NOT NULL DEFAULT 'workflow',\n  "agent_definition" JSONB,\n  "definition_digest" TEXT,/, '')
     .replace(/,\n  CONSTRAINT build_versions_mode_payload CHECK \([\s\S]*?\n  \)/, '')
-    .replace(/\n  "source_version_id" TEXT REFERENCES "build_versions"\("id"\),/, '');
+    .replace(/\n  "source_version_id" TEXT REFERENCES "build_versions"\("id"\),/, '')
+    .replace('  "problem_id" TEXT REFERENCES "problems"("id") ON DELETE CASCADE,\n  "animation_challenge_id" TEXT REFERENCES "animation_challenges"("id") ON DELETE RESTRICT,',
+      '  "problem_id" TEXT NOT NULL REFERENCES "problems"("id") ON DELETE CASCADE,')
+    .replace(/,\n  CONSTRAINT builds_target_check CHECK \([\s\S]*?\n  \)/, '')
+    .replace(/\n  "animation_challenge_version_id" TEXT REFERENCES "animation_challenge_versions"\("id"\) ON DELETE RESTRICT,/, '')
+    .replace(/\nCREATE INDEX IF NOT EXISTS builds_animation_challenge_idx[\s\S]*?WHERE animation_challenge_version_id IS NOT NULL;\n/, '\n');
   assert.equal(migrations[0].sql.trim(), legacyBaseline.trim());
-  const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '');
+  const freshFoundation = foundation.replace(/^\s*Upgrades are applied by the versioned runner\.\s*/, '')
+    .replaceAll(", 'creation'", '')
+    .replace(", 'creation-run'", '')
+    .replace('  CONSTRAINT evaluation_jobs_association_check CHECK (', '  CHECK (')
+    .replace("\n    OR (purpose = 'creation' AND association_kind = 'creation-run' AND competitive_run_id IS NULL AND association_visibility IS NULL)", '');
   assert.equal(migrations[5].sql.trim(), freshFoundation.trim());
-  assert.equal(migrations[9].sql.trim(), `${artifactMarker}${artifact}`.trim());
-  assert.equal(migrations[10].sql.trim(), `${showcaseMarker}${showcase}`.trim());
+  const legacyArtifact = artifact
+    .replace(/\n  challenge_version_id TEXT REFERENCES public\.animation_challenge_versions\(id\) ON DELETE RESTRICT,/, '')
+    .replace(/\n  artifact_bundle_id TEXT,/, '')
+    .replace(/\nCREATE INDEX IF NOT EXISTS creation_runs_challenge_version_idx[^;]+;/, '')
+    .replace(/\nALTER TABLE public\.creation_runs[\s\S]*?ON public\.creation_runs\(artifact_bundle_id\) WHERE artifact_bundle_id IS NOT NULL;\n/, '');
+  const legacyShowcase = showcase.replace(/\nCREATE TABLE IF NOT EXISTS public\.work_likes \([\s\S]*?work_likes_publication_idx ON public\.work_likes\(publication_id, created_at DESC\);\n/, '');
+  assert.equal(migrations[9].sql.trim(), `${artifactMarker}${legacyArtifact}`.trim());
+  assert.equal(migrations[10].sql.trim(), `${showcaseMarker}${legacyShowcase}`.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');
   assert.equal(migrations[0].sql.replace('  "issuer" TEXT,\n', ''), legacy);
   const alter = migrations[1].sql.replace(/^--.*$/gm, '').trim();

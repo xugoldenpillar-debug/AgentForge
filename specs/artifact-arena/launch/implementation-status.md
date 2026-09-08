@@ -1,53 +1,98 @@
-# 当前实现、契约映射与发布阻塞
+# 两题公开版实现状态与发布边界
 
-2026-09-07；本文件记录 df6c worktree 的实际增量，不代表 L0–L8 完成。
+日期：2026-09-08。分支：`codex/two-challenge-launch`。
 
-## 已实现切片
+本文件区分 **已实现的代码能力**、**已执行的离线/基础设施验证** 与 **仍需目标部署或真实 BYOK 才能关闭的验收**。配置文件、单元测试或固定沙箱 smoke 不能单独证明生产上线。
 
-- `animationChallenges` / `animationChallengeVersions`：两题专用目录，不复用旧 Problem/TestSuite；数据库 ID 与 slug 分离，版本编号唯一，原文与 English 翻译独立保存。
-- `0012_animation_challenge_catalog.sql`：增量建表、外键、唯一约束。旧 migration 不改 checksum；目标 SQL 与 Drizzle 同步。
-- `seedCore`：同一事务只补缺失题目版本；发现原版本内容或 digest 漂移报冲突，不覆盖。保留已有 draft/retired 状态。不插入账号、作品、投票或运行。
-- `GET /api/arena/animation-challenges`：公开读取数据库已 published 的目录，包含历史版本和输出政策；明确返回运行依赖不可用。published 是题目可见，不是执行开关。
-- `src/shared/animation-challenge.ts`：冻结 svg-animation-v1 候选限制和社区门槛；不是 renderer、计费授权或已实现的共享配额。
-- 版本目前通过应用 insert-only 路径和 seed 防漂移保护；数据库高权限直接 UPDATE/DELETE 尚无不可变触发器，不应视为全面防篡改验收。
+## 已实现的产品闭环
 
-## 后续必须复用的实体与入口
+当前分支已实现：
 
-| 需求 | 已有落点 | 尚缺工作 |
-| --- | --- | --- |
-| 挑战到配置 | Agent Build/BuildVersion、agent-drafts、catalog-agent-build-resolver | challengeVersionId 绑定，权威环境/模型版本解析与真实配置保存测试 |
-| 题目内容到执行 | CreationBrief/Version、CreationRun、creation build context v1 | creation v2 增量契约与可空挑战引用；不得把新字段塞入 strict v1 |
-| 异步执行 | EF jobs/attempts/invocations/reservations/outbox、BullMQ worker | v2 message/purpose、Pi 执行器与计费/取消/核查完整接线；先兼容 consumer 再启 producer |
-| 隔离与存储 | SandboxProvider、collector、ArtifactBundle/manifest、durable read port | 真实隔离 provider、不可变私有对象存储、停止/快照证明 |
-| 作品与动画 | artifact preview、read authorization | 结构化净化、受限 CSS/SVG 动画、独立域与浏览器控制；不改变旧静态 renderer 冒充动画支持 |
-| 社区 | WorkPublication、ShowcaseEntry/Ballot/Vote/audit、durable repository | 生产接线、WorkLike、持久 season/comparator、独立选民门槛、共享限流、审核 UI |
+```text
+选题 → 配置 Pi / 模型 / Skill → 保存不可变 Build
+→ CreationRun v2 / EF outbox → Pi 工具循环 → runsc 沙箱
+→ 封存安全动画 → 发布/审核 → 点赞/盲选
+→ 社区分/分榜 → Fork
+```
 
-## 待补齐的发布参数（后续 hubei 授权见下）
+### L0–L1：契约、题目与配置
 
-没有从本机配置、其他 worktree 或插件账号推断授权，也未采购/调用真实模型/部署。
+- 两个正式不可变题目版本：
+  - `animation-pelican-bike-v1`
+  - `animation-qin-polar-bear-v1`
+- 保留原始中文题面及独立 English 文案；固定必交 `index.html`、内联 SVG、可选 `README.md`。
+- 动画策略允许受限 CSS keyframes 与 SVG 声明式动画，拒绝任意 JavaScript、事件处理器和外链主动内容。
+- Agent Build/BuildVersion 绑定题目版本；保存、CAS、owner、Fork 清凭据引用沿用现有不可变 Build 边界。
+- BYOK 协议由用户显式选择，不按 Key 前缀猜测：
+  - `openai-chat`
+  - `openai-responses`
+  - `anthropic-messages`
+  - `google-generative-ai`
+- Key 加密、owner 隔离、HTTPS/host allowlist/DNS/IP/重定向防护保留；Key 只在可信 Worker 解密。
 
-- 沙箱：供应商、地区、镜像 digest、网络和资源限制、容量/价格、停止/快照契约、退出方案。
-- 对象存储：供应商、地区、私有桶与不可变对象方案、保留期、孤儿审计、备份恢复。
-- 模型：平台批准模型固定版本、价格、凭据安全注入来源、两题真实验收的总费用上限。
-- 公开部署：目标环境/数据库/主域、无共享 Cookie 的预览域、全站日预算和并发、告警与审核负责人。
+### L2–L3：真实沙箱、持久存储和 Creation 执行
 
-这些缺口阻塞依赖验收和发布；不阻塞后续代码实现。旧每 run USD 0.10 候选值已由 BYOK 首发调整覆盖；仍未授权使用任何现有真实模型凭据。L0 尚未完整关闭，L1 仅目录切片，L2–L8 未交付。本轮未改变 PoC 邀请 gate、运行开关或生产权限。
+- `RunscSandboxProvider` 每个 attempt 创建独立 OCI/gVisor 实例，固定只读 rootfs、`--network=none`、受限 cgroup 与唯一可写 output mount。
+- Sandbox 只实现平台批准的有界 artifact tools，不执行模型生成的 shell/JavaScript。
+- `FileSystemArtifactStorageAdapter` 提供 VPS 私有不可变对象键；生产以 `2750` 目录、`0640` 文件和专用共享 GID 让宿主 Worker 写、Web 容器只读。
+- Creation v2 复用 EF jobs/attempts/invocations/usage/outbox、BullMQ、lease/fence、取消、重试与 reconciliation，不另造请求内队列。
+- `CreationEvaluationExecutor` 接通真实 Pi provider tool loop、BYOK provider、artifact collector/sealer 与 `CreationRun.artifactBundleId`。
+- 成功、失败、取消及 unknown provider result 均进入 sandbox dispose；unknown 不作为可安全自动重试的已知失败。
+- API Key 只传给 trusted provider factory，不进入 prompt、tool args、sandbox、artifact、repository projection 或执行结果。
 
-## BYOK 首发后续增量
+### L4–L6：安全预览、完整 UI 和社区闭环
 
-用户已覆盖平台模型首发和美元上限要求，见 [BYOK 首发调整](byok-first.md)。
-已完成四种协议的凭据持久化/SDK/UI接入与本地验证，见
-[本次验证](../../../../docs/verification/byok-protocols-df6c-2026-09-07.md)。
-这只接入现有模型适配器，不代表 creation v2、真实沙箱或社区闭环完成。
-目录提交为 e08de60；后续 BYOK 与部署脚本在本轮交付，实际 Git 状态以提交日志为准，未上线。
+- 作品封存时验证 required file、内联 SVG、大小/数量、路径、digest 与 attempt fence；数据库与 bundle 关联采用原子完成路径。
+- Preview sanitizer 支持受限动画并移除脚本、事件属性、外链和危险 CSS；UI 提供播放/暂停/重播与 reduced-motion 行为。
+- Artifact Arena 创作页面使用真实保存、运行、恢复、取消、重试、bundle/preview/download、发布、展示、投票、排行榜、点赞和 Fork API；产品路径不再使用 `FIXTURE_FILES` / `PREVIEW_FILES` 静态结果。
+- WorkLike 持久化：每用户每作品一票、可取消、禁自赞，和社区分分开显示。
+- A/B ballot 使用匿名公开投影、过期/唯一票/禁自投；社区分转换百分制并显示有效票数。
+- 正式榜门槛为 20 accepted votes、10 独立选民；不足显示样本不足。
+- 排名 partition 固定为题目版本 + `season-2026-launch` + `byok`，不与 Verified 或旧 DAG 混榜。
+- 正常注册用户无需 Pi 邀请即可进入；匿名访客仅可读公开作品/榜单，不能创建、点赞或投票。
 
-## hubei 实机后续验证与部署工具
+### L8 运维实现
 
-用户已明确授权 hubei 安装 gVisor、创建专用测试资源。`scripts/deploy/sandbox-smoke.py`
-在实机运行通过；安装器重复执行通过。不会改变 Docker 默认 runtime，也不重启旧容器。
-固定版本、镜像 digest、清理结果与未验收项见
-[部署文档](../../../../docs/deployment/hubei-byok.md) 和
-[实机验证](../../../../docs/verification/hubei-gvisor-deployment-2026-09-07.md)。
+- 动态 availability 与 `ARTIFACT_ARENA_KILL_SWITCH`：停止新变更和执行时，保留合法历史 artifact 读取。
+- Web Docker 容器只绑定 `127.0.0.1`，不挂 Docker socket、无 privileged、移除 Linux capabilities；Artifact 存储只读挂载。
+- Trusted Worker 直接在 Hubei 宿主 systemd 运行，使用固定 Node 22、专用 artifact GID、180 秒 graceful stop、独立启停和匹配版本回滚。
+- `scripts/deploy/preflight.mjs` 对 production/outbox/Redis/runsc/rootfs/digest/storage/GID/provider hosts 和公开开关做 fail-closed 检查。
+- `scripts/deploy/worker.sh` 只创建 AgentForge 专用组/目录/unit，不修改 Docker runtime，不 prune，不触碰其他容器。
+- 部署和回滚见 `docs/deployment/hubei-byok.md`。
 
-这是 L2 基础设施的实测进展，**不是生产 SandboxProvider 的应用接线**。archive 仍是本地测试文件，
-不是对象存储。主站生产数据库、对象存储、预览域和 creation v2 社区闭环仍未交付；L2–L8 不关闭。
+## 数据库迁移
+
+新增迁移：
+
+```text
+0015_showcase_likes_and_creation_bundle.sql
+0016_animation_build_binding.sql
+0017_drop_legacy_creation_job_check.sql
+```
+
+`src/db/schema.ts`、`src/db/schema.sql`、repository、seed 与测试同步。旧 migration bytes/checksum 未修改；fresh schema 比较会显式剥离新增结构后验证历史目标。
+
+## 已有验证证据
+
+- 四协议离线 SDK wire/auth/usage/cancel：`docs/verification/byok-protocols-df6c-2026-09-07.md`。
+- Hubei runsc 安装、固定 rootfs 与 provider smoke：`docs/verification/hubei-gvisor-deployment-2026-09-07.md`。
+- 2026-09-08 最终验证：`docs/verification/animation-launch-df6c-2026-09-08.md`。
+- Creation executor 集成测试验证 sealing、usage、unknown、cancel/dispose 与 key 不泄漏。
+- Creation UI 回归测试阻止 fixture 重新进入产品路径。
+- 部署测试验证公开开关、fail-closed preflight、只读 artifact mount、专用 GID、发布/回滚顺序及无 Docker prune/socket/privileged。
+- 本地 production Next.js 浏览器验证覆盖桌面/390px、中英文、正式榜/样本不足，以及点赞 `PUT`、取消点赞 `DELETE` 和 `0 → 1 → 0` 计数。
+- Hubei 以当前代码执行真实 `RunscSandboxProvider` smoke：封存对象可读、stop 可验证、snapshot digest 可读、attempt 与 runsc state 均清理；Worker production preflight 通过。
+
+未实际执行的命令不得在此标为通过；固定 QA 票只用于渲染/协议验收，不作为自然社区票。
+
+## 仍需目标部署关闭的 Gate
+
+以下属于环境/运营验收，不能由代码自动伪造：
+
+1. **两题真实模型 L7**：每题至少一次用户明确授权的 BYOK 调用，记录 run/attempt、协议/模型、Pi 版本、环境 digest、用量、artifact digest；当前没有可借用的用户 Key。
+2. **目标域名真实浏览器 G4/G7**：本地 production Next.js 的桌面/窄屏、中英文、点赞和榜单已验证；仍需在最终 Cloudflare HTTPS 域名完成真实 BYOK 的选题到 Fork，并用间隔截图或录屏证明两题 SVG 动画实际变化。
+3. **自然多账号社区 G6**：服务与 PostgreSQL 集成测试已覆盖发布/审核、禁自赞、like/unlike、盲选、门槛、撤下重算和并发唯一约束；仍需目标环境的自然用户票，固定 QA 票不得冒充自然社区票。
+4. **生产运维 G8**：确定实际数据库/Redis/域名/Cloudflare Tunnel、备份恢复、监控告警和审核值守负责人；记录部署 SHA、迁移结果、开启范围与回滚演练。
+5. **最终部署身份复核**：Hubei 已验证等价只读 bind 的 Worker 写/Web 读不可写模型，当前代码 provider smoke 也确认 `runsc list` 为空且 attempt 目录清理；正式上线后仍须以最终 Web 容器 UID/GID 和每个真实终态运行复核。
+
+在这些证据完成前，可以称代码闭环和部署方案已实现，不能称 L7–L8 生产验收或线上开放已经完成。

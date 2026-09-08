@@ -5,6 +5,7 @@ import type {
   CreationRunPort,
   PublicationActor,
   PublicationFileRef,
+  PublishedWorkPublicationSource,
   PublicWorkPublication,
   ReviewWorkPublicationInput,
   SealedBundleSource,
@@ -268,9 +269,23 @@ export class WorkPublicationService {
     return clone(publication);
   }
 
-  async getPublicPublication(publicationId: string): Promise<PublicWorkPublication> {
+
+  async resolvePublishedArtifact(publicationId: string, relativePath: string): Promise<{ ownerId: string; artifactId: string }> {
     const publication = await this.repo.getWorkPublication(publicationId);
     if (!publication || publication.status !== 'published') notFound('Published work not found.');
-    return clone(publicProjection(publication));
+    const path = safePath(relativePath, 'relativePath');
+    const file = publication.files.find((candidate) => candidate.relativePath === path);
+    if (!file) notFound('Published artifact not found.');
+    return { ownerId: publication.ownerId, artifactId: file.artifactId };
+  }
+
+  async resolvePublishedPublication(publicationId: string): Promise<PublishedWorkPublicationSource> {
+    const publication = await this.repo.getWorkPublication(publicationId);
+    if (!publication || publication.status !== 'published') notFound('Published work not found.');
+    return { ownerId: publication.ownerId, publication: clone(publicProjection(publication)) };
+  }
+
+  async getPublicPublication(publicationId: string): Promise<PublicWorkPublication> {
+    return (await this.resolvePublishedPublication(publicationId)).publication;
   }
 }

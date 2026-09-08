@@ -13,11 +13,17 @@ import { DrizzleShowcaseRepository } from './showcase/durable-repository.ts';
 import { WorkPublicationService } from './showcase/service.ts';
 import { DrizzleVotingRepository } from './voting/durable-repository.ts';
 import { ShowcaseVotingService } from './voting/service.ts';
+import { WorkLikeService } from './showcase/likes.ts';
+import { FileSystemArtifactStorageAdapter } from './artifacts/filesystem.ts';
+import { CreationRunService } from './creation/service.ts';
+import { creationAgentBuildResolver } from './creation/build-resolver.ts';
 
 let service: ArenaService | undefined;
 let communityService: CommunityService | undefined;
 let artifactArenaServices: ArtifactArenaHttpServices | undefined;
 let artifactArenaStorageAdapter: ArtifactStorageAdapter | undefined;
+let defaultArtifactStorageAdapter: FileSystemArtifactStorageAdapter | undefined;
+let defaultArtifactStorageRoot: string | undefined;
 
 function price(value: string | undefined): number | null {
   if (!value?.trim()) return null;
@@ -52,6 +58,7 @@ export function getService(): ArenaService {
     maxCases: Number(process.env.RUN_MAX_CASES || 50),
     competitiveRunScheduler,
     env: process.env,
+    agentBuildResolver: creationAgentBuildResolver,
   });
 }
 
@@ -77,36 +84,48 @@ const showcaseComparatorPolicy = Object.freeze({
 });
 
 /**
- * Build the durable Artifact Arena HTTP services only when an operator has
- * enabled the feature and supplied the real immutable object-store seam.
- *
- * The route currently calls this without dependencies, so the default remains
- * fail-closed. A future production composition root must explicitly pass a
- * provider-backed adapter; environment variables alone never select storage.
+ * Build the durable Artifact Arena HTTP services when the operator enables the
+ * launch and configures immutable storage. Tests may inject an adapter; the
+ * production route resolves the private filesystem store from
+ * ARTIFACT_STORAGE_ROOT. Mutation routes still apply the dynamic availability
+ * and kill-switch gates, while authorized historical reads remain available.
  */
 export function getArtifactArenaServices(
   dependencies: ArtifactArenaServiceDependencies = {},
 ): ArtifactArenaHttpServices | undefined {
-  if (process.env.ARTIFACT_ARENA_ENABLED !== 'true' || process.env.ARTIFACT_ARENA_KILL_SWITCH === 'true') return undefined;
-  const storageAdapter = dependencies.storageAdapter;
-  if (!storageAdapter) return undefined;
+  if (process.env.ARTIFACT_ARENA_ENABLED !== 'true') return undefined;
+  let storageAdapter = dependencies.storageAdapter;
+  if (!storageAdapter) {
+    const storageRoot = process.env.ARTIFACT_STORAGE_ROOT?.trim();
+    if (!storageRoot) return undefined;
+    if (!defaultArtifactStorageAdapter || defaultArtifactStorageRoot !== storageRoot) {
+      defaultArtifactStorageAdapter = new FileSystemArtifactStorageAdapter(storageRoot);
+      defaultArtifactStorageRoot = storageRoot;
+    }
+    storageAdapter = defaultArtifactStorageAdapter;
+  }
   if (artifactArenaServices && artifactArenaStorageAdapter === storageAdapter) return artifactArenaServices;
 
   const repository = new DrizzleRepository();
   const artifacts = new DrizzleArtifactReadPort(repository, storageAdapter);
   const showcaseRepository = new DrizzleShowcaseRepository(repository, artifacts);
+  const scheduler = process.env.EVALUATION_SCHEDULER_MODE === 'outbox'
+    ? createDurableOutboxCompetitiveRunScheduler(repository)
+    : undefined;
+  const creationRuns = scheduler ? new CreationRunService(repository, { scheduler }) : undefined;
   const publications = new WorkPublicationService(showcaseRepository, {
     resolveRoles: resolveCommunityRoles,
-  });
+  }, creationRuns);
   const votingRepository = new DrizzleVotingRepository(
     repository,
-    (publicationId) => publications.getPublicPublication(publicationId),
+    (publicationId) => publications.resolvePublishedPublication(publicationId),
   );
   const voting = new ShowcaseVotingService(votingRepository, {
     policy: showcaseComparatorPolicy,
   });
+  const likes = new WorkLikeService(repository);
 
   artifactArenaStorageAdapter = storageAdapter;
-  artifactArenaServices = { artifacts, publications, voting };
+  artifactArenaServices = { artifacts, publications, voting, likes, creationRuns };
   return artifactArenaServices;
 }

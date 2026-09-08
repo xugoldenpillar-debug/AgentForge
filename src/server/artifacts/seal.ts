@@ -29,7 +29,9 @@ export interface SealedArtifactBundleResult {
 /**
  * Materializes a sandbox snapshot into immutable objects and durable metadata.
  * Object writes happen before the database transaction; a failed transaction
- * compensates by removing only the objects created by this seal attempt.
+ * compensates by removing only the objects created by this seal attempt. The
+ * caller owns the surrounding run transition so it can verify sandbox disposal
+ * before exposing a completed result.
  */
 export async function sealArtifactBundle(input: SealArtifactBundleInput): Promise<SealedArtifactBundleResult> {
   const now = input.now ?? (() => new Date().toISOString());
@@ -119,13 +121,6 @@ export async function sealArtifactBundle(input: SealArtifactBundleInput): Promis
     await input.repository.transaction(async (tx) => {
       await tx.insert('artifactBundles', [bundle]);
       await tx.insert('artifacts', artifacts);
-      if (input.creationRunId) {
-        await tx.update('creationRuns', { id: input.creationRunId, ownerId: input.ownerId }, {
-          status: 'completed',
-          updatedAt: now(),
-          completedAt: now(),
-        });
-      }
     });
     return { bundle, artifacts, manifest };
   } catch (error) {

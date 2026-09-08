@@ -9,6 +9,7 @@ import type {
   LeaderboardProjection,
   LeaderboardRow,
   ShowcaseBallot,
+  ShowcaseBallotProjection,
   ShowcaseEntry,
   ShowcaseEntryCandidate,
   ShowcaseVote,
@@ -76,8 +77,10 @@ export class ShowcaseVotingService {
 
   async createEntry(actor: { id?: string; userId?: string } | string | null | undefined, input: CreateShowcaseEntryInput): Promise<ShowcaseEntry> {
     const ownerId = actorId(actor);
-    const publication = await this.repo.getPublishedPublication(input.publicationId);
-    if (!publication) notFound('Published work not found.');
+    const source = await this.repo.getPublishedPublication(input.publicationId);
+    if (!source) notFound('Published work not found.');
+    ensure(source.ownerId === ownerId, 'You do not own this publication.', 403, ERROR_CODES.OWNERSHIP_FORBIDDEN);
+    const publication = source.publication;
     const roundId = text(input.roundId, 'roundId', 200);
     const comparatorKey = text(input.comparatorKey, 'comparatorKey', 200);
     const policyVersion = text(input.policyVersion, 'policyVersion', 100);
@@ -123,6 +126,21 @@ export class ShowcaseVotingService {
       return clone(expired ?? { ...ballot, status: 'expired' });
     }
     return clone(ballot);
+  }
+
+  async projectBallot(actor: { id?: string; userId?: string } | string | null | undefined, ballotId: string): Promise<ShowcaseBallotProjection> {
+    const ballot = await this.getBallot(actor, ballotId);
+    const [entryA, entryB] = await Promise.all([
+      this.repo.getEntry(ballot.entryAId),
+      this.repo.getEntry(ballot.entryBId),
+    ]);
+    const candidates = entryA && entryB
+      ? {
+          a: { entryId: entryA.id, publication: clone(entryA.publication) },
+          b: { entryId: entryB.id, publication: clone(entryB.publication) },
+        }
+      : null;
+    return { ...ballot, candidates };
   }
 
   async issueBallot(actor: { id?: string; userId?: string } | string | null | undefined, input: IssueBallotInput): Promise<ShowcaseBallot | null> {
@@ -229,13 +247,18 @@ export class ShowcaseVotingService {
       else if (vote.choice === 'b') bStats.halfPoints += 2;
       else if (vote.choice === 'tie') { aStats.halfPoints += 1; bStats.halfPoints += 1; }
     }
-    const qualified = validVotes >= this.policy.minValidVotes && voters.size >= this.policy.minIndependentVoters;
+    const sampleQualified = validVotes >= this.policy.minValidVotes && voters.size >= this.policy.minIndependentVoters;
     const rows: LeaderboardRow[] = entries.map((entry) => {
       const current = stats.get(entry.id)!;
       const points = current.halfPoints / 2;
       const score = current.comparisons === 0 ? 0 : Math.round((current.halfPoints / (2 * current.comparisons)) * 1_000_000) / 1_000_000;
+      const qualified = current.comparisons >= this.policy.minValidVotes
+        && current.voters.size >= this.policy.minIndependentVoters;
       return { entryId: entry.id, publication: clone(entry.publication), comparisons: current.comparisons, halfPoints: current.halfPoints, points, score, validVoters: current.voters.size, qualified };
-    }).sort((left, right) => right.score - left.score || right.comparisons - left.comparisons || left.entryId.localeCompare(right.entryId));
-    return { roundId, comparatorKey, policyVersion, sample: { validVotes, independentVoters: voters.size, minValidVotes: this.policy.minValidVotes, minIndependentVoters: this.policy.minIndependentVoters, qualified }, rows };
+    }).sort((left, right) => Number(right.qualified) - Number(left.qualified)
+      || right.score - left.score
+      || right.comparisons - left.comparisons
+      || left.entryId.localeCompare(right.entryId));
+    return { roundId, comparatorKey, policyVersion, sample: { validVotes, independentVoters: voters.size, minValidVotes: this.policy.minValidVotes, minIndependentVoters: this.policy.minIndependentVoters, qualified: sampleQualified }, rows };
   }
 }

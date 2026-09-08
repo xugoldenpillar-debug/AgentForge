@@ -65,6 +65,7 @@ export interface CreationRunRecordInput {
   readonly environmentTemplateId: string;
   readonly environmentTemplateVersionId: string;
   readonly evaluationJobId?: string | null;
+  readonly artifactBundleId?: string | null;
   readonly status?: CreationRun['status'];
   readonly context: unknown;
   readonly createdAt: string;
@@ -98,6 +99,9 @@ export function toCreationRunRow(input: CreationRunRecordInput): CreationRun {
     evaluationJobId: input.evaluationJobId === undefined || input.evaluationJobId === null
       ? null
       : recordId(input.evaluationJobId, 'creation run evaluation job id'),
+    artifactBundleId: input.artifactBundleId === undefined || input.artifactBundleId === null
+      ? null
+      : recordId(input.artifactBundleId, 'creation run artifact bundle id'),
     status: input.status ?? 'queued',
     context,
     contextDigest: digestCreationBuildContext(context),

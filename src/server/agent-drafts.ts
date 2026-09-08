@@ -121,10 +121,12 @@ export function validateBuildEnvelope(body: Record<string, unknown>) {
   const mode = body.mode ?? 'workflow';
   ensure(!Object.hasOwn(body, 'mode') || body.mode === 'workflow' || body.mode === 'agent',
     'Invalid Build mode.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
-  const allowed = new Set(['mode', 'buildId', 'currentVersionId', 'problemId', 'title', 'visibility',
+  const allowed = new Set(['mode', 'buildId', 'currentVersionId', 'problemId', 'animationChallengeVersionId', 'title', 'visibility',
     mode === 'agent' ? 'agentDefinition' : 'workflow']);
   ensure(Object.keys(body).every(key => allowed.has(key)) &&
-    typeof body.problemId === 'string' && body.problemId.length > 0 && body.problemId.length <= 100 &&
+    ((typeof body.problemId === 'string' && body.problemId.length > 0 && body.problemId.length <= 100) !==
+      (typeof body.animationChallengeVersionId === 'string' && body.animationChallengeVersionId.length > 0 && body.animationChallengeVersionId.length <= 100)) &&
+    (mode === 'agent' || body.animationChallengeVersionId === undefined) &&
     typeof body.title === 'string' && body.title.trim().length > 0 && body.title.length <= 80 &&
     (body.visibility === 'public' || body.visibility === 'private') &&
     ['buildId', 'currentVersionId'].every(key => !Object.hasOwn(body, key) ||

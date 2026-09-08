@@ -17,8 +17,8 @@ test('default route composition remains fail-closed when durable Arena services 
     service: arenaService({ ARTIFACT_ARENA_ENABLED: 'true' }),
     userId: 'owner-1',
     origin: ORIGIN,
-    // The production route passes getArtifactArenaServices() here. With no
-    // explicitly injected object-storage adapter it must return undefined.
+    // The production route passes getArtifactArenaServices() here. Without
+    // ARTIFACT_STORAGE_ROOT it remains fail-closed.
   });
 
   assert.equal(response.status, 503);

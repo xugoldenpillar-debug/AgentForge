@@ -81,3 +81,9 @@
   .source { display: none; }
   .sandbox { min-height: 240px; }
 }
+
+.animationControls { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.animationControls button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 5px; background: #111a13; color: var(--muted); font: 9px var(--mono); cursor: pointer; }
+.animationControls button:hover, .animationControls button:focus-visible { border-color: #536d3f; color: var(--lime); }
+.canvasHeader .animationControls + .format { margin-left: 2px; }
+@media (max-width: 560px) { .animationControls button span { display: none; } }

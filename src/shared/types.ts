@@ -49,7 +49,7 @@ export interface User {
   createdAt: string; updatedAt: string; elo: number; reputation: number; isSeed: boolean;
   piRuntimeAccess?: 'applied' | 'invited' | null;
 }
-export interface Build { id: string; problemId: string; userId: string; title: string; visibility: 'public' | 'private'; currentVersionId: string; parentBuildId: string | null; createdAt: string; updatedAt: string }
+export interface Build { id: string; problemId: string | null; animationChallengeId?: string | null; userId: string; title: string; visibility: 'public' | 'private'; currentVersionId: string; parentBuildId: string | null; createdAt: string; updatedAt: string }
 export interface BuildVersion {
   id: string;
   buildId: string;
@@ -61,6 +61,8 @@ export interface BuildVersion {
   mode?: 'workflow' | 'agent';
   agentDefinition?: AgentBuildDefinition | null;
   definitionDigest?: string | null;
+  /** Exact animation prompt version for Creation v2; null for legacy DAG builds. */
+  animationChallengeVersionId?: string | null;
 }
 export interface StoredNode extends WorkflowNode { versionId: string }
 export interface StoredEdge extends WorkflowEdge { versionId: string }
@@ -141,6 +143,7 @@ export interface CreationRun {
   environmentTemplateId: string;
   environmentTemplateVersionId: string;
   evaluationJobId: string | null;
+  artifactBundleId: string | null;
   status: CreationRunStatus;
   context: CreationBuildContextV1;
   contextDigest: string;
@@ -178,6 +181,13 @@ export interface Artifact {
   visibility: ArtifactVisibility;
   createdAt: string;
 }
+export interface WorkLike {
+  id: string;
+  publicationId: string;
+  userId: string;
+  createdAt: string;
+}
+
 export type WorkPublicationStatus = 'pending' | 'published' | 'rejected' | 'withdrawn' | 'taken-down';
 export type WorkPublicationPreviewKind = 'html' | 'markdown' | 'svg' | 'image' | 'json' | 'csv' | 'text' | 'download';
 export interface WorkPublicationFileRef {
@@ -520,7 +530,7 @@ export interface Tables {
   environmentTemplates: EnvironmentTemplate; environmentTemplateVersions: EnvironmentTemplateVersionRow;
   creationBriefs: CreationBrief; creationBriefVersions: CreationBriefVersionRow; creationRuns: CreationRun;
   artifactBundles: ArtifactBundle; artifacts: Artifact;
-  workPublications: WorkPublication; showcaseEntries: ShowcaseEntry; showcaseBallots: ShowcaseBallot;
+  workPublications: WorkPublication; workLikes: WorkLike; showcaseEntries: ShowcaseEntry; showcaseBallots: ShowcaseBallot;
   showcaseVotes: ShowcaseVote; showcaseAuditEvents: ShowcaseAuditEvent;
   componentTestSuites: ComponentTestSuite; componentTestSuiteVersions: ComponentTestSuiteVersion;
   componentTestRuns: ComponentTestRun; publicationRequests: PublicationRequest;

@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));
@@ -67,6 +67,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       'showcase_audit_events',
       'animation_challenges',
       'animation_challenge_versions',
+      'work_likes',
     ];
     const freshTables = await sql`
       SELECT table_name
@@ -101,7 +102,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
     const snapshot = async () => {
       const results: Record<string, unknown> = {};
       for (const table of ['users', 'accounts', 'sessions', 'provider_credentials', 'builds', 'build_versions', 'runs', 'submissions']) {
-        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' - 'runtime_kind' - 'adapter_version' - 'policy_version' - 'pi_runtime_access' - 'mode' - 'agent_definition' - 'definition_digest' - 'protocol' AS row FROM public.${table} t ORDER BY id`);
+        results[table] = await connection.unsafe(`SELECT to_jsonb(t) - 'issuer' - 'runtime_kind' - 'adapter_version' - 'policy_version' - 'pi_runtime_access' - 'mode' - 'agent_definition' - 'definition_digest' - 'protocol' - 'animation_challenge_id' - 'animation_challenge_version_id' AS row FROM public.${table} t ORDER BY id`);
       }
       return JSON.stringify(results);
     };

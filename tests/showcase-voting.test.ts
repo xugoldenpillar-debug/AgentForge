@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import { AppError, ERROR_CODES } from '../src/shared/error-core.ts';
 import type {
+  PublishedWorkPublicationSource,
   PublicWorkPublication,
   SealedBundleSource,
   ShowcaseAuditEvent,
@@ -58,7 +59,7 @@ class MemoryShowcaseRepository implements ShowcaseRepository {
 }
 
 class MemoryVotingRepository implements VotingRepository {
-  publications = new Map<string, PublicWorkPublication>();
+  publications = new Map<string, PublishedWorkPublicationSource>();
   entries = new Map<string, ShowcaseEntry>();
   ballots = new Map<string, ShowcaseBallot>();
   votes = new Map<string, ShowcaseVote>();
@@ -68,9 +69,9 @@ class MemoryVotingRepository implements VotingRepository {
   async transaction<T>(fn: (tx: VotingRepository) => Promise<T>): Promise<T> {
     return fn(this);
   }
-  async getPublishedPublication(publicationId: string): Promise<PublicWorkPublication | null> {
-    const publication = this.publications.get(publicationId);
-    return publication ? clone(publication) : null;
+  async getPublishedPublication(publicationId: string): Promise<PublishedWorkPublicationSource | null> {
+    const source = this.publications.get(publicationId);
+    return source ? clone(source) : null;
   }
   async getEntry(entryId: string): Promise<ShowcaseEntry | null> {
     const entry = this.entries.get(entryId);
@@ -236,10 +237,26 @@ function votingService(repo: MemoryVotingRepository): ShowcaseVotingService {
 function seedEntries(repo: MemoryVotingRepository): void {
   for (const [id, ownerId] of [['entry-a', 'alice'], ['entry-b', 'bob'], ['entry-c', 'carol']] as const) {
     const publication: PublicWorkPublication = { publicationId: `pub-${id}`, title: id, description: `work ${id}`, entryPath: 'index.html', releaseDigest: `release-${id}`, files: [{ relativePath: 'index.html', mediaType: 'text/html', previewKind: 'html', sizeBytes: 1, sha256: digest(id) }], createdAt: '2026-09-07T00:00:00.000Z' };
-    repo.publications.set(publication.publicationId, publication);
+    repo.publications.set(publication.publicationId, { ownerId, publication });
     repo.entries.set(id, { id, ownerId, publicationId: publication.publicationId, comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, roundId: 'round-1', status: 'active', publicationReleaseDigest: publication.releaseDigest, publication, createdAt: publication.createdAt, withdrawnAt: null });
   }
 }
+
+test('only the publication owner can enter a published work into the showcase', async () => {
+  const repo = new MemoryVotingRepository();
+  seedEntries(repo);
+  const service = votingService(repo);
+
+  await assert.rejects(() => service.createEntry('mallory', {
+    publicationId: 'pub-entry-a',
+    roundId: 'round-2',
+    comparatorKey: policy.comparatorKey,
+    policyVersion: policy.policyVersion,
+  }), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.OWNERSHIP_FORBIDDEN);
+
+  assert.equal([...repo.entries.values()].some((entry) => entry.roundId === 'round-2'), false);
+  assert.equal(repo.audits.some((event) => event.action === 'showcase-entry.created'), false);
+});
 
 test('pairwise voting canonicalizes pairs, enforces anti-self-vote and idempotency, including tie and skip', async () => {
   const repo = new MemoryVotingRepository();
@@ -249,6 +266,13 @@ test('pairwise voting canonicalizes pairs, enforces anti-self-vote and idempoten
   assert.ok(ballot);
   assert.equal(ballot?.entryAId, 'entry-a');
   assert.equal(ballot?.entryBId, 'entry-b');
+  const projected = await service.projectBallot('voter', ballot!.id);
+  assert.equal(projected.candidates?.a.publication.publicationId, 'pub-entry-a');
+  assert.equal(projected.candidates?.b.publication.publicationId, 'pub-entry-b');
+  assert.equal('ownerId' in (projected.candidates?.a ?? {}), false);
+  assert.doesNotMatch(JSON.stringify(projected.candidates), /alice|bob|carol/);
+  await assert.rejects(() => service.projectBallot('other-voter', ballot!.id), (error: unknown) =>
+    error instanceof AppError && error.code === ERROR_CODES.RESOURCE_NOT_FOUND);
   const sameBallot = await service.issueBallot('voter', { roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'ballot-1' });
   assert.equal(sameBallot?.id, ballot?.id);
   const first = await service.castBallot('voter', { ballotId: ballot!.id, choice: 'tie', idempotencyKey: 'vote-1' });
@@ -283,6 +307,13 @@ test('leaderboard uses deterministic normalized pairwise score and sample thresh
   assert.equal(board.rows[1]?.score, 0.25);
   assert.equal(board.rows[0]?.publication.publicationId, 'pub-entry-a');
   assert.deepEqual(board.rows.map((row) => row.entryId), ['entry-a', 'entry-b', 'entry-c']);
+  assert.deepEqual(board.rows.map((row) => row.qualified), [true, true, false]);
+  for (const row of board.rows.filter((candidate) => candidate.qualified)) {
+    assert.ok(row.comparisons >= policy.minValidVotes);
+    assert.ok(row.validVoters >= policy.minIndependentVoters);
+  }
+  assert.equal(board.rows[2]?.comparisons, 0);
+  assert.equal(board.rows[2]?.validVoters, 0);
 });
 
 test('withdrawn entries cannot receive new ballots or remain in the leaderboard', async () => {

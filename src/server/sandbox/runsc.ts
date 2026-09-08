@@ -69,6 +69,26 @@ const nativeRunner: RunscCommandRunner = {
   },
 };
 
+export interface RunscCleanupFileSystem {
+  removeBundle(bundlePath: string): Promise<void>;
+  bundleExists(bundlePath: string): Promise<boolean>;
+}
+
+const nativeCleanupFileSystem: RunscCleanupFileSystem = {
+  async removeBundle(bundlePath) {
+    await fs.rm(bundlePath, { recursive: true, force: true });
+  },
+  async bundleExists(bundlePath) {
+    try {
+      await fs.lstat(bundlePath);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  },
+};
+
 export interface RunscSandboxProviderOptions {
   readonly runscPath?: string;
   /** A read-only OCI rootfs exported from an approved, digest-pinned image. */
@@ -76,6 +96,7 @@ export interface RunscSandboxProviderOptions {
   readonly workRoot?: string;
   readonly templatePath?: string;
   readonly commandRunner?: RunscCommandRunner;
+  readonly cleanupFileSystem?: RunscCleanupFileSystem;
   readonly commandTimeoutMs?: number;
   readonly now?: () => string;
 }
@@ -92,6 +113,7 @@ interface Session {
   state: 'active' | 'stopped' | 'disposed';
   invocations: number;
   mountedInputs: readonly ApprovedInputHandle[];
+  snapshot?: SandboxSnapshot;
 }
 
 /**
@@ -106,6 +128,7 @@ interface Session {
 export class RunscSandboxProvider implements SandboxProvider {
   private readonly options: Required<Pick<RunscSandboxProviderOptions, 'runscPath' | 'workRoot' | 'commandTimeoutMs'>> & RunscSandboxProviderOptions;
   private readonly runner: RunscCommandRunner;
+  private readonly cleanupFileSystem: RunscCleanupFileSystem;
   private readonly sessions = new Map<SandboxHandle, Session>();
 
   constructor(options: RunscSandboxProviderOptions) {
@@ -118,6 +141,7 @@ export class RunscSandboxProvider implements SandboxProvider {
       commandTimeoutMs: options.commandTimeoutMs ?? 15_000,
     };
     this.runner = options.commandRunner ?? nativeRunner;
+    this.cleanupFileSystem = options.cleanupFileSystem ?? nativeCleanupFileSystem;
   }
 
   async create(environment: FrozenEnvironment, attemptFence: AttemptFence): Promise<SandboxHandle> {
@@ -128,10 +152,14 @@ export class RunscSandboxProvider implements SandboxProvider {
     const outputPath = path.join(bundlePath, 'output');
     const runtimePath = path.join(bundlePath, 'runtime');
     await fs.mkdir(outputPath, { recursive: true, mode: 0o700 });
+    // The sandbox process is deliberately nobody:nogroup. The trusted host
+    // worker owns the bundle, but the output bind mount must be writable by
+    // that non-root process before runsc changes into /output.
+    await fs.chown(outputPath, 65534, 65534);
     await fs.mkdir(runtimePath, { recursive: true, mode: 0o700 });
     await fs.mkdir(path.join(this.options.workRoot, 'runsc'), { recursive: true, mode: 0o700 });
     try {
-      await this.copyRootfs(bundlePath);
+      await this.validateRootfs();
       await this.writeConfig(bundlePath, environment);
       const args = this.runscArgs('run', '--detach', id);
       const child = this.runner.spawn(args, { cwd: bundlePath });
@@ -150,10 +178,15 @@ export class RunscSandboxProvider implements SandboxProvider {
         state: 'active',
         invocations: 0,
         mountedInputs: [],
+        snapshot: undefined,
       });
       return handle;
     } catch (error) {
-      await this.cleanupBundle(bundlePath, id).catch(() => undefined);
+      try {
+        await this.cleanupBundle(bundlePath, id);
+      } catch {
+        throw new AppError('Failed sandbox startup left cleanup requiring reconciliation.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+      }
       if (error instanceof AppError) throw error;
       throw new AppError('Unable to start the approved gVisor sandbox.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
     }
@@ -201,28 +234,32 @@ export class RunscSandboxProvider implements SandboxProvider {
     const session = this.getSession(sandbox);
     ensure(session.state !== 'disposed', 'Sandbox has already been disposed.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     if (session.state === 'stopped') return { sandboxId: sandbox, state: 'stopped', verified: true, stoppedProcessCount: 0 };
+    let stoppedProcessCount = 0;
     try {
       await this.runner.run(this.runscArgs('kill', session.id, 'KILL'), { cwd: session.bundlePath, timeoutMs: this.options.commandTimeoutMs });
+      stoppedProcessCount = 1;
     } catch {
-      // A dead process is equivalent to stopped, but delete below still fences
-      // the runsc state and will fail closed if cleanup cannot be verified.
+      // The process may already be dead. Verification below is authoritative.
     }
+    await this.verifyStopped(session.id, session.bundlePath);
     session.state = 'stopped';
-    return { sandboxId: sandbox, state: 'stopped', verified: true, stoppedProcessCount: 1 };
+    return { sandboxId: sandbox, state: 'stopped', verified: true, stoppedProcessCount };
   }
 
   async snapshot(sandbox: SandboxHandle): Promise<SandboxSnapshot> {
     const session = this.getSession(sandbox);
     ensure(session.state === 'active' || session.state === 'stopped', 'Sandbox is not available for snapshot.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    if (session.snapshot) return session.snapshot;
     const entries = await collectOutputEntries(session.outputPath, session.environment.limits);
     const snapshotBase = {
-      snapshotId: `${session.id}-snapshot-${Date.now()}`,
+      snapshotId: `${session.id}-snapshot-${createHash('sha256').update(JSON.stringify(entries)).digest('hex').slice(0, 16)}`,
       attemptId: session.fence.attemptId,
       fenceToken: session.fence.fenceToken,
       sealedAt: this.now(),
       entries: Object.freeze(entries),
     } as const;
-    return Object.freeze({ ...snapshotBase, snapshotDigest: computeSandboxSnapshotDigest(snapshotBase) });
+    session.snapshot = Object.freeze({ ...snapshotBase, snapshotDigest: computeSandboxSnapshotDigest(snapshotBase) });
+    return session.snapshot;
   }
 
   async readSnapshotFile(sandbox: SandboxHandle, snapshot: SandboxSnapshot, relativePath: string, limit: number): Promise<SandboxSnapshotFile> {
@@ -251,11 +288,11 @@ export class RunscSandboxProvider implements SandboxProvider {
     return { sandboxId: sandbox, state: 'disposed', verified: true, stoppedProcessCount: 0 };
   }
 
-  private async copyRootfs(bundlePath: string): Promise<void> {
+  private async validateRootfs(): Promise<void> {
     const source = this.options.rootfsPath;
-    const stat = await fs.stat(source).catch(() => null);
-    ensure(stat?.isDirectory() === true, 'Configured sandbox rootfs is unavailable.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
-    await fs.cp(source, path.join(bundlePath, 'rootfs'), { recursive: true, force: false, errorOnExist: true });
+    const stat = await fs.lstat(source).catch(() => null);
+    ensure(stat?.isDirectory() === true && !stat.isSymbolicLink(), 'Configured sandbox rootfs is unavailable.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    ensure((stat.mode & 0o222) === 0, 'Configured sandbox rootfs must be immutable.', 503, ERROR_CODES.RUNTIME_POLICY_DENIED);
   }
 
   private async writeConfig(bundlePath: string, environment: FrozenEnvironment): Promise<void> {
@@ -264,7 +301,10 @@ export class RunscSandboxProvider implements SandboxProvider {
       const raw = await fs.readFile(this.options.templatePath, 'utf8');
       config = JSON.parse(raw) as Record<string, unknown>;
     }
-    config.root = { path: 'rootfs', readonly: true };
+    // The digest-pinned base rootfs is shared read-only across attempts. Only
+    // /output is per-attempt and writable, avoiding a large hard-link-expanding
+    // copy while preserving tenant separation.
+    config.root = { path: this.options.rootfsPath, readonly: true };
     config.process = {
       ...(isRecord(config.process) ? config.process : {}),
       terminal: false,
@@ -291,12 +331,13 @@ export class RunscSandboxProvider implements SandboxProvider {
   }
 
   private async waitForRunsc(id: string, cwd: string): Promise<void> {
-    for (let attempt = 0; attempt < 20; attempt += 1) {
+    const deadline = Date.now() + this.options.commandTimeoutMs;
+    while (Date.now() < deadline) {
       try {
-        await this.runner.run(this.runscArgs('state', id), { cwd, timeoutMs: this.options.commandTimeoutMs });
+        await this.runner.run(this.runscArgs('state', id), { cwd, timeoutMs: Math.min(2_000, this.options.commandTimeoutMs) });
         return;
       } catch {
-        await new Promise((resolve) => setTimeout(resolve, 25));
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
     throw new AppError('gVisor sandbox did not become ready.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
@@ -306,9 +347,60 @@ export class RunscSandboxProvider implements SandboxProvider {
     return [this.options.runscPath, `--root=${path.join(this.options.workRoot, 'runsc')}`, '--platform=systrap', '--network=none', ...args];
   }
 
+  private async verifyStopped(id: string, cwd: string): Promise<void> {
+    try {
+      const stateResult = await this.runner.run(this.runscArgs('state', id), {
+        cwd,
+        timeoutMs: this.options.commandTimeoutMs,
+      });
+      const state = parseRunscState(stateResult.stdout);
+      ensure(state.id === id && state.status === 'stopped',
+        'Sandbox process remains active after stop.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+      return;
+    } catch {
+      // If state is unavailable because the instance disappeared, list is the
+      // independent source of truth. Any remaining entry fails closed.
+    }
+    const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
+      cwd: this.options.workRoot,
+      timeoutMs: this.options.commandTimeoutMs,
+    }).catch(() => {
+      throw new AppError('Sandbox stop could not verify runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    });
+    const states = parseRunscList(listing.stdout);
+    ensure(!states.some((state) => state.id === id),
+      'Sandbox process remains active after stop.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+
   private async cleanupBundle(bundlePath: string, id: string): Promise<void> {
-    await this.runner.run(this.runscArgs('delete', '--force', id), { cwd: bundlePath, timeoutMs: this.options.commandTimeoutMs }).catch(() => undefined);
-    await fs.rm(bundlePath, { recursive: true, force: true });
+    // Delete is intentionally followed by an independent list operation. A
+    // failed delete may mean the instance was already gone, while a successful
+    // delete is not sufficient evidence that the runtime state disappeared.
+    await this.runner.run(this.runscArgs('delete', '--force', id), {
+      cwd: bundlePath,
+      timeoutMs: this.options.commandTimeoutMs,
+    }).catch(() => undefined);
+
+    const listing = await this.runner.run(this.runscArgs('list', '--format=json'), {
+      cwd: this.options.workRoot,
+      timeoutMs: this.options.commandTimeoutMs,
+    }).catch(() => {
+      throw new AppError('Sandbox cleanup could not verify runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    });
+    const states = parseRunscList(listing.stdout);
+    ensure(!states.some((state) => state.id === id),
+      'Sandbox runtime state remains after cleanup.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+
+    // Keep the bundle for diagnosis until runtime deletion is independently
+    // verified. Removing it earlier would destroy evidence while runsc might
+    // still own a live attempt.
+    await this.cleanupFileSystem.removeBundle(bundlePath).catch(() => {
+      throw new AppError('Sandbox attempt directory could not be removed.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    });
+    const bundleStillExists = await this.cleanupFileSystem.bundleExists(bundlePath).catch(() => {
+      throw new AppError('Sandbox attempt directory cleanup could not be verified.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    });
+    ensure(!bundleStillExists, 'Sandbox attempt directory remains after cleanup.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
   }
 
   private getSession(handle: SandboxHandle): Session {
@@ -336,6 +428,7 @@ export class RunscSandboxProvider implements SandboxProvider {
       }
       throw error;
     });
+    session.snapshot = undefined;
   }
 
   private async readOutputFile(session: Session, relativePath: string, limit: number): Promise<Uint8Array> {
@@ -345,6 +438,45 @@ export class RunscSandboxProvider implements SandboxProvider {
     validateBoundedLimit(bytes.byteLength, limit, 'snapshot file size');
     return bytes;
   }
+}
+
+
+interface RunscStateSummary {
+  readonly id: string;
+}
+
+interface RunscStateDetail extends RunscStateSummary {
+  readonly status: string;
+}
+
+function parseRunscState(stdout: string): RunscStateDetail {
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout.trim());
+  } catch {
+    throw new AppError('Sandbox stop received an invalid runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+  ensure(isRecord(value) && typeof value.id === 'string' && value.id.length > 0
+    && typeof value.status === 'string' && value.status.length > 0,
+  'Sandbox stop received an invalid runtime state.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return { id: value.id, status: value.status };
+}
+
+function parseRunscList(stdout: string): readonly RunscStateSummary[] {
+  const text = stdout.trim();
+  if (text === '' || text === 'null') return [];
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new AppError('Sandbox cleanup received an invalid runtime state listing.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  }
+  ensure(Array.isArray(value), 'Sandbox cleanup received an invalid runtime state listing.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+  return value.map((entry) => {
+    ensure(isRecord(entry) && typeof entry.id === 'string' && entry.id.length > 0,
+      'Sandbox cleanup received an invalid runtime state entry.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    return { id: entry.id };
+  });
 }
 
 async function collectOutputEntries(root: string, limits: FrozenEnvironment['limits']): Promise<SandboxSnapshotEntry[]> {

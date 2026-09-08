@@ -328,3 +328,45 @@ test('preview sanitization removes event handlers, remote resources, and dangero
     assert.match(markdownProjection.body.content, /javascript/);
   }
 });
+
+test('preview sanitization independently rejects consecutive remote-valued SVG attributes', () => {
+  const content = '<svg id="https://remote.invalid/a-long-first-value" filter="//x.invalid/f"><rect width="10" height="10" /></svg>';
+  const bytes = new TextEncoder().encode(content);
+  const entry: ArtifactManifestEntry = {
+    artifactId: 'consecutive-remote-attributes', slotId: 'entry', relativePath: 'index.svg', mediaType: 'image/svg+xml',
+    bytes: bytes.byteLength, sha256: digest(bytes), objectVersion: 'v1', classification: 'public-feedback',
+  };
+  const projection = projectPreviewContent(previewManifest([entry]), entry.artifactId, bytes, bytes.byteLength);
+  assert.equal(projection.body.kind, 'text');
+  if (projection.body.kind !== 'text') return;
+  assert.doesNotMatch(projection.body.content, /remote\.invalid|x\.invalid|https?:\/\/|\/\//i);
+  assert.doesNotMatch(projection.body.content, /id=|filter=/i);
+  assert.match(projection.body.content, /<rect\b/i);
+});
+
+test('animation preview preserves approved CSS and SVG animation while rejecting active content', () => {
+  const content = `<!doctype html><html><head><style>
+    @keyframes pedal { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }
+    .wheel { animation: pedal 1s linear infinite; background: url(https://remote.invalid/x); }
+    @import url(https://remote.invalid/import.css);
+  </style></head><body>
+    <svg viewBox="0 0 100 100" onload="alert(1)">
+      <circle class="wheel" cx="50" cy="50" r="20"><animate attributeName="opacity" values="1;.5;1" dur="1s" repeatCount="indefinite" /></circle>
+      <animate attributeName="href" values="javascript:alert(1)" dur="1s" />
+      <foreignObject><iframe src="https://remote.invalid/frame"></iframe></foreignObject>
+    </svg><script>alert(1)</script>
+  </body></html>`;
+  const bytes = new TextEncoder().encode(content);
+  const entry: ArtifactManifestEntry = {
+    artifactId: 'animated-html', slotId: 'entry', relativePath: 'index.html', mediaType: 'text/html',
+    bytes: bytes.byteLength, sha256: digest(bytes), objectVersion: 'v1', classification: 'public-feedback',
+  };
+  const projection = projectPreviewContent(previewManifest([entry]), entry.artifactId, bytes, bytes.byteLength);
+  assert.equal(projection.body.kind, 'text');
+  if (projection.body.kind !== 'text') return;
+  assert.match(projection.body.content, /@keyframes\s+pedal/i);
+  assert.match(projection.body.content, /animation:\s*pedal/i);
+  assert.match(projection.body.content, /<animate\b[^>]*attributeName="opacity"/i);
+  assert.doesNotMatch(projection.body.content, /<script|onload|foreignObject|iframe|remote\.invalid|javascript:|@import|url\s*\(/i);
+  assert.doesNotMatch(projection.body.content, /attributeName="href"/i);
+});

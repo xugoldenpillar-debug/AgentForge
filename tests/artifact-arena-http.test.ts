@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import type { ArenaService } from '../src/server/service.ts';
 import { handleArena, type ArtifactArenaHttpServices } from '../src/server/http.ts';
 import { computeArtifactManifestDigest, MAX_ARTIFACT_READ_BYTES } from '../src/server/artifacts/index.ts';
 import { validateBody } from '../src/server/validation.ts';
+import { AppError, ERROR_CODES } from '../src/shared/errors.ts';
 import type { ArtifactReadBundle, ArtifactReadPort, ArtifactReadResult } from '../src/server/artifacts/access.ts';
 import type { ArtifactManifest, ArtifactManifestEntry } from '../src/server/artifacts/types.ts';
 import type {
@@ -162,6 +164,12 @@ const publications: NonNullable<ArtifactArenaHttpServices['publications']> = {
   async getPublicPublication() {
     return structuredClone(publicPublication);
   },
+  async resolvePublishedArtifact(publicationId, relativePath) {
+    if (publicationId !== publication.id || relativePath !== htmlEntry.relativePath) {
+      throw new AppError('Published artifact not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+    }
+    return { ownerId: OWNER, artifactId: htmlEntry.artifactId };
+  },
 };
 
 const baseOptions = {
@@ -305,17 +313,114 @@ test('canonical publication routes dispatch through the narrow service seam and 
   assert.equal(invalidAliasResponse.status, 400);
 });
 
-test('creation-runs remain explicitly unavailable and do not enter a legacy evaluation purpose', async () => {
+test('publication likes use authenticated idempotent PUT and DELETE routes', async () => {
+  const calls: string[] = [];
+  const likes: NonNullable<ArtifactArenaHttpServices['likes']> = {
+    async summary(publicationId, viewerId) {
+      calls.push(`summary:${publicationId}:${viewerId ?? 'anonymous'}`);
+      return { publicationId, count: 0, likedByViewer: false };
+    },
+    async like(userId, publicationId) {
+      calls.push(`like:${userId}:${publicationId}`);
+      return { publicationId, count: 1, likedByViewer: true, changed: true };
+    },
+    async unlike(userId, publicationId) {
+      calls.push(`unlike:${userId}:${publicationId}`);
+      return { publicationId, count: 0, likedByViewer: false, changed: true };
+    },
+  };
+  const options = { ...baseOptions, userId: OWNER, artifactArena: { likes } };
+
+  const put = await handleArena(request('showcase/publications/pub-1/like', {
+    method: 'PUT',
+    headers: { Origin: ORIGIN },
+  }), options);
+  assert.equal(put.status, 200);
+  assert.equal((await body(put)).likedByViewer, true);
+
+  const remove = await handleArena(request('showcase/publications/pub-1/like', {
+    method: 'DELETE',
+    headers: { Origin: ORIGIN },
+  }), options);
+  assert.equal(remove.status, 200);
+  assert.equal((await body(remove)).likedByViewer, false);
+  assert.deepEqual(calls, [`like:${OWNER}:pub-1`, `unlike:${OWNER}:pub-1`]);
+
+  const anonymous = await handleArena(request('showcase/publications/pub-1/like', {
+    method: 'PUT',
+    headers: { Origin: ORIGIN },
+  }), { ...baseOptions, artifactArena: { likes } });
+  assert.equal(anonymous.status, 401);
+});
+
+test('creation-runs fail closed when the Creation Evaluation Foundation service is not injected', async () => {
+  const idempotencyKey = 'creation-http-unavailable';
   const response = await handleArena(request('creation-runs', {
     method: 'POST',
-    headers: { Origin: ORIGIN },
-    body: JSON.stringify({}),
+    headers: { Origin: ORIGIN, 'Idempotency-Key': idempotencyKey },
+    body: JSON.stringify({
+      buildVersionId: 'build-version-1',
+      challengeVersionId: 'animation-pelican-bike-v1',
+      credentialId: 'credential-1',
+      idempotencyKey,
+    }),
   }), { ...baseOptions, userId: OWNER });
 
   assert.equal(response.status, 503);
   const payload = await body(response);
   assert.deepEqual(payload.error, {
     code: 'RUNTIME_UNAVAILABLE',
-    message: 'Creation runs are unavailable until the Creation Evaluation Foundation contract is enabled.',
+    message: 'Artifact Arena creation runs are not available.',
   });
+});
+
+
+test('public publication previews expose only the reviewed artifact projection', async () => {
+  const response = await handleArena(request('showcase/publications/pub-1/preview?path=index.html'), {
+    ...baseOptions,
+    artifactArena: { publications, artifacts },
+  });
+  assert.equal(response.status, 200);
+  const payload = await body(response);
+  assert.equal((payload.body as Record<string, unknown>).kind, 'text');
+  assert.doesNotMatch(JSON.stringify(payload), /<script|remote\.invalid|storageKey|artifact-1|fence-1/i);
+
+  const deniedPublications: NonNullable<ArtifactArenaHttpServices['publications']> = {
+    ...publications,
+    async resolvePublishedArtifact() {
+      throw new AppError('Published work not found.', 404, ERROR_CODES.RESOURCE_NOT_FOUND);
+    },
+  };
+  const denied = await handleArena(request('showcase/publications/pub-1/preview?path=index.html'), {
+    ...baseOptions,
+    artifactArena: { publications: deniedPublications, artifacts },
+  });
+  assert.equal(denied.status, 404);
+});
+
+test('creation-run HTTP idempotency rejects missing keys and header/body conflicts before scheduling', async () => {
+  const valid = {
+    buildVersionId: 'build-version-1',
+    challengeVersionId: 'animation-pelican-bike-v1',
+    credentialId: 'credential-1',
+  };
+  const missing = await handleArena(request('creation-runs', {
+    method: 'POST',
+    headers: { Origin: ORIGIN },
+    body: JSON.stringify(valid),
+  }), { ...baseOptions, userId: OWNER });
+  assert.equal(missing.status, 400);
+
+  const conflict = await handleArena(request('creation-runs', {
+    method: 'POST',
+    headers: { Origin: ORIGIN, 'Idempotency-Key': 'header-key' },
+    body: JSON.stringify({ ...valid, idempotencyKey: 'body-key' }),
+  }), { ...baseOptions, userId: OWNER });
+  assert.equal(conflict.status, 409);
+});
+
+
+test('Next.js arena adapter exports PUT so like requests reach the internal router', async () => {
+  const source = await readFile(new URL('../src/app/api/arena/[...path]/route.ts', import.meta.url), 'utf8');
+  assert.match(source, /export const PUT = handler;/);
 });

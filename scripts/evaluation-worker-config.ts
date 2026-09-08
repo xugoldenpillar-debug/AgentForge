@@ -1,3 +1,4 @@
+import path from 'node:path';
 export interface ProductionWorkerConfig {
   readonly databaseUrl: string;
   readonly redisUrl: string;
@@ -23,6 +24,14 @@ export interface ProductionWorkerConfig {
   readonly platformApiKey?: string;
   readonly platformInputPrice: number | null;
   readonly platformOutputPrice: number | null;
+  readonly artifactArenaEnabled: boolean;
+  readonly sandboxRunscPath?: string;
+  readonly sandboxRootfs?: string;
+  readonly sandboxWorkRoot?: string;
+  readonly sandboxOciTemplate?: string;
+  readonly sandboxImageDigest?: string;
+  readonly artifactStorageRoot?: string;
+  readonly artifactStorageGid?: number;
 }
 
 export const REQUIRED_WORKER_CONFIGURATION = [
@@ -52,6 +61,12 @@ function validateName(value: string, name: string): string {
   return value;
 }
 
+function requiredPositiveInteger(env: NodeJS.ProcessEnv, name: string): number {
+  const value = Number(requiredEnv(env, name));
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid worker configuration: ${name}`);
+  return value;
+}
+
 function positiveInteger(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
   const raw = env[name]?.trim();
   if (!raw) return fallback;
@@ -76,6 +91,18 @@ function nonNegativeNumber(env: NodeJS.ProcessEnv, name: string, fallback: numbe
   return value;
 }
 
+function absolutePath(env: NodeJS.ProcessEnv, name: string): string {
+  const value = requiredEnv(env, name);
+  if (!path.isAbsolute(value)) throw new Error(`Invalid worker configuration: ${name} must be absolute`);
+  return path.resolve(value);
+}
+
+function imageDigest(env: NodeJS.ProcessEnv): string {
+  const value = requiredEnv(env, 'SANDBOX_IMAGE_DIGEST');
+  if (!/^sha256:[a-f0-9]{64}$/u.test(value)) throw new Error('Invalid worker configuration: SANDBOX_IMAGE_DIGEST');
+  return value;
+}
+
 function optionalPrice(env: NodeJS.ProcessEnv, name: string): number | null {
   const raw = env[name]?.trim();
   if (!raw) return null;
@@ -96,6 +123,17 @@ export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Producti
   const queuePrefix = validateName(requiredEnv(env, 'EVALUATION_QUEUE_PREFIX'), 'EVALUATION_QUEUE_PREFIX');
   const workerId = validateName(requiredEnv(env, 'EVALUATION_WORKER_ID'), 'EVALUATION_WORKER_ID');
   const encryptionKey = requiredEnv(env, 'CREDENTIAL_ENCRYPTION_KEY');
+  const artifactArenaEnabled = env.ARTIFACT_ARENA_ENABLED === 'true' && env.ARTIFACT_ARENA_KILL_SWITCH !== 'true';
+  if (artifactArenaEnabled && env.PI_RUNTIME_ENABLED !== 'true') {
+    throw new Error('PI_RUNTIME_ENABLED must be true when Artifact Arena execution is enabled.');
+  }
+  const sandboxRunscPath = artifactArenaEnabled ? absolutePath(env, 'SANDBOX_RUNSC_PATH') : undefined;
+  const sandboxRootfs = artifactArenaEnabled ? absolutePath(env, 'SANDBOX_ROOTFS') : undefined;
+  const sandboxWorkRoot = artifactArenaEnabled ? absolutePath(env, 'SANDBOX_WORK_ROOT') : undefined;
+  const sandboxOciTemplate = artifactArenaEnabled ? absolutePath(env, 'SANDBOX_OCI_TEMPLATE') : undefined;
+  const sandboxImageDigest = artifactArenaEnabled ? imageDigest(env) : undefined;
+  const artifactStorageRoot = artifactArenaEnabled ? absolutePath(env, 'ARTIFACT_STORAGE_ROOT') : undefined;
+  const artifactStorageGid = artifactArenaEnabled ? requiredPositiveInteger(env, 'ARTIFACT_STORAGE_GID') : undefined;
 
   const concurrency = positiveInteger(env, 'EVALUATION_WORKER_CONCURRENCY', 1);
   const workerLeaseTtlMs = positiveInteger(env, 'EVALUATION_WORKER_LEASE_TTL_MS', 60_000);
@@ -133,5 +171,13 @@ export function readWorkerConfig(env: NodeJS.ProcessEnv = process.env): Producti
     platformApiKey: env.AI_GATEWAY_API_KEY?.trim() || undefined,
     platformInputPrice: optionalPrice(env, 'PLATFORM_INPUT_PRICE_PER_MILLION'),
     platformOutputPrice: optionalPrice(env, 'PLATFORM_OUTPUT_PRICE_PER_MILLION'),
+    artifactArenaEnabled,
+    sandboxRunscPath,
+    sandboxRootfs,
+    sandboxWorkRoot,
+    sandboxOciTemplate,
+    sandboxImageDigest,
+    artifactStorageRoot,
+    artifactStorageGid,
   };
 }

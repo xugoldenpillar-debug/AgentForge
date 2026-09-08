@@ -4,7 +4,6 @@ import {
   EvaluationService,
   type EvaluationDispatchSink,
 } from './domain.ts';
-import type { CompetitiveRunJobScheduler } from './adapters/competitive-run.ts';
 import type { EvaluationOutboxEvent } from '../../shared/evaluation-types.ts';
 
 /**
@@ -35,7 +34,7 @@ class DurableOutboxDispatch implements EvaluationDispatchSink {
  */
 export function createDurableOutboxCompetitiveRunScheduler(
   repository: Repository,
-): CompetitiveRunJobScheduler {
+): EvaluationService {
   return new EvaluationService(
     new EvaluationRepositoryAdapter(repository),
     new DurableOutboxDispatch(repository),

@@ -1,14 +1,18 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   Braces,
   FileCode2,
   FileJson,
   FileText,
   Image as ImageIcon,
+  Pause,
+  Play,
+  RotateCcw,
   Table2,
 } from 'lucide-react';
+import { useLocale } from '@/lib/i18n';
 import styles from './artifact-preview.module.css';
 
 /**
@@ -20,7 +24,7 @@ export type ArtifactPreviewRenderer =
   | 'html-sandbox'
   | 'css-text'
   | 'markdown-sanitized'
-  | 'svg-rasterized'
+  | 'svg-animation-sandbox'
   | 'json-tree'
   | 'csv-table'
   | 'plain-text'
@@ -80,9 +84,9 @@ function formatLabel(format: ArtifactPreviewFormat): string {
   return format === 'markdown' ? 'MD' : format.toUpperCase();
 }
 
-function trimPreviewText(value: string): string {
+function trimPreviewText(value: string, truncatedLabel = 'preview truncated by client'): string {
   return value.length > MAX_RENDERED_TEXT_CHARS
-    ? `${value.slice(0, MAX_RENDERED_TEXT_CHARS)}\n\n[preview truncated by client]`
+    ? `${value.slice(0, MAX_RENDERED_TEXT_CHARS)}\n\n[${truncatedLabel}]`
     : value;
 }
 
@@ -98,15 +102,19 @@ function removeUnsafeMarkup(content: string, svg: boolean): string {
     .replace(/\b(?:javascript|vbscript|data):[^\s"'<>`]*/giu, '[unsafe scheme removed]');
 
   if (svg) {
-    safe = safe.replace(/<\s*style\b[^>]*>[\s\S]*?<\s*\/style\s*>/giu, '');
+    safe = safe.replace(/<\s*(?:foreignObject|script|iframe|object|embed)\b[^>]*>[\s\S]*?<\s*\/(?:foreignObject|script|iframe|object|embed)\s*>/giu, '');
   }
   return trimPreviewText(safe);
 }
 
-function buildSandboxDocument(content: string, format: 'html' | 'svg'): string {
-  const safe = removeUnsafeMarkup(content, format === 'svg');
-  const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; font-src 'none'; connect-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}">`;
+function buildSandboxDocument(content: string, format: 'html' | 'svg', paused = false): string {
+  let safe = removeUnsafeMarkup(content, format === 'svg');
+  if (paused) {
+    safe = safe.replace(/<\/?(?:animate|animateMotion|animateTransform|set|mpath)\b[^>]*>/giu, '');
+  }
+  const policy = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' blob:; font-src 'none'; connect-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+  const pauseRule = paused ? '*,*::before,*::after{animation-play-state:paused!important}' : '';
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${policy}"><style>${pauseRule}@media (prefers-reduced-motion: reduce){*,*::before,*::after{animation-play-state:paused!important}svg *{animation-play-state:paused!important}}</style>`;
   if (format === 'svg') {
     return `<!doctype html><html><head><meta charset="utf-8">${meta}</head><body style="margin:0;background:#0b100d;display:grid;place-items:center;min-height:100vh">${safe}</body></html>`;
   }
@@ -234,21 +242,21 @@ function CsvProjection({ content }: { content: string }) {
   return <div className={styles.tableWrap}><table className={styles.table}><thead><tr>{head.map((cell, index) => <th key={index}>{cell}</th>)}</tr></thead><tbody>{body.map((row, rowIndex) => <tr key={rowIndex}>{head.map((_, index) => <td key={index}>{row[index] ?? ''}</td>)}</tr>)}</tbody></table></div>;
 }
 
-function BinaryProjection({ projection }: { projection: ArtifactPreviewProjection }) {
+function BinaryProjection({ projection, binaryLabel, disabledLabel }: { projection: ArtifactPreviewProjection; binaryLabel: string; disabledLabel: string }) {
   if (!SAFE_IMAGE_MEDIA_TYPES.has(projection.plan.mediaType.toLowerCase())) {
-    return <div className={styles.placeholder}><ImageIcon size={20} /><strong>Binary artifact</strong><span>Image rendering is disabled for this media type.</span></div>;
+    return <div className={styles.placeholder}><ImageIcon size={20} /><strong>{binaryLabel}</strong><span>{disabledLabel}</span></div>;
   }
   return <img className={styles.image} src={`data:${projection.plan.mediaType};base64,${projection.body.kind === 'binary' ? projection.body.base64 : ''}`} alt={`${projection.plan.relativePath} preview`} />;
 }
 
-function ProjectionBody({ projection }: { projection: ArtifactPreviewProjection }) {
-  if (projection.body.kind === 'binary') return <BinaryProjection projection={projection} />;
+function ProjectionBody({ projection, paused, replayKey, binaryLabel, binaryDisabledLabel }: { projection: ArtifactPreviewProjection; paused: boolean; replayKey: number; binaryLabel: string; binaryDisabledLabel: string }) {
+  if (projection.body.kind === 'binary') return <BinaryProjection projection={projection} binaryLabel={binaryLabel} disabledLabel={binaryDisabledLabel} />;
   const content = projection.body.content;
   switch (projection.plan.renderer) {
     case 'html-sandbox':
-      return <iframe className={styles.sandbox} title={`${projection.plan.relativePath} sandboxed preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'html')} />;
-    case 'svg-rasterized':
-      return <iframe className={styles.sandbox} title={`${projection.plan.relativePath} isolated preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'svg')} />;
+      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={`${projection.plan.relativePath} sandboxed preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'html', paused)} />;
+    case 'svg-animation-sandbox':
+      return <iframe key={`${projection.plan.artifactId}:${paused}:${replayKey}`} className={styles.sandbox} title={`${projection.plan.relativePath} isolated preview`} sandbox="" referrerPolicy="no-referrer" srcDoc={buildSandboxDocument(content, 'svg', paused)} />;
     case 'markdown-sanitized':
       return <MarkdownProjection content={content} />;
     case 'json-tree':
@@ -269,11 +277,22 @@ export function ArtifactPreviewPanel({
   sourceLabel = 'static / no-script',
   emptyMessage = 'No previewable artifacts are available.',
 }: ArtifactPreviewPanelProps) {
+  const { t } = useLocale();
   const [selectedId, setSelectedId] = useState(files[0]?.artifactId ?? '');
+  const [paused, setPaused] = useState(false);
+  const [replayKey, setReplayKey] = useState(0);
   const selected = useMemo(
     () => files.find((file) => file.artifactId === selectedId) ?? files[0],
     [files, selectedId],
   );
+
+  useEffect(() => {
+    if (!files.some((file) => file.artifactId === selectedId)) {
+      setSelectedId(files[0]?.artifactId ?? '');
+      setPaused(false);
+      setReplayKey((value) => value + 1);
+    }
+  }, [files, selectedId]);
 
   if (!selected) {
     return <section className={styles.panel} aria-label={heading}><div className={styles.header}><div><strong>{heading}</strong><span>{emptyMessage}</span></div></div></section>;
@@ -288,7 +307,7 @@ export function ArtifactPreviewPanel({
       </div>
       <div className={styles.main}>
         <aside className={styles.tree} aria-label="Artifact files">
-          <div className={styles.treeTitle}>Files / {String(files.length).padStart(2, '0')}</div>
+          <div className={styles.treeTitle}>{t('artifactPreview.files', { count: String(files.length).padStart(2, '0') })}</div>
           <div className={styles.fileList}>
             {files.map((file) => {
               const Icon = FORMAT_ICONS[file.projection.plan.format];
@@ -299,8 +318,21 @@ export function ArtifactPreviewPanel({
         </aside>
         <div className={styles.viewport}>
           <div className={styles.canvas}>
-            <div className={styles.canvasHeader}><PreviewIcon size={13} /><span>{selected.relativePath}</span><span className={styles.format}>{formatLabel(selected.projection.plan.format)}</span></div>
-            <div className={styles.content}><ProjectionBody projection={selected.projection} /></div>
+            <div className={styles.canvasHeader}>
+              <PreviewIcon size={13} /><span>{selected.relativePath}</span>
+              {(selected.projection.plan.renderer === 'html-sandbox' || selected.projection.plan.renderer === 'svg-animation-sandbox') && (
+                <div className={styles.animationControls} aria-label={t('artifactPreview.animationControls')}>
+                  <button type="button" onClick={() => setPaused((value) => !value)} aria-label={paused ? t('artifactPreview.resume') : t('artifactPreview.pause')}>
+                    {paused ? <Play size={12} /> : <Pause size={12} />}<span>{paused ? t('artifactPreview.resume') : t('artifactPreview.pause')}</span>
+                  </button>
+                  <button type="button" onClick={() => { setPaused(false); setReplayKey((value) => value + 1); }} aria-label={t('artifactPreview.replay')}>
+                    <RotateCcw size={12} /><span>{t('artifactPreview.replay')}</span>
+                  </button>
+                </div>
+              )}
+              <span className={styles.format}>{formatLabel(selected.projection.plan.format)}</span>
+            </div>
+            <div className={styles.content}><ProjectionBody projection={selected.projection} paused={paused} replayKey={replayKey} binaryLabel={t('artifactPreview.binary')} binaryDisabledLabel={t('artifactPreview.binaryDisabled')} /></div>
           </div>
         </div>
       </div>

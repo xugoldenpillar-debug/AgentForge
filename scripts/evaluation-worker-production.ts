@@ -1,5 +1,6 @@
 import { createDurableOutboxCompetitiveRunScheduler } from '../src/server/evaluation/runtime.ts';
 import { pathToFileURL } from 'node:url';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import { database } from '../src/db/index.ts';
 import { DrizzleRepository } from '../src/db/repository.ts';
 import { EvaluationRepositoryAdapter } from '../src/db/evaluation-repository.ts';
@@ -15,11 +16,15 @@ import {
 import { testModelsEnabled } from '../src/server/environment.ts';
 import { ArenaService } from '../src/server/service.ts';
 import { CompetitiveEvaluationExecutor } from '../src/server/evaluation/competitive-executor.ts';
+import { CreationEvaluationExecutor } from '../src/server/evaluation/creation-executor.ts';
+import { RunscSandboxProvider } from '../src/server/sandbox/runsc.ts';
+import { FileSystemArtifactStorageAdapter } from '../src/server/artifacts/filesystem.ts';
 import {
   BullMqEvaluationQueue,
   type BullMqEvaluationQueueOptions,
 } from '../src/server/evaluation/queue/bullmq.ts';
 import type {
+  EvaluationAttemptExecutor,
   EvaluationQueueDependencies,
   EvaluationReconciliationStore,
   StaleEvaluationAttempt,
@@ -130,6 +135,68 @@ export function createProductionWorkerService(
   });
 }
 
+async function createCreationExecutor(
+  config: ProductionWorkerConfig,
+  repository: Repository,
+  evaluationRepository: EvaluationRepositoryAdapter,
+): Promise<CreationEvaluationExecutor | null> {
+  if (!config.artifactArenaEnabled) return null;
+  const runscPath = config.sandboxRunscPath!;
+  const rootfsPath = config.sandboxRootfs!;
+  const workRoot = config.sandboxWorkRoot!;
+  const templatePath = config.sandboxOciTemplate!;
+  const storageRoot = config.artifactStorageRoot!;
+  await fs.access(runscPath, fsConstants.X_OK);
+  const rootfs = await fs.stat(rootfsPath);
+  if (!rootfs.isDirectory()) throw new Error('SANDBOX_ROOTFS must be a directory.');
+  await fs.access(templatePath, fsConstants.R_OK);
+  await fs.mkdir(workRoot, { recursive: true, mode: 0o700 });
+  const workRootStat = await fs.stat(workRoot);
+  if (!workRootStat.isDirectory() || (workRootStat.mode & 0o077) !== 0) {
+    throw new Error('SANDBOX_WORK_ROOT must be a root-private directory.');
+  }
+  await fs.mkdir(storageRoot, { recursive: true, mode: 0o2750 });
+  const storageRootStat = await fs.stat(storageRoot);
+  if (!storageRootStat.isDirectory()
+    || storageRootStat.gid !== config.artifactStorageGid
+    || (storageRootStat.mode & 0o2077) !== 0o2050) {
+    throw new Error('ARTIFACT_STORAGE_ROOT must be setgid, group-readable and inaccessible to other users.');
+  }
+  if (typeof process.getegid === 'function' && process.getegid() !== config.artifactStorageGid) {
+    throw new Error('The worker effective GID must match ARTIFACT_STORAGE_GID.');
+  }
+  return new CreationEvaluationExecutor({
+    repository,
+    evaluationRepository,
+    sandbox: new RunscSandboxProvider({
+      runscPath,
+      rootfsPath,
+      workRoot,
+      templatePath,
+    }),
+    storage: new FileSystemArtifactStorageAdapter(storageRoot, { directoryMode: 0o750, fileMode: 0o640 }),
+    encryptionKey: config.encryptionKey,
+    sandboxImageDigest: config.sandboxImageDigest!,
+    createProvider: byokProvider,
+  });
+}
+
+function routeExecutor(
+  competitive: CompetitiveEvaluationExecutor,
+  creation: CreationEvaluationExecutor | null,
+): EvaluationAttemptExecutor {
+  return {
+    execute(context) {
+      if (context.job.purpose === 'creation') {
+        return creation
+          ? creation.execute(context)
+          : Promise.resolve({ kind: 'failed' as const, failure: { code: 'CREATION_RUNTIME_UNAVAILABLE', retryable: false } });
+      }
+      return competitive.execute(context);
+    },
+  };
+}
+
 async function run(): Promise<void> {
   const config = readConfig();
   const db = database();
@@ -143,6 +210,9 @@ async function run(): Promise<void> {
 
   const service = createProductionWorkerService(repository, config);
   const reconciliation = new PostgresEvaluationReconciliationStore(repository);
+  const competitiveExecutor = new CompetitiveEvaluationExecutor({ service, repository, evaluationRepository });
+  const creationExecutor = await createCreationExecutor(config, repository, evaluationRepository);
+  const executor = routeExecutor(competitiveExecutor, creationExecutor);
   const controller = new AbortController();
   const queues: BullMqEvaluationQueue[] = [];
   const loops: Promise<void>[] = [];
@@ -164,11 +234,7 @@ async function run(): Promise<void> {
         queue,
         store: evaluationRepository,
         reconciliation,
-        executor: new CompetitiveEvaluationExecutor({
-          service,
-          repository,
-          evaluationRepository,
-        }),
+        executor,
         workerId,
         leaseTtlMs: config.workerLeaseTtlMs,
       };

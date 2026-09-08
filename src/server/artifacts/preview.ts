@@ -1,3 +1,4 @@
+import sanitizeHtml from 'sanitize-html';
 import { AppError, ERROR_CODES, ensure } from '../../shared/errors.ts';
 import { validateBoundedLimit } from '../sandbox/path-policy.ts';
 import { digestArtifactBytes, isArtifactDigest } from './integrity.ts';
@@ -20,7 +21,7 @@ const RENDERER_BY_FORMAT: Readonly<Record<PreviewFormat, PreviewRenderer>> = {
   html: 'html-sandbox',
   css: 'css-text',
   markdown: 'markdown-sanitized',
-  svg: 'svg-rasterized',
+  svg: 'svg-animation-sandbox',
   json: 'json-tree',
   csv: 'csv-table',
   text: 'plain-text',
@@ -28,6 +29,7 @@ const RENDERER_BY_FORMAT: Readonly<Record<PreviewFormat, PreviewRenderer>> = {
 };
 
 const REMOTE_URL_PATTERN = /(?:https?:\/\/|ftp:\/\/|\/\/)[^\s"'<>`]+/gi;
+const REMOTE_URL_TEST_PATTERN = /(?:https?:\/\/|ftp:\/\/|\/\/)[^\s"'<>`]+/i;
 const DANGEROUS_SCHEME_PATTERN = /\b(?:javascript|vbscript|data):/gi;
 
 export function planPreview(entry: ArtifactCollectionManifestEntry): PreviewProjection | null {
@@ -138,34 +140,116 @@ function projectText(format: PreviewFormat, text: string): string {
   }
 }
 
+const SAFE_ANIMATED_ATTRIBUTES = new Set([
+  'cx', 'cy', 'd', 'fill', 'fill-opacity', 'height', 'opacity', 'points', 'r', 'rx', 'ry',
+  'stroke', 'stroke-dasharray', 'stroke-dashoffset', 'stroke-opacity', 'stroke-width',
+  'transform', 'viewbox', 'width', 'x', 'x1', 'x2', 'y', 'y1', 'y2',
+]);
+
+const ALLOWED_MARKUP_TAGS = [
+  'html', 'head', 'body', 'main', 'section', 'article', 'div', 'span', 'p', 'h1', 'h2', 'h3',
+  'svg', 'g', 'defs', 'symbol', 'use', 'path', 'circle', 'ellipse', 'rect', 'line', 'polyline',
+  'polygon', 'text', 'tspan', 'clipPath', 'mask', 'linearGradient', 'radialGradient', 'stop',
+  'filter', 'feGaussianBlur', 'feOffset', 'feColorMatrix', 'feBlend', 'style',
+  'animate', 'animateMotion', 'animateTransform', 'set', 'mpath',
+];
+
+const GLOBAL_ATTRIBUTES = [
+  'id', 'class', 'role', 'aria-label', 'viewBox', 'xmlns', 'width', 'height', 'x', 'y', 'x1', 'x2',
+  'y1', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'd', 'points', 'fill', 'fill-opacity', 'stroke',
+  'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'stroke-dasharray', 'stroke-dashoffset',
+  'stroke-opacity', 'opacity', 'transform', 'transform-origin', 'preserveAspectRatio', 'clip-path',
+  'mask', 'filter', 'offset', 'stop-color', 'stop-opacity', 'font-size', 'font-family',
+  'font-weight', 'text-anchor', 'dominant-baseline', 'style',
+];
+
+const ANIMATION_ATTRIBUTES = [
+  'attributeName', 'attributeType', 'begin', 'by', 'calcMode', 'dur', 'end', 'fill', 'from',
+  'keyPoints', 'keySplines', 'keyTimes', 'path', 'repeatCount', 'repeatDur', 'restart', 'rotate',
+  'to', 'type', 'values', 'additive', 'accumulate', 'href', 'xlink:href',
+];
+
 function sanitizeMarkup(input: string, svg: boolean): string {
-  let output = input
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
-    .replace(/<\s*(?:iframe|object|embed|applet|form|base|meta|link|style|template)\b[^>]*>[\s\S]*?<\s*\/\s*(?:iframe|object|embed|applet|form|base|meta|link|style|template)\s*>/gi, '')
-    .replace(/<\s*(?:script|iframe|object|embed|applet|form|base|meta|link|style|template)\b[^>]*\/?>/gi, '')
-    // A slash is accepted by the HTML tokenizer before an attribute name
-    // (`<svg/onload=...>`). Treat it as an attribute boundary as well as
-    // whitespace; otherwise event/resource attributes can survive this pass.
-    .replace(/(?:[\s/])+on[a-z0-9:_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    // Remove every fetch/navigation-capable attribute instead of trying to
-    // classify its value. This keeps entity/whitespace/encoding tricks from
-    // reaching an HTML or SVG renderer.
-    .replace(/(?:[\s/])+(?:href|src|srcset|imagesrcset|action|formaction|poster|xlink:href|srcdoc|background|manifest|ping)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/(?:[\s/])+style\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  if (svg) {
-    output = output
-      .replace(/<\s*(?:foreignObject|animate|animateMotion|animateTransform|set|style)\b[^>]*>[\s\S]*?<\s*\/\s*(?:foreignObject|animate|animateMotion|animateTransform|set|style)\s*>/gi, '')
-      .replace(/<\s*(?:foreignObject|animate|animateMotion|animateTransform|set|style)\b[^>]*\/?>/gi, '');
+  const withSafeStyles = input.replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/giu, (_match, css: string) => {
+    return `<style>${sanitizeCss(css)}</style>`;
+  });
+  return sanitizeHtml(withSafeStyles, {
+    allowedTags: ALLOWED_MARKUP_TAGS,
+    allowVulnerableTags: true,
+    allowedAttributes: {
+      '*': GLOBAL_ATTRIBUTES,
+      animate: ANIMATION_ATTRIBUTES,
+      animatemotion: ANIMATION_ATTRIBUTES,
+      animatetransform: ANIMATION_ATTRIBUTES,
+      set: ANIMATION_ATTRIBUTES,
+      use: ['href', 'xlink:href'],
+      mpath: ['href', 'xlink:href'],
+    },
+    allowedSchemes: [],
+    allowProtocolRelative: false,
+    parser: { lowerCaseTags: false, lowerCaseAttributeNames: false },
+    transformTags: {
+      '*': (tagName, attributes) => ({ tagName, attribs: sanitizeMarkupAttributes(attributes, tagName) }),
+    },
+    exclusiveFilter(frame) {
+      const lower = frame.tag.toLowerCase();
+      if (!svg && lower === 'svg') return false;
+      if (!['animate', 'animatemotion', 'animatetransform', 'set'].includes(lower)) return false;
+      const target = String(frame.attribs.attributeName ?? frame.attribs.attributename ?? '').toLowerCase();
+      return lower !== 'animatemotion' && !SAFE_ANIMATED_ATTRIBUTES.has(target);
+    },
+    disallowedTagsMode: 'discard',
+    textFilter: (text) => redactRemoteUrls(text),
+  }).replace(/<!--[^]*?-->/gu, '');
+}
+
+function sanitizeMarkupAttributes(attributes: Record<string, string>, tagName: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [name, raw] of Object.entries(attributes)) {
+    const lower = name.toLowerCase();
+    if (lower.startsWith('on') || ['src', 'srcset', 'action', 'formaction', 'poster', 'srcdoc', 'background', 'manifest', 'ping'].includes(lower)) continue;
+    if (lower === 'href' || lower === 'xlink:href') {
+      if (!raw.startsWith('#') || !/#[A-Za-z_][A-Za-z0-9_.:-]*$/u.test(raw)) continue;
+    }
+    if (lower === 'style') {
+      const css = sanitizeInlineStyle(raw);
+      if (css) result[name] = css;
+      continue;
+    }
+    if (['attributeName', 'attributename'].includes(name) && !SAFE_ANIMATED_ATTRIBUTES.has(raw.toLowerCase())) continue;
+    if (/\b(?:javascript|vbscript|data):/iu.test(raw) || REMOTE_URL_TEST_PATTERN.test(raw)) continue;
+    result[name] = raw.slice(0, 4096);
   }
-  return redactRemoteUrls(output);
+  if (['script', 'iframe', 'object', 'embed', 'foreignobject', 'form', 'meta', 'link', 'base'].includes(tagName.toLowerCase())) return {};
+  return result;
+}
+
+function sanitizeInlineStyle(input: string): string {
+  return input.split(';').map((declaration) => declaration.trim()).filter(Boolean).flatMap((declaration) => {
+    const separator = declaration.indexOf(':');
+    if (separator <= 0) return [];
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim();
+    const allowed = /^(?:animation(?:-[a-z-]+)?|transform(?:-origin)?|opacity|fill|fill-opacity|stroke|stroke-width|stroke-opacity|stroke-dasharray|stroke-dashoffset|visibility)$/u.test(property);
+    if (!allowed || unsafeCss(value)) return [];
+    return [`${property}:${value.slice(0, 1024)}`];
+  }).join(';');
+}
+
+function unsafeCss(value: string): boolean {
+  return /(?:url\s*\(|@import|@font-face|expression\s*\(|behavior\s*:|-moz-binding|javascript:|vbscript:|data:|https?:|\/\/)/iu.test(value);
 }
 
 function sanitizeCss(input: string): string {
-  return redactRemoteUrls(input)
-    .replace(/@import\s+(?:url\([^)]*\)|[^;]+);?/gi, '')
-    .replace(/url\s*\([^)]*\)/gi, 'url("[blocked-resource]")')
-    .replace(/expression\s*\([^)]*\)/gi, '[blocked-expression]');
+  return input
+    .replace(/\/\*[\s\S]*?\*\//gu, '')
+    .replace(/@(?:import|font-face|namespace|document|supports)\b[^;{]*(?:;|\{[\s\S]*?\})/giu, '')
+    .replace(/url\s*\([^)]*\)/giu, '')
+    .replace(/expression\s*\([^)]*\)/giu, '')
+    .replace(/(?:behavior\s*:|-moz-binding\s*:)[^;}]+/giu, '')
+    .replace(/\b(?:javascript|vbscript|data):/giu, '')
+    .replace(REMOTE_URL_PATTERN, '')
+    .slice(0, 100_000);
 }
 
 function sanitizeMarkdown(input: string): string {

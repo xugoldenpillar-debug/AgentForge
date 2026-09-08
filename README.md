@@ -9,9 +9,11 @@ has been retired; existing local data is not deleted or migrated.
 ## Deployment status / 部署状态
 
 [hubei deployment and sandbox verification / hubei 部署与沙箱验收](docs/deployment/hubei-byok.md)
-contains pinned gVisor installation, real lifecycle probes, application release/rollback scripts,
-and explicit launch blockers. **The animation creation product is not yet production-wired;
-these scripts do not complete or enable L0–L8.**
+documents the pinned gVisor host, trusted systemd Worker, read-only web artifact mount,
+Cloudflare Tunnel topology, release/rollback scripts and launch checks. The two-challenge
+BYOK code path is wired end to end; repository configuration is not proof that a production
+domain has been opened. Real two-model/browser acceptance and target-environment operations
+are tracked in [the launch status](specs/artifact-arena/launch/implementation-status.md).
 
 ## Run the application
 
@@ -155,7 +157,7 @@ Hidden inputs, expected values and per-case outputs never leave the arena API on
 
 The checked-in fixtures and fixed Secret Keeper secret are for a **local, inspectable MVP**, not a confidential contest benchmark. Replace them with server-private, separately versioned tests/secrets before hosting a real competition. Secret checks catch several obvious encodings but do not prove a general non-disclosure property. Safety Guard is a bounded injection heuristic, not a comprehensive security system.
 
-Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox or agent marketplace payments. A durable evaluation Worker/Outbox implementation now exists; Agent/Pi sandbox execution is not integrated or enabled. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. The legacy request-bound path remains limited by request duration; the configured EF outbox path uses independent workers. Neither path currently enables Agent artifact execution. See `docs/evaluation-worker-operations.md` for worker operations and gates. Not a multi-tenant production certification.
+Community problems and semantically ambiguous failure reports stay pending. Objective output-contract/secret failures can be verified automatically; a valid-shape wrong answer requires review. The V1 has no moderation dashboard, email delivery/password-recovery flow, reward economy, arbitrary-code sandbox or agent marketplace payments. A durable evaluation Worker/Outbox implementation exists. The two animation challenges use the independent EF creation path, a trusted host Pi/model loop, and a network-denied runsc artifact sandbox; this is not a general arbitrary-code executor. Profile ELO is a documented benchmark-derived rating proxy, not head-to-head Elo. The legacy competitive request-bound path remains limited by request duration; production CreationRun uses the configured outbox Worker. See `docs/evaluation-worker-operations.md` for worker operations and gates. Not a multi-tenant production certification.
 
 See `docs/ARCHITECTURE.md`, `docs/SCORING.md` and `docs/VERIFICATION.md` for the implementation and limits. Retired Portable screenshots under `docs/screenshots/` are historical only.
 
@@ -182,26 +184,24 @@ and verified evidence remain documented separately above.
 [Artifact Arena executable spec](specs/artifact-arena/README.md) adds Agent-generated
 works, isolated HTML/Markdown/SVG previews, public showcase voting and a later
 approved-environment canvas. It extends existing Agent Build/EF/community boundaries,
-not a second application. The current worktree contains partial contract, migration,
-domain-seam, fail-closed HTTP and Agent Builder UI slices for AA-T0–T10; it does not
-contain the durable/isolated/browser/production implementation needed to open them.
-Work publications and showcase entries are distinct from hidden competitive Submissions.
-Static visual tasks are the first user-facing sample; Python CSV/JSON/report remains the
-deterministic engineering track. See the [current status and evidence](docs/verification/artifact-arena-spec-2026-09-07.md);
-contract tests and a successful build are not production sandbox, model, browser or
-public-voting acceptance.
+not a second application. The two-challenge slice now includes durable CreationRun/EF execution, a real runsc
+provider, private immutable artifact storage, safe animated preview, publishing, likes,
+blind voting, score partitions, ranking and Fork. Work publications and showcase entries
+remain distinct from hidden competitive Submissions. The broader AA-T0–T10 roadmap still
+contains later approved-environment and Python tracks. See the [launch implementation
+status](specs/artifact-arena/launch/implementation-status.md); code/tests are not a
+substitute for real BYOK, browser and production-operations acceptance.
 
-### Two animation challenges: implementation in progress
+### Two animation challenges: code complete, deployment acceptance pending
 
 The [two-challenge launch specification](specs/artifact-arena/launch/README.md) targets
 SVG animations of a pelican on a bicycle and Qin Shi Huang on a polar bear.
-Migration 0012 and reference seed now persist their original prompts, English
-translations and version digests. `GET /api/arena/animation-challenges` lists
-published catalog entries with execution explicitly unavailable. This is catalog
-publication only, not a working animation-creation product. See the
-[implementation map and unresolved release parameters](specs/artifact-arena/launch/implementation-status.md).
-
-Current slice verification: [2026-09-07 isolated checks](docs/verification/animation-launch-df6c-2026-09-07.md).
+The catalog preserves their original prompts, English translations and immutable version
+digests. The Agent Builder now saves challenge-bound builds and drives real CreationRun v2,
+Pi/provider execution, runsc artifact sealing, safe animation preview, publication, durable
+likes, blind voting, community ranking and Fork. Production configuration opens the path
+to all normal registered users while anonymous visitors remain read-only. See the
+[implementation map and remaining acceptance gates](specs/artifact-arena/launch/implementation-status.md).
 
 ### BYOK protocol selection
 
@@ -214,6 +214,7 @@ the exact trusted host through the existing operator allowlist before use.
 
 Native SDK wire/authentication/usage/cancellation tests run offline through
 `pnpm test:provider-sdk` in CI. They are not live vendor acceptance. The
-[BYOK-first change](specs/artifact-arena/launch/byok-first.md) defers monetary caps
-for the future animation creation path, not legacy DAG budgets or other resource
-limits. Protocol selection does not yet connect creation v2 or open the sandbox.
+[BYOK-first change](specs/artifact-arena/launch/byok-first.md) defers platform USD caps
+for animation CreationRun, not legacy DAG budgets or resource/safety limits. All four
+protocols feed the same trusted Worker → Pi → network-denied sandbox path; live vendor
+acceptance still requires an explicitly authorized user key.

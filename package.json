@@ -21,13 +21,13 @@
     "test:migrations": "node --experimental-strip-types --test tests/migrations.integration.ts tests/migration-history.integration.ts",
     "test:evaluation-db": "tsx --test tests/evaluation-postgres.integration.ts",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
-    "test:pi-runtime": "node --experimental-strip-types --test tests/pi-runtime.integration.ts",
+    "test:pi-runtime": "node --experimental-strip-types --test tests/pi-runtime.integration.ts tests/creation-runner.integration.ts",
     "test:pi-runtime:live": "tsx --test tests/pi-runtime-live.integration.ts",
     "setup": "node scripts/setup.mjs",
     "audit:community-export": "node scripts/audit-community-export.mjs",
     "worker:start": "tsx scripts/evaluation-worker-production.ts",
     "worker:healthcheck": "node --experimental-strip-types scripts/worker-healthcheck.ts",
-    "test:deploy": "bash -n scripts/deploy/app.sh scripts/deploy/install-gvisor.sh && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/deploy/sandbox-smoke.py').read_text())\" && node --experimental-strip-types --test tests/deployment-preflight.test.ts tests/deployment-cli.test.ts"
+    "test:deploy": "bash -n scripts/deploy/app.sh scripts/deploy/worker.sh scripts/deploy/install-gvisor.sh scripts/deploy/prepare-sandbox-rootfs.sh && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/deploy/sandbox-smoke.py').read_text())\" && node --experimental-strip-types --test tests/deployment-preflight.test.ts tests/deployment-cli.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.116",
@@ -51,6 +51,7 @@
     "postgres": "^3.4.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sanitize-html": "^2.17.7",
     "server-only": "^0.0.1",
     "tailwind-merge": "^3.3.1",
     "undici": "^7.15.0",
@@ -62,6 +63,7 @@
     "@types/node": "^22.18.0",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
+    "@types/sanitize-html": "^2.16.1",
     "dotenv": "^17.2.2",
     "drizzle-kit": "^0.31.4",
     "tailwindcss": "^4.1.12",

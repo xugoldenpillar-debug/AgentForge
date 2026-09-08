@@ -44,4 +44,4 @@ else
 fi
 "${compose[@]}" up -d --no-build --wait --wait-timeout 120 app
 echo 'Application healthy. Verify public HTTPS login separately / 应用健康，请另验公网 HTTPS 登录'
-echo 'Animation creation remains disabled / 动画创作运行仍关闭'
+echo 'Web release is active. Start or restart the separately installed trusted worker before opening traffic / Web 已发布；开放流量前请启动或重启独立可信 Worker'

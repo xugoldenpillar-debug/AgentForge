@@ -1,394 +1,653 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   AlertTriangle,
   CheckCircle2,
-  ChevronRight,
-  FileCode2,
-  FileJson,
-  FileText,
-  Lock,
-  Maximize2,
+  Download,
+  GitFork,
+  Heart,
+  KeyRound,
+  LoaderCircle,
+  PauseCircle,
   Play,
+  RefreshCw,
+  RotateCcw,
   Save,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
-  TimerOff,
-  Workflow,
+  Trophy,
+  Vote,
 } from 'lucide-react';
+import { ArtifactPreviewPanel, type ArtifactPreviewFile } from '@/components/agent/artifact-preview';
+import { LanguageSwitcher, localizeError, useToast } from '@/components/common';
 import { Button } from '@/components/ui/button';
-import { Icon } from '@/components/common';
-import { ArtifactPreviewPanel, type ArtifactPreviewFile, type ArtifactPreviewFormat, type ArtifactPreviewRenderer } from '@/components/agent/artifact-preview';
-import { cn } from '@/lib/utils';
 import {
-  compileAgentCanvas,
-  digestAgentCanvas,
-  serializeAgentCanvas,
-  validateAgentCanvas,
-  type AgentCanvasNode,
-  type AgentConfigValue,
-} from '@/lib/agent-builder-canvas';
-import {
-  AGENT_BUILDER_PANELS,
-  agentBuilderPanelLabel,
-  type AgentBuilderPanel,
-} from '@/lib/agent-builder-view';
-import {
-  DEFAULT_AGENT_CANVAS,
-  agentCanvasForFlow,
-  agentConfigValue,
-  useAgentBuilderStore,
-} from './agent-store';
-import { AgentCanvas, AgentNodePalette } from './agent-canvas';
+  addProvider,
+  cancelCreationRun,
+  castShowcaseVote,
+  createCreationRun,
+  createShowcaseEntry,
+  downloadArtifact,
+  forkAgentBuild,
+  getAgentBuild,
+  getArtifactBundle,
+  getArtifactPreview,
+  getCreationRun,
+  getOwnerPublication,
+  getPublicationLikes,
+  getPublicArtifactPreview,
+  getShowcaseLeaderboard,
+  issueShowcaseBallot,
+  likePublication,
+  listAnimationChallenges,
+  listProviders,
+  requestPublication,
+  retryCreationRun,
+  saveAgentBuild,
+  unlikePublication,
+  type AgentBuildView,
+  type AnimationChallengeView,
+  type ArtifactBundleView,
+  type CreationRunStatusView,
+  type LikeSummaryView,
+  type OwnerPublicationView,
+  type ProviderCredentialView,
+  type ProviderProtocol,
+  type ShowcaseBallotView,
+  type ShowcaseLeaderboardView,
+} from '@/lib/client-api';
+import { useLocale } from '@/lib/i18n';
+import { PROVIDER_PROTOCOL_BASE_URLS, PROVIDER_PROTOCOLS } from '@/shared/provider-protocol';
+import type { MessageKey } from '@/shared/i18n/types';
 import styles from './agent-builder.module.css';
 
 const UI_ENABLED = process.env.NEXT_PUBLIC_AGENT_BUILDER_UI !== 'false';
+const STORAGE_KEY = 'agentforge.artifact-arena.creation-v2';
+const COMPARATOR_KEY = 'artifact-arena:showcase:v1';
+const POLICY_VERSION = 'showcase-pairwise-v1';
+const SEASON_ID = 'season-2026-launch';
 
-type Fixture = {
-  artifactId: string;
-  relativePath: string;
-  bytes: number;
-  format: ArtifactPreviewFormat;
-  renderer: ArtifactPreviewRenderer;
-  mediaType: string;
-  content: string;
+interface PersistedCreationSession {
+  challengeVersionId?: string;
+  credentialId?: string;
+  buildId?: string;
+  buildVersionId?: string;
+  runId?: string;
+  publicationId?: string;
+  entryId?: string;
+}
+
+type BusyAction =
+  | 'credential'
+  | 'build'
+  | 'run'
+  | 'cancel'
+  | 'retry'
+  | 'preview'
+  | 'publish'
+  | 'publication'
+  | 'fork'
+  | 'entry'
+  | 'ballot'
+  | 'vote'
+  | 'leaderboard'
+  | `like:${string}`
+  | null;
+
+const RUN_STATUS_KEYS: Record<NonNullable<CreationRunStatusView['run']>['status'], MessageKey> = {
+  queued: 'artifactArena.status.queued',
+  running: 'artifactArena.status.running',
+  completed: 'artifactArena.status.completed',
+  failed: 'artifactArena.status.failed',
+  cancelled: 'artifactArena.status.cancelled',
+  incomplete: 'artifactArena.status.incomplete',
 };
 
-const FIXTURE_FILES: readonly Fixture[] = [
-  {
-    artifactId: 'fixture-index-html',
-    relativePath: 'index.html',
-    bytes: 1842,
-    format: 'html',
-    renderer: 'html-sandbox',
-    mediaType: 'text/html',
-    content: `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pelican on a bicycle</title>
-    <style>
-      :root { color-scheme: dark; font-family: system-ui, sans-serif; }
-      body { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #111827; color: #f8fafc; }
-      main { width: min(620px, 86vw); padding: 32px; border: 1px solid #475569; border-radius: 22px; background: #1e293b; text-align: center; }
-      .scene { margin: 22px auto; font-size: clamp(70px, 14vw, 130px); letter-spacing: .1em; }
-      p { color: #cbd5e1; line-height: 1.6; }
-    </style>
-  </head>
-  <body>
-    <main>
-      <div class="scene" role="img" aria-label="A pelican riding a bicycle">🦩 🚲</div>
-      <h1>Pedal-powered confidence</h1>
-      <p>Static local preview. No Pi run or saved backend artifact is connected.</p>
-    </main>
-  </body>
-</html>`,
-  },
-  {
-    artifactId: 'fixture-readme-md',
-    relativePath: 'README.md',
-    bytes: 612,
-    format: 'markdown',
-    renderer: 'markdown-sanitized',
-    mediaType: 'text/markdown',
-    content: `# Pelican bicycle / handoff
+const PUBLICATION_STATUS_KEYS: Record<OwnerPublicationView['status'], MessageKey> = {
+  pending: 'artifactArena.publication.pending',
+  published: 'artifactArena.publication.published',
+  rejected: 'artifactArena.publication.rejected',
+  withdrawn: 'artifactArena.publication.withdrawn',
+  'taken-down': 'artifactArena.publication.taken-down',
+};
 
-## What this demonstrates
+function readPersisted(): PersistedCreationSession {
+  if (typeof window === 'undefined') return {};
+  try {
+    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}');
+    return value && typeof value === 'object' ? value as PersistedCreationSession : {};
+  } catch {
+    return {};
+  }
+}
 
-- A self-contained HTML artifact
-- A readable handoff for the next builder
-- A preview boundary that does not execute untrusted JavaScript
+function roundId(challengeVersionId: string): string {
+  return `${challengeVersionId}:${SEASON_ID}:byok`;
+}
 
-> This is a local fixture for the Agent Builder UI. It is not a Pi run or a saved backend artifact.
-`,
-  },
-  {
-    artifactId: 'fixture-summary-json',
-    relativePath: 'summary.json',
-    bytes: 328,
-    format: 'json',
-    renderer: 'json-tree',
-    mediaType: 'application/json',
-    content: `{
-  "entrypoint": "index.html",
-  "requiredFiles": ["index.html", "README.md"],
-  "previewPolicy": "static-no-script",
-  "runtime": "pi",
-  "status": "fixture-only"
-}`,
-  },
-  {
-    artifactId: 'fixture-scene-svg',
-    relativePath: 'scene.svg',
-    bytes: 978,
-    format: 'svg',
-    renderer: 'svg-rasterized',
-    mediaType: 'image/svg+xml',
-    content: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 320">
-  <rect width="640" height="320" rx="24" fill="#172033"/>
-  <circle cx="210" cy="238" r="48" fill="none" stroke="#b7e778" stroke-width="8"/>
-  <circle cx="434" cy="238" r="48" fill="none" stroke="#b7e778" stroke-width="8"/>
-  <path d="M210 238h112l-44-86h116l40 86M278 152l-26-42m124 42 26-42" fill="none" stroke="#f8fafc" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="320" y="82" fill="#f8fafc" font-size="34" text-anchor="middle">static artifact preview</text>
-</svg>`,
-  },
-  {
-    artifactId: 'fixture-data-csv',
-    relativePath: 'checks.csv',
-    bytes: 164,
-    format: 'csv',
-    renderer: 'csv-table',
-    mediaType: 'text/csv',
-    content: `check,status,detail
-required files,ready,index.html and README.md present
-network,disabled,fixture never makes a remote request
-execution,pending,Pi and sandbox are unavailable`,
-  },
-  {
-    artifactId: 'fixture-notes-txt',
-    relativePath: 'notes.txt',
-    bytes: 128,
-    format: 'text',
-    renderer: 'plain-text',
-    mediaType: 'text/plain',
-    content: 'Preview content is a data-only projection.\nThe local UI never executes generated scripts.',
-  },
-];
-
-function toPreviewFile(fixture: Fixture): ArtifactPreviewFile {
+function previewFile(bundleEntry: ArtifactBundleView['entries'][number], projection: Awaited<ReturnType<typeof getArtifactPreview>>): ArtifactPreviewFile {
   return {
-    artifactId: fixture.artifactId,
-    relativePath: fixture.relativePath,
-    bytes: fixture.bytes,
-    projection: {
-      plan: {
-        artifactId: fixture.artifactId,
-        relativePath: fixture.relativePath,
-        mediaType: fixture.mediaType,
-        format: fixture.format,
-        renderer: fixture.renderer,
-        maxBytes: fixture.bytes,
-        allowScripts: false,
-        allowRemoteResources: false,
-        allowNavigation: false,
-        allowForms: false,
-        allowPopups: false,
-        rawHtmlAllowed: false,
-        formulaExecution: false,
-      },
-      body: { kind: 'text', content: fixture.content },
-    },
+    artifactId: bundleEntry.artifactId,
+    relativePath: bundleEntry.relativePath,
+    bytes: bundleEntry.bytes,
+    projection,
   };
 }
 
-const PREVIEW_FILES = FIXTURE_FILES.map(toPreviewFile);
-
-function capabilityPermission(capability: string): string {
-  return {
-    'workspace.read': 'read-only',
-    'workspace.write': 'scoped-workspace-only',
-    'artifact.write': 'scoped-output-only',
-    'preview.static': 'static-only',
-    'network.none': 'none',
-  }[capability] ?? 'scoped-output-only';
+function publicPreviewFile(
+  publicationId: string,
+  relativePath: string,
+  bytes: number,
+  projection: Awaited<ReturnType<typeof getPublicArtifactPreview>>,
+): ArtifactPreviewFile {
+  return { artifactId: `${publicationId}:${relativePath}`, relativePath, bytes, projection: {
+    ...projection,
+    plan: { ...projection.plan, artifactId: `${publicationId}:${relativePath}` },
+  } };
 }
 
-function configField(node: { data: { config: AgentCanvasNode['config'] } }, key: string): string {
-  return agentConfigValue(node.data.config[key]);
-}
-
-function Inspector() {
-  const nodes = useAgentBuilderStore((state) => state.nodes);
-  const selectedId = useAgentBuilderStore((state) => state.selectedId);
-  const update = useAgentBuilderStore((state) => state.update);
-  const remove = useAgentBuilderStore((state) => state.remove);
-  const node = nodes.find((item) => item.id === selectedId);
-
-  if (!node) {
-    return (
-      <aside className={cn(styles.panel, styles.inspector)} data-panel="configure" aria-label="Agent configuration">
-        <div className={styles.panelHeader}><span className={styles.panelTitle}>Configure</span></div>
-        <div className={styles.emptyInspector}><div><SlidersHorizontal size={24} /><p>Select a node to inspect its draft configuration.</p></div></div>
-      </aside>
-    );
-  }
-
-  const updateConfig = (key: string, value: AgentConfigValue) => update(node.id, { [key]: value });
-  const kind = node.data.kind;
-  return (
-    <aside className={cn(styles.panel, styles.inspector)} data-panel="configure" aria-label="Agent configuration">
-      <div className={styles.panelHeader}>
-        <div><span className={styles.panelTitle}>Configure</span><div className={styles.panelHint}>Draft-only · changes do not grant runtime access</div></div>
-        <span className={styles.edgeChip}>v1</span>
-      </div>
-      <div className={styles.inspectorBody}>
-        <div className={styles.selectedHeading}>
-          <span className={styles.selectedIcon}><Workflow size={14} /></span>
-          <div><strong>{node.data.label}</strong><span>{kind}</span></div>
-        </div>
-        <div className={styles.field}>
-          <label htmlFor="agent-node-name">Node label</label>
-          <input id="agent-node-name" value={node.data.label} maxLength={120} onChange={(event) => update(node.id, {}, event.target.value)} />
-        </div>
-
-        {kind === 'task' && <>
-          <div className={styles.field}><label htmlFor="agent-task-brief">Brief</label><textarea id="agent-task-brief" value={configField(node, 'brief')} onChange={(event) => updateConfig('brief', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-task-profile">Profile reference</label><input id="agent-task-profile" value={configField(node, 'profileRef')} onChange={(event) => updateConfig('profileRef', event.target.value)} /></div>
-        </>}
-        {kind === 'agent' && <>
-          <div className={styles.field}><label htmlFor="agent-instructions">Instructions</label><textarea id="agent-instructions" value={configField(node, 'instructions')} onChange={(event) => updateConfig('instructions', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-runtime">Runtime</label><input id="agent-runtime" disabled value="pi (unavailable)" /></div>
-          <div className={styles.field}><label htmlFor="agent-policy">Policy version</label><input id="agent-policy" value={configField(node, 'policyVersion')} onChange={(event) => updateConfig('policyVersion', event.target.value)} /></div>
-          <p className={styles.helper}>The runtime field is displayed for intent only. This page never starts Pi.</p>
-        </>}
-        {kind === 'model' && <>
-          <div className={styles.field}><label htmlFor="agent-model-provider">Provider lane</label><input id="agent-model-provider" value={configField(node, 'provider')} onChange={(event) => updateConfig('provider', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-model-id">Model reference</label><input id="agent-model-id" value={configField(node, 'modelId')} onChange={(event) => updateConfig('modelId', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-model-version">Catalog version</label><input id="agent-model-version" value={configField(node, 'modelVersion')} onChange={(event) => updateConfig('modelVersion', event.target.value)} /></div>
-          <p className={styles.helper}>The UI records references only; it never probes paid models or stores credentials.</p>
-        </>}
-        {kind === 'skill' && <>
-          <div className={styles.field}><label htmlFor="agent-skill-id">Skill reference</label><input id="agent-skill-id" value={configField(node, 'skillId')} onChange={(event) => updateConfig('skillId', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-skill-version">Version</label><input id="agent-skill-version" value={configField(node, 'versionId')} onChange={(event) => updateConfig('versionId', event.target.value)} /></div>
-          <p className={styles.helper}>Only declarative, version-pinned skills are represented in this slice.</p>
-        </>}
-        {kind === 'environment' && <>
-          <div className={styles.field}><label htmlFor="agent-environment-template">Fixed template</label><select id="agent-environment-template" disabled value={configField(node, 'templateId')}><option value="static-preview">static-preview</option></select></div>
-          <div className={styles.field}><label htmlFor="agent-environment-version">Version</label><input id="agent-environment-version" disabled value={configField(node, 'versionId')} /></div>
-          <div className={styles.field}><label htmlFor="agent-environment-network">Network</label><input id="agent-environment-network" disabled value="disabled" /></div>
-          <p className={styles.helper}>Environment permissions are fixed by the approved template. Canvas edges cannot change them at runtime.</p>
-        </>}
-        {kind === 'inputMount' && <>
-          <div className={styles.field}><label htmlFor="agent-input-mount">Mount reference</label><input id="agent-input-mount" value={configField(node, 'mountId')} onChange={(event) => updateConfig('mountId', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-input-source">Source kind</label><input id="agent-input-source" value={configField(node, 'sourceKind')} onChange={(event) => updateConfig('sourceKind', event.target.value)} /></div>
-          <label className="flex items-center gap-2 small muted"><input type="checkbox" checked={node.data.config.readOnly === true} disabled /> read-only input (fixed)</label>
-        </>}
-        {kind === 'capability' && <>
-          <div className={styles.field}><label htmlFor="agent-capability-id">Capability request</label><select id="agent-capability-id" value={configField(node, 'capabilityId')} onChange={(event) => updateConfig('capabilityId', event.target.value)}><option value="artifact.write">artifact.write</option><option value="workspace.read">workspace.read</option><option value="workspace.write">workspace.write</option><option value="preview.static">preview.static</option><option value="network.none">network.none</option></select></div>
-          <div className={styles.field}><label htmlFor="agent-capability-permission">Scope</label><input id="agent-capability-permission" disabled value={capabilityPermission(configField(node, 'capabilityId'))} /></div>
-          <p className={styles.helper}>A capability node is a request, not a grant. The server must intersect it with the environment policy.</p>
-        </>}
-        {kind === 'outputContract' && <>
-          <div className={styles.field}><label htmlFor="agent-output-format">Output formats</label><select id="agent-output-format" value={configField(node, 'format')} onChange={(event) => updateConfig('format', event.target.value)}><option value="html+md">HTML + Markdown</option><option value="json">JSON</option><option value="svg">SVG</option><option value="csv">CSV</option></select></div>
-          <div className={styles.field}><label htmlFor="agent-output-entrypoint">Entrypoint</label><input id="agent-output-entrypoint" value={configField(node, 'entrypoint')} onChange={(event) => updateConfig('entrypoint', event.target.value)} /></div>
-          <div className={styles.field}><label htmlFor="agent-output-files">Required files</label><input id="agent-output-files" value={configField(node, 'requiredFiles')} onChange={(event) => updateConfig('requiredFiles', event.target.value.split(',').map((item) => item.trim()).filter(Boolean))} /></div>
-        </>}
-
-        <div className="divider" />
-        <Button variant="destructive" size="sm" type="button" onClick={() => remove(node.id)}><Icon name="Trash2" size={12} /> Remove node</Button>
-      </div>
-    </aside>
-  );
-}
-
-function PalettePanel() {
-  return (
-    <aside className={cn(styles.panel, styles.palette)} data-panel="palette" aria-label="Agent node palette">
-      <div className={styles.paletteIntro}>
-        <div className={styles.panelTitle}>Agent nodes</div>
-        <p>Compose intent and approved capabilities. Edges are not execution order.</p>
-      </div>
-      <div className={styles.paletteList}><AgentNodePalette /></div>
-      <div className={styles.fixedNote}><ShieldCheck size={13} /><span>Fixed environment: static preview / v1 · no network · scoped output only.</span></div>
-    </aside>
-  );
-}
-
-function RunStatusPanel({ valid, compileErrors }: { valid: boolean; compileErrors: readonly string[] }) {
-  return (
-    <section className={cn(styles.panel, styles.runStatus)} data-panel="run" aria-label="Run status">
-      <div className={styles.panelHeader}>
-        <div><span className={styles.panelTitle}>Run status</span><div className={styles.panelHint}>Execution is intentionally unavailable in this front-end slice</div></div>
-        <span className={styles.statusChip}><TimerOff size={10} /> unavailable</span>
-      </div>
-      <div className={styles.runBody}>
-        <div className={styles.runState}><Lock size={17} /><div><strong>No run started</strong><span>There is no backend Attempt, Pi process, or sealed Artifact Bundle to report.</span></div></div>
-        <div className={styles.timeline}>
-          <div className={styles.timelineItem}><span className={styles.timelineDot} /><div><strong>Local draft</strong><span>Canvas editing and semantic validation are available.</span></div></div>
-          <div className={styles.timelineItem}><span className={styles.timelineDotMuted} /><div><strong>Agent B2 save</strong><span>Unavailable · no request is sent.</span></div></div>
-          <div className={styles.timelineItem}><span className={styles.timelineDotMuted} /><div><strong>Pi + sandbox run</strong><span>Unavailable · no process is started.</span></div></div>
-          <div className={styles.timelineItem}><span className={styles.timelineDotMuted} /><div><strong>Artifact sealing</strong><span>{valid ? 'Waiting for a real run.' : `${compileErrors.length} validation issue(s) block a future run.`}</span></div></div>
-        </div>
-      </div>
-    </section>
-  );
+function StepLabel({ children, complete = false }: { children: React.ReactNode; complete?: boolean }) {
+  return <span className={`${styles.stepLabel} ${complete ? styles.stepComplete : ''}`}>
+    {complete ? <CheckCircle2 size={13} /> : <span className={styles.stepDot} />}{children}
+  </span>;
 }
 
 export function AgentBuilderPage() {
-  const [mobilePanel, setMobilePanel] = useState<AgentBuilderPanel>('canvas');
-  const [digest, setDigest] = useState('calculating…');
-  const nodes = useAgentBuilderStore((state) => state.nodes);
-  const edges = useAgentBuilderStore((state) => state.edges);
-  const notice = useAgentBuilderStore((state) => state.notice);
-  const load = useAgentBuilderStore((state) => state.load);
-  const canvas = useMemo(() => agentCanvasForFlow(nodes, edges), [nodes, edges]);
-  const validation = useMemo(() => validateAgentCanvas(canvas), [canvas]);
-  const compileResult = useMemo(() => compileAgentCanvas(canvas), [canvas]);
-  const serializedLength = serializeAgentCanvas(canvas).length;
+  const { t, language, formatNumber } = useLocale();
+  const toast = useToast();
+  const restored = useRef<PersistedCreationSession | null>(null);
+  if (!restored.current) restored.current = readPersisted();
+
+  const [challenges, setChallenges] = useState<AnimationChallengeView[]>([]);
+  const [credentials, setCredentials] = useState<ProviderCredentialView[]>([]);
+  const [challengeVersionId, setChallengeVersionId] = useState(restored.current.challengeVersionId ?? '');
+  const [credentialId, setCredentialId] = useState(restored.current.credentialId ?? '');
+  const [protocol, setProtocol] = useState<ProviderProtocol>('openai-chat');
+  const [baseUrl, setBaseUrl] = useState(PROVIDER_PROTOCOL_BASE_URLS['openai-chat']);
+  const [credentialName, setCredentialName] = useState('My animation model');
+  const [modelId, setModelId] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [buildTitle, setBuildTitle] = useState('');
+  const [instructions, setInstructions] = useState('Create a polished, self-contained animation. Use only inline SVG, restricted CSS keyframes, and declarative SVG animation. Write index.html before finishing.');
+  const [build, setBuild] = useState<AgentBuildView | null>(null);
+  const [runStatus, setRunStatus] = useState<CreationRunStatusView | null>(null);
+  const [bundle, setBundle] = useState<ArtifactBundleView | null>(null);
+  const [previews, setPreviews] = useState<ArtifactPreviewFile[]>([]);
+  const [publication, setPublication] = useState<OwnerPublicationView | null>(null);
+  const [publicTitle, setPublicTitle] = useState('');
+  const [publicDescription, setPublicDescription] = useState('A community animation created with Pi in the isolated AgentForge sandbox.');
+  const [entryId, setEntryId] = useState(restored.current.entryId ?? '');
+  const [ballot, setBallot] = useState<ShowcaseBallotView | null>(null);
+  const [ballotRequested, setBallotRequested] = useState(false);
+  const [ballotPreviews, setBallotPreviews] = useState<{ a: ArtifactPreviewFile[]; b: ArtifactPreviewFile[] }>({ a: [], b: [] });
+  const [leaderboard, setLeaderboard] = useState<ShowcaseLeaderboardView | null>(null);
+  const [likes, setLikes] = useState<Record<string, LikeSummaryView>>({});
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<BusyAction>(null);
+  const [error, setError] = useState('');
+
+  const selected = useMemo(() => {
+    for (const challenge of challenges) {
+      const version = challenge.versions.find((candidate) => candidate.id === challengeVersionId);
+      if (version) return { challenge, version };
+    }
+    return null;
+  }, [challengeVersionId, challenges]);
+  const selectedCredential = credentials.find((credential) => credential.id === credentialId) ?? null;
+  const run = runStatus?.run ?? null;
+  const runActive = run?.status === 'queued' || run?.status === 'running';
+  const runRetryable = run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete';
+  const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
+  const isPublished = publication?.status === 'published';
+  const partition = challengeVersionId ? roundId(challengeVersionId) : '';
+
+  const fail = useCallback((reason: unknown) => {
+    const message = localizeError(reason, t);
+    setError(message);
+    toast(message || t('artifactArena.operationFailed'), true);
+  }, [t, toast]);
+
+  const persist = useCallback((patch: PersistedCreationSession) => {
+    const next = { ...readPersisted(), ...patch };
+    for (const [key, value] of Object.entries(next)) if (!value) delete next[key as keyof PersistedCreationSession];
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  }, []);
+
+  const loadBundle = useCallback(async (bundleId: string) => {
+    setBusy('preview');
+    try {
+      const nextBundle = await getArtifactBundle(bundleId);
+      const nextPreviews = await Promise.all(nextBundle.entries.map(async (entry) => previewFile(entry, await getArtifactPreview(entry.artifactId))));
+      setBundle(nextBundle);
+      setPreviews(nextPreviews);
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      setBusy((value) => value === 'preview' ? null : value);
+    }
+  }, [fail]);
+
+  const refreshLeaderboard = useCallback(async (showBusy = true) => {
+    if (!partition) return;
+    if (showBusy) setBusy('leaderboard');
+    try {
+      const next = await getShowcaseLeaderboard({ roundId: partition, comparatorKey: COMPARATOR_KEY, policyVersion: POLICY_VERSION });
+      setLeaderboard(next);
+      const summaries = await Promise.all(next.rows.map(async (row) => {
+        try { return await getPublicationLikes(row.publication.publicationId); }
+        catch { return null; }
+      }));
+      setLikes((current) => {
+        const updated = { ...current };
+        summaries.forEach((summary) => { if (summary) updated[summary.publicationId] = summary; });
+        return updated;
+      });
+    } catch (reason) {
+      fail(reason);
+    } finally {
+      if (showBusy) setBusy((value) => value === 'leaderboard' ? null : value);
+    }
+  }, [fail, partition]);
 
   useEffect(() => {
-    if (!useAgentBuilderStore.getState().nodes.length) load(DEFAULT_AGENT_CANVAS);
-  }, [load]);
+    const controller = new AbortController();
+    const saved = restored.current ?? {};
+    (async () => {
+      setLoading(true);
+      try {
+        const [challengeRows, providerRows] = await Promise.all([
+          listAnimationChallenges(controller.signal),
+          listProviders(controller.signal),
+        ]);
+        if (controller.signal.aborted) return;
+        setChallenges(challengeRows);
+        setCredentials(providerRows.credentials);
+        const defaultVersion = saved.challengeVersionId || challengeRows[0]?.versions[0]?.id || '';
+        setChallengeVersionId(defaultVersion);
+        setCredentialId(saved.credentialId && providerRows.credentials.some((item) => item.id === saved.credentialId)
+          ? saved.credentialId
+          : providerRows.credentials[0]?.id ?? '');
+        if (saved.buildId) {
+          const loadedBuild = await getAgentBuild(saved.buildId, saved.buildVersionId, controller.signal);
+          setBuild(loadedBuild);
+          setBuildTitle(loadedBuild.title);
+          setInstructions(loadedBuild.version.agentDefinition.instructions);
+        }
+        if (saved.runId) {
+          const loadedRun = await getCreationRun(saved.runId, controller.signal);
+          setRunStatus(loadedRun);
+          if (loadedRun.run.artifactBundleId) await loadBundle(loadedRun.run.artifactBundleId);
+        }
+        if (saved.publicationId) {
+          const loadedPublication = await getOwnerPublication(saved.publicationId, controller.signal);
+          setPublication(loadedPublication);
+          setPublicTitle(loadedPublication.title);
+          setPublicDescription(loadedPublication.description);
+        }
+      } catch (reason) {
+        if (!controller.signal.aborted) fail(reason);
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [fail, loadBundle]);
 
   useEffect(() => {
-    let active = true;
-    void digestAgentCanvas(canvas).then((value) => { if (active) setDigest(value); });
-    return () => { active = false; };
-  }, [canvas]);
+    if (!selected || buildTitle) return;
+    setBuildTitle(`${language === 'zh-CN' ? selected.version.title : selected.version.titleEn} / my build`);
+    setPublicTitle(language === 'zh-CN' ? selected.version.title : selected.version.titleEn);
+  }, [buildTitle, language, selected]);
+
+  useEffect(() => {
+    if (!runActive || !run?.id) return;
+    let stopped = false;
+    const timer = window.setInterval(async () => {
+      try {
+        const next = await getCreationRun(run.id);
+        if (stopped) return;
+        setRunStatus(next);
+        if (next.run.artifactBundleId) {
+          persist({ runId: next.run.id });
+          await loadBundle(next.run.artifactBundleId);
+        }
+      } catch (reason) {
+        if (!stopped) fail(reason);
+      }
+    }, 1500);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [fail, loadBundle, persist, run?.id, runActive]);
+
+  useEffect(() => {
+    if (partition) void refreshLeaderboard(false);
+  }, [partition, refreshLeaderboard]);
+
+  const changeChallenge = (next: string) => {
+    setChallengeVersionId(next);
+    setBuild(null);
+    setRunStatus(null);
+    setBundle(null);
+    setPreviews([]);
+    setPublication(null);
+    setEntryId('');
+    setBallot(null);
+    setBallotPreviews({ a: [], b: [] });
+    setLeaderboard(null);
+    setBuildTitle('');
+    persist({ challengeVersionId: next, buildId: '', buildVersionId: '', runId: '', publicationId: '', entryId: '' });
+  };
+
+  const saveCredential = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy('credential'); setError('');
+    try {
+      const saved = await addProvider({ protocol, name: credentialName.trim(), baseUrl: baseUrl.trim(), modelId: modelId.trim(), apiKey });
+      setCredentials((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]);
+      setCredentialId(saved.id);
+      setApiKey('');
+      persist({ credentialId: saved.id });
+      toast(t('artifactArena.credentialSaved'));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const saveBuild = async () => {
+    if (!selected) return;
+    setBusy('build'); setError('');
+    try {
+      const saved = await saveAgentBuild({
+        ...(build ? { buildId: build.id, currentVersionId: build.currentVersionId } : {}),
+        title: buildTitle.trim(),
+        mode: 'agent',
+        animationChallengeVersionId: selected.version.id,
+        visibility: 'private',
+        agentDefinition: {
+          mode: 'agent',
+          definitionSchemaVersion: 1,
+          instructions: instructions.trim(),
+          modelSelection: selected.challenge.agentBuildContract.modelSelection,
+          skillRefs: [],
+          requestedCapabilities: [],
+          outputContractRef: selected.challenge.agentBuildContract.outputContractRef,
+          profileRef: null,
+          environmentRef: selected.challenge.agentBuildContract.environmentRef,
+          runtimeSelection: selected.challenge.agentBuildContract.runtimeSelection,
+        },
+      });
+      setBuild(saved);
+      persist({ challengeVersionId: selected.version.id, buildId: saved.id, buildVersionId: saved.version.id, runId: '', publicationId: '', entryId: '' });
+      setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      toast(t('artifactArena.buildSaved'));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const startRun = async () => {
+    if (!selected || !build || !credentialId) return;
+    setBusy('run'); setError('');
+    try {
+      const key = crypto.randomUUID();
+      const next = await createCreationRun({ buildVersionId: build.version.id, challengeVersionId: selected.version.id, credentialId, idempotencyKey: key }, { idempotencyKey: key });
+      setRunStatus(next);
+      setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      persist({ runId: next.run.id, publicationId: '', entryId: '' });
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const cancelRun = async () => {
+    if (!run) return;
+    setBusy('cancel');
+    try { setRunStatus(await cancelCreationRun(run.id)); }
+    catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const retryRun = async () => {
+    if (!run) return;
+    setBusy('retry');
+    try {
+      const next = await retryCreationRun(run.id, crypto.randomUUID());
+      setRunStatus(next); setBundle(null); setPreviews([]);
+      persist({ runId: next.run.id });
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const publish = async () => {
+    if (!run || !bundle) return;
+    setBusy('publish');
+    try {
+      const next = await requestPublication({
+        creationRunId: run.id,
+        expectedSnapshotDigest: bundle.snapshotDigest,
+        expectedManifestDigest: bundle.manifestDigest,
+        title: publicTitle.trim(),
+        description: publicDescription.trim(),
+        entryPath: 'index.html',
+        publicArtifactIds: bundle.entries.map((entry) => entry.artifactId),
+      });
+      setPublication(next);
+      persist({ publicationId: next.id });
+      toast(t('artifactArena.publication.pending'));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const refreshPublication = async () => {
+    if (!publication) return;
+    setBusy('publication');
+    try {
+      const next = await getOwnerPublication(publication.id);
+      setPublication(next);
+      if (next.status === 'published') {
+        const summary = await getPublicationLikes(next.id);
+        setLikes((current) => ({ ...current, [next.id]: summary }));
+      }
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const forkBuild = async () => {
+    if (!build) return;
+    setBusy('fork');
+    try {
+      const fork = await forkAgentBuild(build.id, build.version.id);
+      setBuild(fork);
+      setBuildTitle(fork.title);
+      setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+      persist({ buildId: fork.id, buildVersionId: fork.version.id, runId: '', publicationId: '', entryId: '' });
+      toast(t('artifactArena.buildForked'));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const enterRanking = async () => {
+    if (!publication || !partition) return;
+    setBusy('entry');
+    try {
+      const next = await createShowcaseEntry({ publicationId: publication.id, roundId: partition, comparatorKey: COMPARATOR_KEY, policyVersion: POLICY_VERSION });
+      setEntryId(next.id);
+      persist({ entryId: next.id });
+      toast(t('artifactArena.enteredRanking'));
+      await refreshLeaderboard(false);
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const issueBallot = async () => {
+    if (!partition) return;
+    setBusy('ballot'); setBallotRequested(true); setBallot(null); setBallotPreviews({ a: [], b: [] });
+    try {
+      const next = await issueShowcaseBallot({ roundId: partition, comparatorKey: COMPARATOR_KEY, policyVersion: POLICY_VERSION }, crypto.randomUUID());
+      setBallot(next);
+      if (next?.candidates) {
+        const [a, b] = await Promise.all((['a', 'b'] as const).map(async (side) => {
+          const candidate = next.candidates![side].publication;
+          const file = candidate.files.find((item) => item.relativePath === candidate.entryPath);
+          if (!file) return [];
+          const projection = await getPublicArtifactPreview(candidate.publicationId, candidate.entryPath);
+          return [publicPreviewFile(candidate.publicationId, candidate.entryPath, file.sizeBytes, projection)];
+        }));
+        setBallotPreviews({ a, b });
+      }
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const vote = async (choice: 'a' | 'b' | 'tie' | 'skip') => {
+    if (!ballot) return;
+    setBusy('vote');
+    try {
+      const result = await castShowcaseVote(ballot.id, choice, crypto.randomUUID());
+      setBallot(result.ballot);
+      toast(t('artifactArena.voteSent'));
+      await refreshLeaderboard(false);
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const toggleLike = async (publicationId: string) => {
+    const current = likes[publicationId];
+    setBusy(`like:${publicationId}`);
+    try {
+      const next = current?.likedByViewer ? await unlikePublication(publicationId) : await likePublication(publicationId);
+      setLikes((rows) => ({ ...rows, [publicationId]: next }));
+    } catch (reason) { fail(reason); }
+    finally { setBusy(null); }
+  };
+
+  const reset = () => {
+    window.localStorage.removeItem(STORAGE_KEY);
+    setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId(''); setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
+    setPublicTitle(''); setBuildTitle(''); setError('');
+  };
 
   if (!UI_ENABLED) {
-    return (
-      <main className={styles.shell}>
-        <div className={styles.callout}><AlertTriangle size={15} /><div><strong>Agent Builder is disabled.</strong><br />Set <code>NEXT_PUBLIC_AGENT_BUILDER_UI=true</code> to enable the local design slice. This flag does not enable Pi, sandbox, save, or run capabilities.</div></div>
-      </main>
-    );
+    return <main className={styles.shell}><div className={styles.disabled}><AlertTriangle /><h1>{t('artifactArena.unavailable')}</h1></div></main>;
   }
 
-  const compileErrors = compileResult.valid ? [] : compileResult.errors;
   return (
     <main className={styles.shell}>
-      <div className={styles.topbar}>
-        <Link href="/" className={styles.brandLink}>← AgentForge / Builder</Link>
-        <div className={styles.statusRow}>
-          <span className={styles.statusChip}><Lock size={10} /> local draft</span>
-          <span className={styles.statusChip}><Sparkles size={10} /> B2 unavailable</span>
-          <span className={styles.statusChip}><TimerOff size={10} /> Pi unavailable</span>
-          <span className={styles.statusChip}><ShieldCheck size={10} /> fixed environment</span>
+      <header className={styles.hero}>
+        <div className={styles.heroTop}>
+          <Link href="/" className={styles.brand}>AgentForge / Artifact Arena</Link>
+          <div className={styles.heroActions}><LanguageSwitcher /><Button variant="ghost" size="sm" onClick={reset}><RotateCcw size={13} />{t('artifactArena.reset')}</Button></div>
         </div>
-      </div>
+        <div className={styles.heroGrid}>
+          <div>
+            <p className={styles.eyebrow}>{t('artifactArena.eyebrow')}</p>
+            <h1>{t('artifactArena.title')}</h1>
+            <p className={styles.subtitle}>{t('artifactArena.subtitle')}</p>
+          </div>
+          <div className={styles.launchBadge}><Sparkles size={18} /><div><strong>{t('artifactArena.open')}</strong><span>Pi → EF → gVisor/runsc → immutable artifacts</span></div></div>
+        </div>
+        <div className={styles.steps}>
+          <StepLabel complete={Boolean(selected)}>{t('artifactArena.step.challenge')}</StepLabel>
+          <StepLabel complete={Boolean(credentialId)}>{t('artifactArena.step.provider')}</StepLabel>
+          <StepLabel complete={Boolean(build)}>{t('artifactArena.step.build')}</StepLabel>
+          <StepLabel complete={runComplete}>{t('artifactArena.step.run')}</StepLabel>
+          <StepLabel complete={previews.length > 0}>{t('artifactArena.step.preview')}</StepLabel>
+          <StepLabel complete={Boolean(publication)}>{t('artifactArena.step.publish')}</StepLabel>
+          <StepLabel complete={Boolean(entryId)}>{t('artifactArena.step.community')}</StepLabel>
+        </div>
+      </header>
 
-      <div className={styles.titleRow}>
-        <div><div className="eyebrow">AA-T5 / AA-T9</div><h1 className={styles.title}>Build an agent. Preview the handoff.</h1><p className={styles.description}>A separate Agent canvas for Task, Agent, Model, Skill, Environment, Input Mount, Capability, and Output Contract configuration. The current slice is local-only until backend contracts and sandbox Gates are available.</p></div>
-      </div>
+      {loading && <div className={styles.banner}><LoaderCircle className={styles.spin} size={16} />{t('artifactArena.recovering')}</div>}
+      {error && <div className={`${styles.banner} ${styles.errorBanner}`} role="alert"><AlertTriangle size={16} />{error}</div>}
+      <div className={styles.securityNote}><ShieldCheck size={18} /><p>{t('artifactArena.securityNote')}</p></div>
 
-      <div className={styles.callout} role="status"><AlertTriangle size={15} /><div><strong>Design mode only.</strong> Save and Run stay disabled because configured Agent B2, Pi → Evaluation Foundation execution, and Artifact Bundle APIs are not connected. Editing this canvas cannot grant permissions, start a process, or claim a real model result.</div></div>
+      <section className={styles.stage}>
+        <div className={styles.stageHeader}><span>01</span><div><h2>{t('artifactArena.challengeTitle')}</h2><p>{t('artifactArena.challengeHelp')}</p></div></div>
+        <div className={styles.challengeGrid}>
+          {challenges.flatMap((challenge) => challenge.versions.map((version) => {
+            const active = version.id === challengeVersionId;
+            return <button key={version.id} type="button" className={`${styles.challengeCard} ${active ? styles.challengeActive : ''}`} onClick={() => changeChallenge(version.id)} aria-pressed={active}>
+              <div className={styles.challengeCardTop}><span>{String(challenge.position).padStart(2, '0')}</span><small>{t('artifactArena.version', { version: version.versionNumber })}</small></div>
+              <h3>{language === 'zh-CN' ? version.title : version.titleEn}</h3>
+              <p>{language === 'zh-CN' ? version.instructions : version.instructionsEn}</p>
+              <div className={styles.challengeMeta}>{challenge.runAvailability.enabled ? <><CheckCircle2 size={13} />{t('artifactArena.available')}</> : <><AlertTriangle size={13} />{t('artifactArena.unavailable')}</>}</div>
+            </button>;
+          }))}
+        </div>
+        {selected && <div className={styles.promptPlate}><span>{t('artifactArena.originalPrompt')}</span><blockquote>{selected.version.instructions}</blockquote><p>{t('artifactArena.requirements')}</p></div>}
+      </section>
 
-      <div className={styles.toolbar}>
-        <div className={styles.toolbarInfo}><CheckCircle2 size={13} className={validation.valid ? 'accent' : 'danger'} /><strong>{validation.valid ? 'Canvas contract valid' : `${validation.errors.length} canvas issue(s)`}</strong><span>·</span><span>{nodes.length} nodes / {edges.length} config edges</span><span>·</span><span>{serializedLength} B</span></div>
-        <div className={styles.toolbarActions}><Button variant="outline" size="sm" disabled title="Agent Builder backend contract is not connected"><Save size={13} /> Save draft</Button><Button variant="default" size="sm" disabled title="Pi runtime and sandbox are not connected"><Play size={13} /> Run</Button></div>
-      </div>
-
-      <div className={styles.tabList} role="tablist" aria-label="Agent Builder panels">
-        {AGENT_BUILDER_PANELS.map((panel) => <button key={panel} type="button" role="tab" aria-selected={mobilePanel === panel} className={cn(styles.tab, mobilePanel === panel && styles.tabActive)} onClick={() => setMobilePanel(panel)}>{agentBuilderPanelLabel(panel)}</button>)}
-      </div>
-
-      <div className={styles.workspace} data-mobile-tab={mobilePanel}>
-        <PalettePanel />
-        <section className={cn(styles.panel, styles.canvasPanel)} data-panel="canvas" aria-label="Agent canvas">
-          <div className={styles.panelHeader}><div><div className={styles.panelTitle}>Agent canvas</div><div className={styles.panelHint}>Drag from the palette or click + · connect only valid configuration relations</div></div><span className={styles.edgeChip}><Workflow size={10} /> config graph</span></div>
-          <div className={styles.canvasBody}><AgentCanvas /></div>
+      <div className={styles.twoColumn}>
+        <section className={styles.stage}>
+          <div className={styles.stageHeader}><span>02</span><div><h2>{t('artifactArena.providerTitle')}</h2><p>{t('artifactArena.providerHelp')}</p></div></div>
+          <form className={styles.formGrid} onSubmit={saveCredential}>
+            <label><span>{t('providers.protocol')}</span><select value={protocol} onChange={(event) => {
+              const next = event.target.value as ProviderProtocol;
+              setProtocol(next);
+              if (Object.values(PROVIDER_PROTOCOL_BASE_URLS).includes(baseUrl)) setBaseUrl(PROVIDER_PROTOCOL_BASE_URLS[next]);
+            }}>{PROVIDER_PROTOCOLS.map((value) => <option value={value} key={value}>{t(`providers.protocol.${value}`)}</option>)}</select></label>
+            <label><span>{t('artifactArena.credentialName')}</span><input required minLength={1} maxLength={80} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={300} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
+            <label><span>{t('artifactArena.modelId')}</span><input required maxLength={160} value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="gpt-5.2 / claude-sonnet / gemini-2.5-pro" /></label>
+            <label><span>{t('artifactArena.apiKey')}</span><input required type="password" autoComplete="off" maxLength={1000} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('providers.keyPlaceholder')} /></label>
+            <div className={styles.fullField}><Button type="submit" variant="default" disabled={busy === 'credential'}>{busy === 'credential' ? <LoaderCircle className={styles.spin} size={14} /> : <KeyRound size={14} />}{busy === 'credential' ? t('artifactArena.savingCredential') : t('artifactArena.saveCredential')}</Button></div>
+          </form>
+          <div className={styles.savedBox}><label><span>{t('artifactArena.selectCredential')}</span><select value={credentialId} onChange={(event) => { setCredentialId(event.target.value); persist({ credentialId: event.target.value }); }}><option value="">{t('artifactArena.noCredentials')}</option>{credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.modelId} · {credential.keyMask}</option>)}</select></label>{selectedCredential && <small>{t(`providers.protocol.${selectedCredential.protocol}`)} · {selectedCredential.baseUrl}</small>}</div>
         </section>
-        <Inspector />
-        <RunStatusPanel valid={validation.valid} compileErrors={compileErrors} />
-        <div className={styles.preview}><ArtifactPreviewPanel files={PREVIEW_FILES} heading="Artifact preview" description="Local data-only fixture · no backend Artifact Bundle is connected" sourceLabel="static / no-script" /></div>
+
+        <section className={styles.stage}>
+          <div className={styles.stageHeader}><span>03</span><div><h2>{t('artifactArena.buildTitle')}</h2><p>{t('artifactArena.instructionsHelp')}</p></div></div>
+          <div className={styles.formGrid}>
+            <label className={styles.fullField}><span>{t('artifactArena.buildName')}</span><input required minLength={1} maxLength={160} value={buildTitle} onChange={(event) => setBuildTitle(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.instructions')}</span><textarea required minLength={1} maxLength={8000} rows={9} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
+            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={saveBuild} disabled={!selected || !buildTitle.trim() || !instructions.trim() || busy === 'build'}>{busy === 'build' ? <LoaderCircle className={styles.spin} size={14} /> : <Save size={14} />}{busy === 'build' ? t('artifactArena.savingBuild') : t('artifactArena.saveBuild')}</Button>{build && <Button variant="outline" onClick={forkBuild} disabled={busy === 'fork'}>{busy === 'fork' ? <LoaderCircle className={styles.spin} size={14} /> : <GitFork size={14} />}{busy === 'fork' ? t('artifactArena.forkingBuild') : t('artifactArena.forkBuild')}</Button>}</div>
+          </div>
+          {build && <div className={styles.digestLine}><span>Build {build.id}</span><span>v{build.version.revision}</span><code>{build.version.definitionDigest.slice(0, 24)}…</code></div>}
+        </section>
       </div>
 
-      <div className={styles.footerRow}><span className={styles.digest}>canvas digest: {digest}</span><span>{compileResult.valid ? 'compiled plan ready for server handoff' : 'compile blocked by validation'} · layout coordinates excluded <Maximize2 size={11} /></span></div>
-      {notice && <div className="small muted mt-2" role="status"><ChevronRight size={12} /> {notice}</div>}
+      <section className={styles.stage}>
+        <div className={styles.stageHeader}><span>04</span><div><h2>{t('artifactArena.runTitle')}</h2><p>{t('artifactArena.resumeHint')}</p></div></div>
+        <div className={styles.runConsole}>
+          <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{run ? t(RUN_STATUS_KEYS[run.status]) : t('artifactArena.status.idle')}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
+          <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
+        </div>
+        {run && <div className={styles.timeline}><span>{run.id}</span><span>{runStatus?.job?.state ?? run.status}</span><span>{run.updatedAt}</span></div>}
+      </section>
+
+      <section className={styles.stage}>
+        <div className={styles.stageHeader}><span>05</span><div><h2>{t('artifactArena.previewTitle')}</h2><p>{t('artifactArena.previewDescription')}</p></div></div>
+        {busy === 'preview' && previews.length === 0 ? <div className={styles.empty}><LoaderCircle className={styles.spin} />{t('artifactArena.previewLoading')}</div> : <ArtifactPreviewPanel files={previews} heading={t('artifactArena.previewTitle')} description={t('artifactArena.previewDescription')} sourceLabel="sealed / no-script" emptyMessage={t('artifactArena.previewEmpty')} />}
+        {bundle && <div className={styles.fileActions}>{bundle.entries.map((entry) => <Button key={entry.artifactId} variant="ghost" size="sm" onClick={async () => {
+          try { const blob = await downloadArtifact(entry.artifactId); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = entry.relativePath.split('/').pop() || 'artifact'; anchor.click(); URL.revokeObjectURL(url); } catch (reason) { fail(reason); }
+        }}><Download size={13} />{t('artifactArena.download')} {entry.relativePath}</Button>)}</div>}
+      </section>
+
+      <div className={styles.twoColumn}>
+        <section className={styles.stage}>
+          <div className={styles.stageHeader}><span>06</span><div><h2>{t('artifactArena.publishTitle')}</h2><p>{t('artifactArena.publishHelp')}</p></div></div>
+          <div className={styles.formGrid}>
+            <label className={styles.fullField}><span>{t('artifactArena.publicTitle')}</span><input minLength={1} maxLength={160} value={publicTitle} onChange={(event) => setPublicTitle(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.publicDescription')}</span><textarea minLength={1} maxLength={2000} rows={5} value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></label>
+            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={publish} disabled={!runComplete || !bundle || Boolean(publication) || busy === 'publish'}>{busy === 'publish' ? <LoaderCircle className={styles.spin} size={14} /> : <Sparkles size={14} />}{busy === 'publish' ? t('artifactArena.requestingReview') : t('artifactArena.requestReview')}</Button>{publication && <Button variant="outline" onClick={refreshPublication} disabled={busy === 'publication'}><RefreshCw className={busy === 'publication' ? styles.spin : ''} size={14} />{t('artifactArena.refreshStatus')}</Button>}</div>
+          </div>
+          {publication && <div className={`${styles.publicationState} ${isPublished ? styles.published : ''}`}><span>{t('artifactArena.publicationStatus')}</span><strong>{t(PUBLICATION_STATUS_KEYS[publication.status])}</strong><code>{publication.releaseDigest.slice(0, 24)}…</code></div>}
+        </section>
+
+        <section className={styles.stage}>
+          <div className={styles.stageHeader}><span>07</span><div><h2>{t('artifactArena.communityTitle')}</h2><p>{t('artifactArena.communityHelp')}</p></div></div>
+          <div className={styles.communityActions}><Button variant="default" onClick={enterRanking} disabled={!isPublished || Boolean(entryId) || busy === 'entry'}>{busy === 'entry' ? <LoaderCircle className={styles.spin} size={14} /> : <Trophy size={14} />}{busy === 'entry' ? t('artifactArena.enteringRanking') : entryId ? t('artifactArena.enteredRanking') : t('artifactArena.enterRanking')}</Button><Button variant="outline" onClick={issueBallot} disabled={!partition || busy === 'ballot'}>{busy === 'ballot' ? <LoaderCircle className={styles.spin} size={14} /> : <Vote size={14} />}{busy === 'ballot' ? t('artifactArena.issuingBallot') : t('artifactArena.issueBallot')}</Button></div>
+          {ballot && ballot.candidates ? <div className={styles.ballot}>
+            {(['a', 'b'] as const).map((side) => <article key={side} className={styles.candidate}><div className={styles.candidateHeader}><span>{side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')}</span><ShieldCheck size={14} /></div><ArtifactPreviewPanel files={ballotPreviews[side]} heading={side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')} description={t('artifactArena.previewDescription')} sourceLabel="blind / published" emptyMessage={t('artifactArena.previewLoading')} /></article>)}
+            <div className={styles.voteRow}><Button onClick={() => vote('a')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteA')}</Button><Button onClick={() => vote('tie')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteTie')}</Button><Button onClick={() => vote('b')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteB')}</Button><Button variant="ghost" onClick={() => vote('skip')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteSkip')}</Button></div>
+          </div> : ballotRequested ? <div className={styles.empty}>{t('artifactArena.noBallot')}</div> : null}
+        </section>
+      </div>
+
+      <section className={styles.stage}>
+        <div className={styles.stageHeader}><span>08</span><div><h2>{t('artifactArena.leaderboard')}</h2><p>{partition}</p></div><Button variant="ghost" size="sm" onClick={() => refreshLeaderboard()} disabled={busy === 'leaderboard'}><RefreshCw className={busy === 'leaderboard' ? styles.spin : ''} size={13} />{t('artifactArena.refreshLeaderboard')}</Button></div>
+        {leaderboard && <><div className={`${styles.sampleBar} ${leaderboard.sample.qualified ? styles.sampleQualified : ''}`}><div><strong>{leaderboard.sample.qualified ? t('artifactArena.sampleQualified') : t('artifactArena.sampleInsufficient', { votes: leaderboard.sample.minValidVotes, voters: leaderboard.sample.minIndependentVoters })}</strong><span>{t('artifactArena.sample', { votes: leaderboard.sample.validVotes, voters: leaderboard.sample.independentVoters })}</span></div><div><span>{t('artifactArena.validVotes')}</span><strong>{formatNumber(leaderboard.sample.validVotes)}</strong></div><div><span>{t('artifactArena.independentVoters')}</span><strong>{formatNumber(leaderboard.sample.independentVoters)}</strong></div></div>
+          {leaderboard.rows.length ? <div className={styles.leaderRows}>{leaderboard.rows.map((row, index) => { const summary = likes[row.publication.publicationId]; return <article className={styles.leaderRow} key={row.entryId}><span className={styles.rank}>{row.qualified ? String(index + 1).padStart(2, '0') : '—'}</span><div><strong>{row.publication.title}</strong><p>{row.publication.description}</p></div><div className={styles.scoreCell}><span>{t('artifactArena.communityScore')}</span><strong>{row.qualified ? Math.round(row.score * 100) : '—'}</strong><small>{t('artifactArena.sample', { votes: row.comparisons, voters: row.validVoters })}</small>{!row.qualified && <small>{t('artifactArena.sampleInsufficient', { votes: leaderboard.sample.minValidVotes, voters: leaderboard.sample.minIndependentVoters })}</small>}</div><div className={styles.likeCell}><Button variant={summary?.likedByViewer ? 'default' : 'outline'} size="sm" onClick={() => toggleLike(row.publication.publicationId)} disabled={busy === `like:${row.publication.publicationId}`}><Heart size={13} fill={summary?.likedByViewer ? 'currentColor' : 'none'} />{summary?.likedByViewer ? t('artifactArena.unlike') : t('artifactArena.like')}</Button><span>{t('artifactArena.likes', { count: summary?.count ?? 0 })}</span></div></article>; })}</div> : <div className={styles.empty}>{t('artifactArena.noEntries')}</div>}
+        </>}
+      </section>
     </main>
   );
 }

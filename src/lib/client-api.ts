@@ -338,3 +338,419 @@ export async function consumePiSelfTest(
     onEvent(parsed);
   }
 }
+
+export type ProviderProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages' | 'google-generative-ai';
+
+export interface ProviderCredentialView {
+  id: string;
+  name: string;
+  protocol: ProviderProtocol;
+  baseUrl: string;
+  modelId: string;
+  keyMask: string;
+  inputPrice: number | null;
+  outputPrice: number | null;
+  createdAt: string;
+}
+
+export interface ProviderCatalogView {
+  credentials: ProviderCredentialView[];
+  demo: boolean;
+  platform: { id: string; name: string; modelId: string; inputPrice: number | null; outputPrice: number | null } | null;
+  allowedHosts: string[];
+  runtime: 'next';
+}
+
+export interface AgentBuildPinnedRefView {
+  id: string;
+  versionId: string;
+  contentDigest: string;
+}
+
+export interface AgentRuntimeSelectionView {
+  kind: 'pi';
+  adapterVersion: string;
+  policyVersion: string;
+}
+
+export interface AnimationChallengeVersionView {
+  id: string;
+  challengeId: string;
+  versionNumber: number;
+  title: string;
+  titleEn: string;
+  instructions: string;
+  instructionsEn: string;
+  outputPolicyVersion: 'svg-animation-v1';
+  contentDigest: string;
+}
+
+export interface AnimationChallengeView {
+  id: string;
+  slug: string;
+  position: number;
+  status: 'published';
+  versions: AnimationChallengeVersionView[];
+  outputPolicy: {
+    version: 'svg-animation-v1';
+    requiredPaths: readonly ['index.html'];
+    optionalReadme: true;
+    inlineSvgRequired: true;
+    hiddenSuite: false;
+    automaticCorrectnessJudge: false;
+    scriptsAllowed: false;
+    animationModes: readonly ('css-keyframes' | 'svg-declarative')[];
+    maxFiles: number;
+    maxFileBytes: number;
+    maxBundleBytes: number;
+    maxParseDepth: number;
+    maxNodes: number;
+    maxAnimations: number;
+  };
+  agentBuildContract: {
+    modelSelection: AgentBuildPinnedRefView;
+    outputContractRef: AgentBuildPinnedRefView;
+    environmentRef: AgentBuildPinnedRefView;
+    runtimeSelection: AgentRuntimeSelectionView;
+  };
+  runAvailability: { enabled: boolean; reason: string };
+}
+
+export interface AgentBuildDefinitionView {
+  mode: 'agent';
+  definitionSchemaVersion: 1;
+  instructions: string;
+  modelSelection: AgentBuildPinnedRefView;
+  skillRefs: [];
+  requestedCapabilities: [];
+  outputContractRef: AgentBuildPinnedRefView;
+  profileRef: null;
+  environmentRef: AgentBuildPinnedRefView;
+  runtimeSelection: AgentRuntimeSelectionView;
+}
+
+export interface AgentBuildView {
+  id: string;
+  title: string;
+  visibility: 'private';
+  currentVersionId: string;
+  parentBuildId: string | null;
+  animationChallengeId: string | null;
+  animationChallengeVersion: AnimationChallengeVersionView | null;
+  mode: 'agent';
+  owner: boolean;
+  canFork: boolean;
+  version: {
+    id: string;
+    revision: number;
+    title: string;
+    visibility: 'private';
+    createdAt: string;
+    mode: 'agent';
+    animationChallengeVersionId: string | null;
+    agentDefinition: AgentBuildDefinitionView;
+    definitionDigest: string;
+  };
+}
+
+export interface CreationRunView {
+  id: string;
+  buildId: string;
+  buildVersionId: string;
+  challengeVersionId: string | null;
+  evaluationJobId: string | null;
+  artifactBundleId: string | null;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'incomplete';
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface CreationRunStatusView {
+  run: CreationRunView;
+  job: null | {
+    id: string;
+    state: EvaluationJobState;
+    modelOfferingId: string | null;
+    snapshotDigest: string;
+    cancellationRequestedAt: string | null;
+    acceptedAt: string;
+    createdAt: string;
+    updatedAt: string;
+    completedAt: string | null;
+    completion: { evidence: 'complete' | 'partial'; summary?: RecordValue } | null;
+    failure: { code: string; retryable: boolean } | null;
+  };
+}
+
+export interface CreateCreationRunResponse extends CreationRunStatusView {
+  created: boolean;
+}
+
+export interface ArtifactBundleView {
+  bundleId: string;
+  outputSlot: string;
+  status: 'collecting' | 'sealed' | 'rejected';
+  snapshotDigest: string;
+  manifestDigest: string;
+  entries: Array<{
+    artifactId: string;
+    relativePath: string;
+    mediaType: string;
+    bytes: number;
+    sha256: string;
+    classification: 'public-feedback' | 'private-creation' | 'hidden';
+  }>;
+  sealedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ArtifactPreviewView {
+  plan: {
+    artifactId: string;
+    relativePath: string;
+    mediaType: string;
+    format: 'html' | 'css' | 'markdown' | 'svg' | 'json' | 'csv' | 'text' | 'image';
+    renderer: 'html-sandbox' | 'css-text' | 'markdown-sanitized' | 'svg-animation-sandbox' | 'json-tree' | 'csv-table' | 'plain-text' | 'image';
+    maxBytes: number;
+    allowScripts: false;
+    allowRemoteResources: false;
+    allowNavigation: false;
+    allowForms: false;
+    allowPopups: false;
+    rawHtmlAllowed: false;
+    formulaExecution: false;
+  };
+  body: { kind: 'text'; content: string } | { kind: 'binary'; base64: string };
+}
+
+export interface PublicationFileView {
+  artifactId?: string;
+  relativePath: string;
+  mediaType: string;
+  previewKind: 'html' | 'markdown' | 'svg' | 'image' | 'json' | 'csv' | 'text' | 'download';
+  sizeBytes: number;
+  sha256: string;
+}
+
+export interface OwnerPublicationView {
+  id: string;
+  ownerId: string;
+  sourceBundleId: string;
+  sourceSnapshotDigest: string;
+  sourceManifestDigest: string;
+  sourceAttemptFence: string;
+  releaseDigest: string;
+  title: string;
+  description: string;
+  entryPath: string;
+  files: PublicationFileView[];
+  status: 'pending' | 'published' | 'rejected' | 'withdrawn' | 'taken-down';
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt: string | null;
+  withdrawnAt: string | null;
+}
+
+export interface PublicPublicationView {
+  publicationId: string;
+  title: string;
+  description: string;
+  entryPath: string;
+  releaseDigest: string;
+  files: Omit<PublicationFileView, 'artifactId'>[];
+  createdAt: string;
+}
+
+export interface LikeSummaryView {
+  publicationId: string;
+  count: number;
+  likedByViewer: boolean;
+  changed?: boolean;
+}
+
+export interface ShowcaseEntryView {
+  id: string;
+  ownerId: string;
+  publicationId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  roundId: string;
+  status: 'active' | 'withdrawn';
+  publicationReleaseDigest: string;
+  publication: PublicPublicationView;
+  createdAt: string;
+  withdrawnAt: string | null;
+}
+
+export interface ShowcaseBallotView {
+  id: string;
+  voterId: string;
+  roundId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  entryAId: string;
+  entryBId: string;
+  pairKey: string;
+  requestDigest: string;
+  idempotencyKey: string;
+  issuedAt: string;
+  expiresAt: string;
+  status: 'open' | 'cast' | 'expired';
+  castVoteId: string | null;
+  candidates: null | {
+    a: { entryId: string; publication: PublicPublicationView };
+    b: { entryId: string; publication: PublicPublicationView };
+  };
+}
+
+export interface ShowcaseLeaderboardView {
+  roundId: string;
+  comparatorKey: string;
+  policyVersion: string;
+  sample: {
+    validVotes: number;
+    independentVoters: number;
+    minValidVotes: number;
+    minIndependentVoters: number;
+    qualified: boolean;
+  };
+  rows: Array<{
+    entryId: string;
+    publication: PublicPublicationView;
+    comparisons: number;
+    halfPoints: number;
+    points: number;
+    score: number;
+    validVoters: number;
+    qualified: boolean;
+  }>;
+}
+
+function idempotencyAgreement(body: RecordValue, optionKey?: string): { key: string; body: RecordValue } {
+  const bodyKey = typeof body.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  const explicitKey = optionKey?.trim() ?? '';
+  if (bodyKey && explicitKey && bodyKey !== explicitKey) {
+    throw new ApiError('The idempotency key header does not match the request body.', 409, 'REQUEST_VALIDATION_FAILED');
+  }
+  const key = explicitKey || bodyKey;
+  if (!key) throw new ApiError('An idempotency key is required.', 400, 'REQUEST_VALIDATION_FAILED');
+  return { key, body: { ...body, idempotencyKey: key } };
+}
+
+async function idempotentPost<T>(path: string, body: RecordValue, key?: string, signal?: AbortSignal): Promise<T> {
+  const agreed = idempotencyAgreement(body, key);
+  return api<T>(path, {
+    method: 'POST',
+    body: JSON.stringify(agreed.body),
+    headers: { 'Idempotency-Key': agreed.key },
+    signal,
+  });
+}
+
+export const listAnimationChallenges = (signal?: AbortSignal) => api<AnimationChallengeView[]>('animation-challenges', { signal });
+export const listProviders = (signal?: AbortSignal) => api<ProviderCatalogView>('providers', { signal });
+export const addProvider = (body: {
+  protocol: ProviderProtocol;
+  name: string;
+  baseUrl: string;
+  modelId: string;
+  apiKey: string;
+}) => post<ProviderCredentialView>('providers', body);
+export const deleteProvider = (credentialId: string) => api<{ ok?: boolean }>(`providers/${encodeURIComponent(credentialId)}`, { method: 'DELETE' });
+
+export const saveAgentBuild = (body: {
+  buildId?: string;
+  currentVersionId?: string;
+  title: string;
+  mode: 'agent';
+  animationChallengeVersionId: string;
+  visibility: 'private';
+  agentDefinition: AgentBuildDefinitionView;
+}) => post<AgentBuildView>('builds', body);
+
+export const getAgentBuild = (buildId: string, versionId?: string, signal?: AbortSignal) => {
+  const query = new URLSearchParams({ mode: 'agent' });
+  if (versionId) query.set('version', versionId);
+  return api<AgentBuildView>(`builds/${encodeURIComponent(buildId)}?${query.toString()}`, { signal });
+};
+
+export const forkAgentBuild = (buildId: string, versionId: string) => post<AgentBuildView>(`builds/${encodeURIComponent(buildId)}/fork`, {
+  mode: 'agent',
+  versionId,
+});
+
+export const createCreationRun = (
+  body: { buildVersionId: string; challengeVersionId: string; credentialId: string; idempotencyKey?: string },
+  options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+) => idempotentPost<CreateCreationRunResponse>('creation-runs', body, options.idempotencyKey, options.signal);
+
+export const getCreationRun = (runId: string, signal?: AbortSignal) => api<CreationRunStatusView>(`creation-runs/${encodeURIComponent(runId)}`, { signal });
+export const cancelCreationRun = (runId: string, signal?: AbortSignal) => api<CreationRunStatusView>(`creation-runs/${encodeURIComponent(runId)}/cancel`, {
+  method: 'POST',
+  body: '{}',
+  signal,
+});
+export const retryCreationRun = (runId: string, idempotencyKey: string, signal?: AbortSignal) => idempotentPost<CreateCreationRunResponse>(
+  `creation-runs/${encodeURIComponent(runId)}/retry`,
+  { idempotencyKey },
+  idempotencyKey,
+  signal,
+);
+
+export const getArtifactBundle = (bundleId: string, signal?: AbortSignal) => api<ArtifactBundleView>(`artifact-bundles/${encodeURIComponent(bundleId)}`, { signal });
+export const getArtifactPreview = (artifactId: string, signal?: AbortSignal) => api<ArtifactPreviewView>(`artifacts/${encodeURIComponent(artifactId)}/preview`, { signal });
+
+export async function downloadArtifact(artifactId: string, signal?: AbortSignal): Promise<Blob> {
+  const response = await fetch(`/api/arena/artifacts/${encodeURIComponent(artifactId)}/content`, {
+    credentials: 'same-origin',
+    signal,
+  });
+  if (!response.ok) throw normalizeApiError(await readPayload(response), 'Artifact download failed.', response.status);
+  return response.blob();
+}
+
+export const requestPublication = (body: {
+  creationRunId: string;
+  expectedSnapshotDigest: string;
+  expectedManifestDigest: string;
+  title: string;
+  description: string;
+  entryPath: string;
+  publicArtifactIds: string[];
+}) => post<OwnerPublicationView>('showcase/publications', body);
+export const getOwnerPublication = (publicationId: string, signal?: AbortSignal) => api<OwnerPublicationView>(`showcase/publications/${encodeURIComponent(publicationId)}/owner`, { signal });
+export const getPublicPublication = (publicationId: string, signal?: AbortSignal) => api<PublicPublicationView>(`showcase/publications/${encodeURIComponent(publicationId)}`, { signal });
+export const getPublicArtifactPreview = (publicationId: string, relativePath: string, signal?: AbortSignal) => api<ArtifactPreviewView>(
+  `showcase/publications/${encodeURIComponent(publicationId)}/preview?${new URLSearchParams({ path: relativePath }).toString()}`,
+  { signal },
+);
+export const getPublicationLikes = (publicationId: string, signal?: AbortSignal) => api<LikeSummaryView>(`showcase/publications/${encodeURIComponent(publicationId)}/likes`, { signal });
+export const likePublication = (publicationId: string) => api<LikeSummaryView>(`showcase/publications/${encodeURIComponent(publicationId)}/like`, { method: 'PUT' });
+export const unlikePublication = (publicationId: string) => api<LikeSummaryView>(`showcase/publications/${encodeURIComponent(publicationId)}/like`, { method: 'DELETE' });
+
+export const createShowcaseEntry = (body: { publicationId: string; roundId: string; comparatorKey: string; policyVersion: string }) => post<ShowcaseEntryView>('showcase/entries', body);
+export const issueShowcaseBallot = (
+  body: { roundId: string; comparatorKey: string; policyVersion: string; idempotencyKey?: string },
+  idempotencyKey: string,
+  signal?: AbortSignal,
+) => idempotentPost<ShowcaseBallotView | null>('showcase/ballots', body, idempotencyKey, signal);
+export const getShowcaseBallot = (ballotId: string, signal?: AbortSignal) => api<ShowcaseBallotView>(`showcase/ballots/${encodeURIComponent(ballotId)}`, { signal });
+export const castShowcaseVote = (
+  ballotId: string,
+  choice: 'a' | 'b' | 'tie' | 'skip',
+  idempotencyKey: string,
+  signal?: AbortSignal,
+) => idempotentPost<{ vote: { id: string; validity: 'accepted' | 'excluded'; exclusionReason: string | null }; ballot: ShowcaseBallotView }>(
+  `showcase/ballots/${encodeURIComponent(ballotId)}/votes`,
+  { choice, idempotencyKey },
+  idempotencyKey,
+  signal,
+);
+export const getShowcaseLeaderboard = (
+  params: { roundId: string; comparatorKey: string; policyVersion: string },
+  signal?: AbortSignal,
+) => api<ShowcaseLeaderboardView>(`showcase/leaderboard?${new URLSearchParams(params).toString()}`, { signal });
