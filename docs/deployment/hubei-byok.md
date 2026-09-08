@@ -6,6 +6,8 @@
 
 This is the production runbook for the two-challenge BYOK launch on one VPS. It uses the conventional trusted control-plane/isolated-executor split. A successful run persists only its sealed artifact files and metadata; its gVisor state and per-attempt working directory are disposed.
 
+Current production record (2026-09-08): commit `bd47c913479ccfa9c9217c8a42fa60c2b739d508` is deployed as `agentforge:bd47c913479ccfa9c9217c8a42fa60c2b739d508` at `https://arena.pillarit.cn`. The dedicated PostgreSQL/Redis stack, Worker, loopback web origin, backups, restore-check and Cloudflare route have been verified. See `docs/verification/animation-launch-df6c-2026-09-08.md` for evidence and the remaining real-BYOK success gate.
+
 ## 1. 拓扑 / Topology
 
 ```text
@@ -227,6 +229,18 @@ http://127.0.0.1:53180
 Set `BETTER_AUTH_URL` to the exact public HTTPS origin. Preserve the original host and HTTPS scheme through the tunnel. Do not expose the systemd Worker, Redis, PostgreSQL, runsc state, sandbox work root or artifact filesystem as public tunnel ingress.
 
 After the tunnel is active, verify the exact public origin, registration/login, secure cookies and `/api/arena/boot`. Browser origin/CSP checks must use that HTTPS hostname, not only localhost.
+
+
+The current production route is:
+
+```text
+hostname: arena.pillarit.cn
+tunnel:   edge-hubei-pillarit-cn
+tunnelId: e5e2298c-8487-4a75-9ec9-f8236d6eb2c9
+origin:   http://127.0.0.1:53180
+```
+
+The rule was inserted immediately before the existing `http_status:404` fallback. Preserve all unrelated ingress rules. Do not inspect or copy the tunnel token from process command lines; the token serves multiple live hostnames and rotation requires a separately planned coordinated change.
 
 ## 10. Sandbox and artifact lifecycle
 
