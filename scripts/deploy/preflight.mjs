@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parse } from 'dotenv';
+import { parseEnv } from 'node:util';
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -133,7 +133,7 @@ export function validateProductionEnvironment(env) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const errors = validateProductionEnvironment(parse(readFileSync(process.argv[2], 'utf8')));
+    const errors = validateProductionEnvironment(parseEnv(readFileSync(process.argv[2], 'utf8')));
     if (errors.length) {
       console.error(errors.join('\n'));
       process.exitCode = 1;

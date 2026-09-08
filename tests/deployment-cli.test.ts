@@ -124,6 +124,15 @@ test('dedicated dependency check is render-only and requires immutable images', 
   } finally { rmSync(f.dir, { recursive: true }); }
 });
 
+test('deployment preflight and data bootstrap parse env without installed packages', () => {
+  const preflight = readFileSync(new URL('../scripts/deploy/preflight.mjs', import.meta.url), 'utf8');
+  const data = readFileSync(new URL('../scripts/deploy/data.sh', import.meta.url), 'utf8');
+  assert.match(preflight, /node:util/);
+  assert.match(data, /node:util/);
+  assert.doesNotMatch(preflight, /from ['"]dotenv['"]/);
+  assert.doesNotMatch(data, /requireFromRelease\('dotenv'\)/);
+});
+
 test('deployment scripts support the pinned portable Node path used on Hubei', () => {
   for (const path of ['scripts/deploy/app.sh', 'scripts/deploy/data.sh']) {
     const script = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');

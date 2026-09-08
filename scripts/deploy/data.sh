@@ -30,17 +30,15 @@ case "$mode" in check|up|status|backup|restore-check) ;; *) usage; exit 2 ;; esa
 "$node_bin" --input-type=module - "$root" "$env_file" <<'JS'
 import fs from 'node:fs';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { parseEnv } from 'node:util';
 const root = fs.realpathSync(process.argv[2]);
 const file = fs.realpathSync(process.argv[3]);
-const requireFromRelease = createRequire(path.join(root, 'package.json'));
-const { parse } = requireFromRelease('dotenv');
 const mode = fs.statSync(file).mode & 0o777;
 if (file === root || file.startsWith(`${root}${path.sep}`) || mode !== 0o600) {
   console.error('Env file must be outside checkout and mode 0600 / 配置文件须在仓库外且权限为 0600');
   process.exit(1);
 }
-const env = parse(fs.readFileSync(file, 'utf8'));
+const env = parseEnv(fs.readFileSync(file, 'utf8'));
 const required = [
   'AGENTFORGE_POSTGRES_IMAGE', 'AGENTFORGE_REDIS_IMAGE',
   'AGENTFORGE_POSTGRES_USER', 'AGENTFORGE_POSTGRES_PASSWORD',
