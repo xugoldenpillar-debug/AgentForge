@@ -1,0 +1,96 @@
+name: Reconcile Agent Builder with main
+on:
+  push:
+    branches: [feat/agent-builder-complete-20260908]
+    paths: [.github/workflows/agent-builder-merge-main.yml]
+permissions:
+  contents: write
+concurrency:
+  group: reconcile-agent-builder-main
+  cancel-in-progress: false
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      APP_ENV: test
+      DEMO_MODE: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: agentforge
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge_local
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agentforge -d agentforge"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: feat/agent-builder-complete-20260908
+      - name: Merge current main, preserving reviewed builder conflict hunks
+        run: |
+          git fetch origin main
+          git merge --no-commit --no-ff -X ours origin/main
+          test -f .git/MERGE_HEAD
+          git diff --check --cached
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run setup
+      - name: Full regression and persistence gates
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          pnpm test:migrations
+          pnpm exec tsx --test tests/agent-drafts.integration.ts
+          pnpm test:evaluation-db
+          pnpm db
+          pnpm test
+          pnpm test:deploy
+          pnpm test:pi-runtime
+          pnpm test:provider-sdk
+      - name: Typecheck and production build
+        run: |
+          pnpm typecheck
+          pnpm build
+      - name: Smoke both runtime modes
+        run: |
+          BASE=http://127.0.0.1:3817
+          mkdir -p "$RUNNER_TEMP/agentforge-artifacts"
+          ARTIFACT_ARENA_ENABLED=true ARTIFACT_STORAGE_ROOT="$RUNNER_TEMP/agentforge-artifacts" BETTER_AUTH_URL="$BASE" pnpm exec next start -p 3817 > "$RUNNER_TEMP/next-test.log" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" || true' EXIT
+          for i in $(seq 1 90); do curl --fail --silent "$BASE/api/arena/boot" >/dev/null && break; sleep 1; done
+          curl --fail --silent "$BASE/api/arena/boot" >/dev/null
+          SMOKE_BASE_URL="$BASE" SMOKE_EXPECT_TEST_MODE=true pnpm test:smoke
+          kill "$APP_PID"
+          wait "$APP_PID" || true
+          APP_ENV=development BETTER_AUTH_URL="$BASE" pnpm exec next start -p 3817 > "$RUNNER_TEMP/next-dev.log" 2>&1 &
+          APP_PID=$!
+          for i in $(seq 1 90); do curl --fail --silent "$BASE/api/arena/boot" >/dev/null && break; sleep 1; done
+          curl --fail --silent "$BASE/api/arena/boot" >/dev/null
+          SMOKE_BASE_URL="$BASE" SMOKE_EXPECT_TEST_MODE=false pnpm test:smoke
+      - name: Commit reconciled branch and remove temporary workflow
+        run: |
+          git rm .github/workflows/agent-builder-merge-main.yml
+          git diff --check --cached
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'merge: reconcile agent builder with main'
+          git push origin HEAD:refs/heads/feat/agent-builder-complete-20260908
