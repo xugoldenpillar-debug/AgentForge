@@ -117,6 +117,20 @@ JS
 }
 
 
+render_service_unit() {
+  escaped_release=$(printf '%s' "$release_dir" | sed 's/[&|]/\\&/g')
+  escaped_env=$(printf '%s' "$env_file" | sed 's/[&|]/\\&/g')
+  escaped_node=$(printf '%s' "$node_bin" | sed 's/[&|]/\\&/g')
+  sed -e "s|@RELEASE_DIR@|$escaped_release|g" \
+    -e "s|@ENV_FILE@|$escaped_env|g" \
+    -e "s|@NODE_BIN@|$escaped_node|g" \
+    "$service_template" > "$service_target.tmp"
+  chmod 0644 "$service_target.tmp"
+  mv "$service_target.tmp" "$service_target"
+  systemctl daemon-reload
+}
+
+
 case "$mode" in
   check)
     check_group
@@ -139,16 +153,7 @@ case "$mode" in
     # become readable by the web container's supplemental group, never writable.
     find "$artifact_root" -type d -exec chown root:"$artifact_group" {} + -exec chmod 2750 {} +
     find "$artifact_root" -type f -exec chown root:"$artifact_group" {} + -exec chmod 0640 {} +
-    escaped_release=$(printf '%s' "$release_dir" | sed 's/[&|]/\\&/g')
-    escaped_env=$(printf '%s' "$env_file" | sed 's/[&|]/\\&/g')
-    escaped_node=$(printf '%s' "$node_bin" | sed 's/[&|]/\\&/g')
-    sed -e "s|@RELEASE_DIR@|$escaped_release|g" \
-      -e "s|@ENV_FILE@|$escaped_env|g" \
-      -e "s|@NODE_BIN@|$escaped_node|g" \
-      "$service_template" > "$service_target.tmp"
-    chmod 0644 "$service_target.tmp"
-    mv "$service_target.tmp" "$service_target"
-    systemctl daemon-reload
+    render_service_unit
     systemctl enable "$service_name"
     echo 'Trusted worker installed but not started / 可信 Worker 已安装但尚未启动'
     ;;
@@ -156,6 +161,9 @@ case "$mode" in
     [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo "$mode must run as root / 必须由 root 执行" >&2; exit 1; }
     check_group
     check_runtime
+    # Refresh the unit from the supplied immutable release before every
+    # activation; otherwise restart can silently keep an older WorkingDirectory.
+    render_service_unit
     systemctl "$mode" "$service_name"
     systemctl --no-pager --full status "$service_name"
     ;;

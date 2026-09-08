@@ -2,7 +2,7 @@
 
 ## 结论
 
-分支：`codex/two-challenge-launch`。生产提交：`bd47c913479ccfa9c9217c8a42fa60c2b739d508`，已推送到 `origin/main`。
+分支：`codex/two-challenge-launch`。当前生产运行时代码提交：`4131b4bdf3efa19ccf0959ac473046358975db28`，已推送到 `origin/main`；初始公开版提交为 `bd47c913479ccfa9c9217c8a42fa60c2b739d508`。
 
 本轮实现并部署了以下产品闭环：
 
@@ -16,6 +16,17 @@
 生产入口为 `https://arena.pillarit.cn`，已对全部正常注册用户开放。模型调用只使用用户自己提供并经服务端加密的 API Key。首版支持 `openai-chat`、`openai-responses`、`anthropic-messages`、`google-generative-ai` 四种显式协议，不按 Key 前缀猜测协议。动画 CreationRun 不设置平台美元费用上限；token、轮次、工具、时长、内存、磁盘、进程、并发、取消和恢复边界仍然保留。
 
 **准确边界：代码、生产数据栈、真实 outbox/Worker、gVisor 沙箱、Cloudflare HTTPS、公开注册和无效凭据失败/恢复路径已经验证。两题各一次成功的真实付费模型运行仍未完成，因为本轮没有用户授权的有效 BYOK Key；因此不能把 L7 写成全部通过，也不能验证成功产物的生产动画播放、发布、点赞和真实盲选。**
+
+## 生产 CreationRun 故障修复
+
+2026-09-08 用户报告 `creation-run-8f7056ec5fb21e49e19874ca1dce656a` 以 `CREATION_EXECUTION_FAILED` 结束。只读生产库检查确认其 EF Attempt 在约 0.31 秒内失败，`evaluation_invocations` 为 0、无 Artifact bundle；因此请求尚未跨越到模型供应商，正常情况下不会产生本次模型调用费用。
+
+根因有两项：
+
+1. Creation executor 的首次 `invocationIndex` 从 0 开始，而生产 PostgreSQL 的 `evaluation_invocations_invocation_index_check` 明确要求 `invocation_index > 0`。第一次 Invocation 落账在发起模型 HTTP 前即被数据库拒绝，并被上层折叠为通用执行错误。修复后 Creation 与既有 competitive executor 一致，使用 1-based 序号；回归测试明确断言 `[1, 2]`。
+2. Hubei 的真实 gVisor smoke 复现 `runsc kill/delete` 返回与状态目录收敛之间的短暂竞态。旧实现只检查一次，会把仍在收敛的正常停止误判为失败并残留诊断 bundle。修复后在约 3 秒有界窗口内重试 `state/list/delete`，仍无法独立验证时继续失败关闭并保留现场。
+
+提交 `4131b4bdf3efa19ccf0959ac473046358975db28` 已在 Hubei 构建为不可变镜像并部署。Web 容器与 systemd Worker 均指向该提交；修复版真实 `runsc` smoke 覆盖创建、写入、停止、snapshot 读取和 dispose，全部通过。生产 `runsc list` 为 `null`，沙箱 attempt/bundle 残留为 0。部署前备份 `/var/backups/agentforge/agentforge-20260908T081314Z.sql.gz` 已通过一次性数据库恢复校验。
 
 ## 隔离数据库与应用回归
 

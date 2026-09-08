@@ -121,6 +121,7 @@ test('trusted worker unit and installer are bounded to dedicated AgentForge reso
   assert.match(worker, /install -d -o root -g "\$artifact_group" -m 2750/);
   assert.match(worker, /install -d -o root -g root -m 0700/);
   assert.match(worker, /systemctl enable/);
+  assert.match(worker, /start\|restart[\s\S]+render_service_unit[\s\S]+systemctl "\$mode"/);
   assert.match(worker, /createRequire\(path\.join\(release, 'package\.json'\)\)/);
   assert.match(worker, /requireFromRelease\('dotenv'\)/);
   assert.match(worker, /\\\( -type f -o -type d \\\) -perm \/0222/);

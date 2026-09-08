@@ -203,7 +203,7 @@ sudo scripts/deploy/worker.sh restart \
   "/opt/agentforge/releases/$release_sha"
 ```
 
-The app release order is immutable image build → one-off additive migration/seed → container health wait. It joins only `agentforge-production-backend` and binds HTTP only to `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. Immediately create and restore-check a post-migration backup using Section 5. The Worker is an independent systemd service, so a web rollback does not silently leave a mismatched Worker; install/restart the matching prior Worker release explicitly.
+`worker.sh restart` refreshes the systemd unit from the supplied immutable release directory before restarting it; verify `systemctl show agentforge-evaluation-worker.service -p WorkingDirectory` after every cutover. The app release order is immutable image build → one-off additive migration/seed → container health wait. It joins only `agentforge-production-backend` and binds HTTP only to `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. Immediately create and restore-check a post-migration backup using Section 5. The Worker is an independent systemd service, so a web rollback does not silently leave a mismatched Worker; install/restart the matching prior Worker release explicitly.
 
 Useful checks:
 
