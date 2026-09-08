@@ -8,7 +8,6 @@ import {
   Download,
   GitFork,
   Heart,
-  KeyRound,
   LoaderCircle,
   PauseCircle,
   Play,
@@ -24,7 +23,6 @@ import { ArtifactPreviewPanel, type ArtifactPreviewFile } from '@/components/age
 import { LanguageSwitcher, localizeError, useToast } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
-  addProvider,
   cancelCreationRun,
   castShowcaseVote,
   createCreationRun,
@@ -54,30 +52,23 @@ import {
   type LikeSummaryView,
   type OwnerPublicationView,
   type ProviderCredentialView,
-  type ProviderProtocol,
   type ShowcaseBallotView,
   type ShowcaseLeaderboardView,
 } from '@/lib/client-api';
 import { useLocale } from '@/lib/i18n';
-import { PROVIDER_PROTOCOL_BASE_URLS, PROVIDER_PROTOCOLS } from '@/shared/provider-protocol';
 import type { MessageKey } from '@/shared/i18n/types';
 import styles from './agent-builder.module.css';
+import { AgentProviderForm } from './agent-provider-form';
+import { AgentSkillPicker } from './agent-skill-picker';
+import { draftMatchesBuild, parseCreationSession, type PersistedCreationSession } from './creation-session';
+import type { AgentBuildSkillRef } from '@/shared/agent-build-contract';
+import { isApiError } from '@/lib/client-api';
 
 const UI_ENABLED = process.env.NEXT_PUBLIC_AGENT_BUILDER_UI !== 'false';
-const STORAGE_KEY = 'agentforge.artifact-arena.creation-v2';
+const STORAGE_KEY = 'agentforge.artifact-arena.creation-v3';
 const COMPARATOR_KEY = 'artifact-arena:showcase:v1';
 const POLICY_VERSION = 'showcase-pairwise-v1';
 const SEASON_ID = 'season-2026-launch';
-
-interface PersistedCreationSession {
-  challengeVersionId?: string;
-  credentialId?: string;
-  buildId?: string;
-  buildVersionId?: string;
-  runId?: string;
-  publicationId?: string;
-  entryId?: string;
-}
 
 type BusyAction =
   | 'credential'
@@ -113,16 +104,6 @@ const PUBLICATION_STATUS_KEYS: Record<OwnerPublicationView['status'], MessageKey
   'taken-down': 'artifactArena.publication.taken-down',
 };
 
-function readPersisted(): PersistedCreationSession {
-  if (typeof window === 'undefined') return {};
-  try {
-    const value = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '{}');
-    return value && typeof value === 'object' ? value as PersistedCreationSession : {};
-  } catch {
-    return {};
-  }
-}
-
 function roundId(challengeVersionId: string): string {
   return `${challengeVersionId}:${SEASON_ID}:byok`;
 }
@@ -157,35 +138,54 @@ function StepLabel({ children, complete = false }: { children: React.ReactNode; 
 export function AgentBuilderPage() {
   const { t, language, formatNumber } = useLocale();
   const toast = useToast();
-  const restored = useRef<PersistedCreationSession | null>(null);
-  if (!restored.current) restored.current = readPersisted();
+  const storageKey = useRef('');
+  const epoch = useRef(0);
+  const initialInstructions = useRef(t('builderPlus.defaultInstructions'));
+  const initialLanguage = useRef(language);
+  initialInstructions.current = t('builderPlus.defaultInstructions');
+  initialLanguage.current = language;
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const leaderboardRequest = useRef(0);
+  const likeRevision = useRef(0);
+  const voteRequest = useRef<{ ballotId: string; choice: string; key: string } | null>(null);
+  const [pickerGeneration, setPickerGeneration] = useState(0);
+  const runRequest = useRef<{ versionId: string; credentialId: string; key: string } | null>(null);
+  const retryRequest = useRef<{ runId: string; key: string } | null>(null);
 
   const [challenges, setChallenges] = useState<AnimationChallengeView[]>([]);
   const [credentials, setCredentials] = useState<ProviderCredentialView[]>([]);
-  const [challengeVersionId, setChallengeVersionId] = useState(restored.current.challengeVersionId ?? '');
-  const [credentialId, setCredentialId] = useState(restored.current.credentialId ?? '');
-  const [protocol, setProtocol] = useState<ProviderProtocol>('openai-chat');
-  const [baseUrl, setBaseUrl] = useState(PROVIDER_PROTOCOL_BASE_URLS['openai-chat']);
-  const [credentialName, setCredentialName] = useState('My animation model');
-  const [modelId, setModelId] = useState('');
-  const [apiKey, setApiKey] = useState('');
+  const [challengeVersionId, setChallengeVersionId] = useState('');
+  const [credentialId, setCredentialId] = useState('');
   const [buildTitle, setBuildTitle] = useState('');
-  const [instructions, setInstructions] = useState('Create a polished, self-contained animation. Use only inline SVG, restricted CSS keyframes, and declarative SVG animation. Write index.html before finishing.');
+  const [instructions, setInstructions] = useState('');
   const [build, setBuild] = useState<AgentBuildView | null>(null);
   const [runStatus, setRunStatus] = useState<CreationRunStatusView | null>(null);
   const [bundle, setBundle] = useState<ArtifactBundleView | null>(null);
   const [previews, setPreviews] = useState<ArtifactPreviewFile[]>([]);
   const [publication, setPublication] = useState<OwnerPublicationView | null>(null);
   const [publicTitle, setPublicTitle] = useState('');
-  const [publicDescription, setPublicDescription] = useState('A community animation created with Pi in the isolated AgentForge sandbox.');
-  const [entryId, setEntryId] = useState(restored.current.entryId ?? '');
+  const [publicDescription, setPublicDescription] = useState(t('builderPlus.defaultDescription'));
+  const [entryId, setEntryId] = useState('');
   const [ballot, setBallot] = useState<ShowcaseBallotView | null>(null);
   const [ballotRequested, setBallotRequested] = useState(false);
   const [ballotPreviews, setBallotPreviews] = useState<{ a: ArtifactPreviewFile[]; b: ArtifactPreviewFile[] }>({ a: [], b: [] });
   const [leaderboard, setLeaderboard] = useState<ShowcaseLeaderboardView | null>(null);
   const [likes, setLikes] = useState<Record<string, LikeSummaryView>>({});
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<BusyAction>(null);
+  const [busy, updateBusy] = useState<BusyAction>(null);
+  const busyRef = useRef<BusyAction>(null);
+  const setBusy = useCallback((value: React.SetStateAction<BusyAction>) => {
+    const next = typeof value === 'function' ? value(busyRef.current) : value;
+    busyRef.current = next;
+    updateBusy(next);
+  }, []);
+  const [authenticated, setAuthenticated] = useState(false);
+  const [allowedHosts, setAllowedHosts] = useState<string[]>([]);
+  const [skillRefs, setSkillRefs] = useState<readonly AgentBuildSkillRef[]>([]);
+  const [skillBusy, setSkillBusy] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [storageWarning, setStorageWarning] = useState(false);
+  const [pollingFailed, setPollingFailed] = useState(false);
   const [error, setError] = useState('');
 
   const selected = useMemo(() => {
@@ -202,129 +202,212 @@ export function AgentBuilderPage() {
   const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
   const isPublished = publication?.status === 'published';
   const partition = challengeVersionId ? roundId(challengeVersionId) : '';
+  const dirty = !draftMatchesBuild({ title: buildTitle, instructions, skillRefs }, build ? {
+    title: build.version.title, instructions: build.version.agentDefinition.instructions, skillRefs: build.version.agentDefinition.skillRefs,
+  } : null);
+  const locked = loading || busy !== null || !authenticated;
+  const editingLocked = locked || runActive || skillBusy;
 
   const fail = useCallback((reason: unknown) => {
     const message = localizeError(reason, t);
     setError(message);
     toast(message || t('artifactArena.operationFailed'), true);
   }, [t, toast]);
+  const failureHandler = useRef(fail);
+  failureHandler.current = fail;
+  const reportFailure = useCallback((reason: unknown) => failureHandler.current(reason), []);
 
   const persist = useCallback((patch: PersistedCreationSession) => {
-    const next = { ...readPersisted(), ...patch };
-    for (const [key, value] of Object.entries(next)) if (!value) delete next[key as keyof PersistedCreationSession];
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    if (!storageKey.current) return;
+    try {
+      const next = parseCreationSession(JSON.stringify({ ...parseCreationSession(window.localStorage.getItem(storageKey.current)), ...patch }));
+      window.localStorage.setItem(storageKey.current, JSON.stringify(next));
+      setStorageWarning(false);
+    } catch {
+      // A storage failure must not turn a successful remote save/run into a reported failure.
+      setStorageWarning(true);
+    }
   }, []);
 
   const loadBundle = useCallback(async (bundleId: string) => {
-    setBusy('preview');
+    const scope = epoch.current;
+    setPreviewLoading(true);
     try {
       const nextBundle = await getArtifactBundle(bundleId);
-      const nextPreviews = await Promise.all(nextBundle.entries.map(async (entry) => previewFile(entry, await getArtifactPreview(entry.artifactId))));
+      const results = await Promise.allSettled(nextBundle.entries.map(async (entry) => previewFile(entry, await getArtifactPreview(entry.artifactId))));
+      if (scope !== epoch.current) return;
       setBundle(nextBundle);
-      setPreviews(nextPreviews);
+      setPreviews(results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []));
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') reportFailure(failure.reason);
     } catch (reason) {
-      fail(reason);
+      if (scope === epoch.current) reportFailure(reason);
     } finally {
-      setBusy((value) => value === 'preview' ? null : value);
+      if (scope === epoch.current) setPreviewLoading(false);
     }
-  }, [fail]);
+  }, [reportFailure]);
 
   const refreshLeaderboard = useCallback(async (showBusy = true) => {
-    if (!partition) return;
+    if (!partition || (showBusy && busyRef.current)) return;
+    const scope = epoch.current;
+    const requestId = ++leaderboardRequest.current;
+    const revision = likeRevision.current;
     if (showBusy) setBusy('leaderboard');
     try {
       const next = await getShowcaseLeaderboard({ roundId: partition, comparatorKey: COMPARATOR_KEY, policyVersion: POLICY_VERSION });
+      if (scope !== epoch.current || requestId !== leaderboardRequest.current) return;
       setLeaderboard(next);
       const summaries = await Promise.all(next.rows.map(async (row) => {
         try { return await getPublicationLikes(row.publication.publicationId); }
         catch { return null; }
       }));
+      if (scope !== epoch.current || requestId !== leaderboardRequest.current) return;
+      if (revision !== likeRevision.current) return;
       setLikes((current) => {
         const updated = { ...current };
         summaries.forEach((summary) => { if (summary) updated[summary.publicationId] = summary; });
         return updated;
       });
     } catch (reason) {
-      fail(reason);
+      if (scope === epoch.current) reportFailure(reason);
     } finally {
       if (showBusy) setBusy((value) => value === 'leaderboard' ? null : value);
     }
-  }, [fail, partition]);
+  }, [reportFailure, partition, setBusy]);
 
   useEffect(() => {
+    if (!UI_ENABLED) { setLoading(false); return; }
     const controller = new AbortController();
-    const saved = restored.current ?? {};
-    (async () => {
+    const scope = ++epoch.current;
+    const current = () => !controller.signal.aborted && scope === epoch.current;
+    void (async () => {
       setLoading(true);
       try {
-        const [challengeRows, providerRows] = await Promise.all([
-          listAnimationChallenges(controller.signal),
-          listProviders(controller.signal),
+        const [challengeResult, providerResult] = await Promise.allSettled([
+          listAnimationChallenges(controller.signal), listProviders(controller.signal),
         ]);
-        if (controller.signal.aborted) return;
+        if (!current()) return;
+        if (challengeResult.status === 'rejected') throw challengeResult.reason;
+        const challengeRows = challengeResult.value;
         setChallenges(challengeRows);
-        setCredentials(providerRows.credentials);
-        const defaultVersion = saved.challengeVersionId || challengeRows[0]?.versions[0]?.id || '';
-        setChallengeVersionId(defaultVersion);
-        setCredentialId(saved.credentialId && providerRows.credentials.some((item) => item.id === saved.credentialId)
-          ? saved.credentialId
-          : providerRows.credentials[0]?.id ?? '');
+        let saved: PersistedCreationSession = {};
+        if (providerResult.status === 'fulfilled') {
+          const providers = providerResult.value;
+          setAuthenticated(true);
+          setAllowedHosts(providers.allowedHosts);
+          setCredentials(providers.credentials);
+          storageKey.current = `${STORAGE_KEY}:${providers.ownerId}`;
+          try { saved = parseCreationSession(window.localStorage.getItem(storageKey.current)); }
+          catch { setStorageWarning(true); }
+          setCredentialId(providers.credentials.some((item) => item.id === saved.credentialId)
+            ? saved.credentialId! : providers.credentials[0]?.id ?? '');
+        } else if (!isApiError(providerResult.reason) || providerResult.reason.status !== 401) {
+          reportFailure(providerResult.reason);
+        }
+        const versions = challengeRows.flatMap((challenge) => challenge.versions);
+        const version = versions.find((candidate) => candidate.id === saved.challengeVersionId) ?? versions[0];
+        setChallengeVersionId(version?.id ?? '');
+        const title = (initialLanguage.current === 'zh-CN' ? version?.title : version?.titleEn) ?? '';
+        setBuildTitle(saved.draftTitle ?? title);
+        setPublicTitle(title);
+        setInstructions(saved.draftInstructions ?? initialInstructions.current);
+        setSkillRefs(saved.draftSkillRefs ?? []);
+        let loadedBuild: AgentBuildView | null = null;
         if (saved.buildId) {
-          const loadedBuild = await getAgentBuild(saved.buildId, saved.buildVersionId, controller.signal);
-          setBuild(loadedBuild);
-          setBuildTitle(loadedBuild.title);
-          setInstructions(loadedBuild.version.agentDefinition.instructions);
+          try {
+            loadedBuild = await getAgentBuild(saved.buildId, saved.buildVersionId, controller.signal);
+            if (!current()) return;
+            if (loadedBuild.version.animationChallengeVersionId !== version?.id) loadedBuild = null;
+            if (loadedBuild) {
+              setBuild(loadedBuild);
+              setBuildTitle(saved.draftTitle ?? loadedBuild.version.title);
+              setInstructions(saved.draftInstructions ?? loadedBuild.version.agentDefinition.instructions);
+              setSkillRefs(saved.draftSkillRefs ?? loadedBuild.version.agentDefinition.skillRefs);
+            }
+          } catch (reason) { if (current()) reportFailure(reason); }
         }
-        if (saved.runId) {
-          const loadedRun = await getCreationRun(saved.runId, controller.signal);
-          setRunStatus(loadedRun);
-          if (loadedRun.run.artifactBundleId) await loadBundle(loadedRun.run.artifactBundleId);
-        }
-        if (saved.publicationId) {
-          const loadedPublication = await getOwnerPublication(saved.publicationId, controller.signal);
-          setPublication(loadedPublication);
-          setPublicTitle(loadedPublication.title);
-          setPublicDescription(loadedPublication.description);
+        if (saved.runId && loadedBuild) {
+          try {
+            const loadedRun = await getCreationRun(saved.runId, controller.signal);
+            if (!current()) return;
+            if (loadedRun.run.buildVersionId === loadedBuild.version.id && loadedRun.run.challengeVersionId === version?.id) {
+              setRunStatus(loadedRun);
+              if (loadedRun.run.artifactBundleId) await loadBundle(loadedRun.run.artifactBundleId);
+              if (saved.publicationId) {
+                const loadedPublication = await getOwnerPublication(saved.publicationId, controller.signal);
+                if (!current()) return;
+                setPublication(loadedPublication);
+                setPublicTitle(loadedPublication.title);
+                setPublicDescription(loadedPublication.description);
+                setEntryId(saved.entryId ?? '');
+              }
+            }
+          } catch (reason) { if (current()) reportFailure(reason); }
         }
       } catch (reason) {
-        if (!controller.signal.aborted) fail(reason);
+        if (current()) reportFailure(reason);
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (current()) setLoading(false);
       }
     })();
-    return () => controller.abort();
-  }, [fail, loadBundle]);
+    return () => { controller.abort(); epoch.current += 1; };
+  }, [reportFailure, loadBundle, bootAttempt]);
 
   useEffect(() => {
-    if (!selected || buildTitle) return;
-    setBuildTitle(`${language === 'zh-CN' ? selected.version.title : selected.version.titleEn} / my build`);
-    setPublicTitle(language === 'zh-CN' ? selected.version.title : selected.version.titleEn);
-  }, [buildTitle, language, selected]);
+    if (loading || !authenticated) return;
+    const timer = window.setTimeout(() => persist({ challengeVersionId, credentialId, draftTitle: buildTitle,
+      draftInstructions: instructions, draftSkillRefs: skillRefs }), 300);
+    return () => window.clearTimeout(timer);
+  }, [authenticated, buildTitle, challengeVersionId, credentialId, instructions, loading, persist, skillRefs]);
 
   useEffect(() => {
-    if (!runActive || !run?.id) return;
-    let stopped = false;
-    const timer = window.setInterval(async () => {
+    if (!dirty && !busy && !skillBusy) return;
+    const guard = (event: BeforeUnloadEvent) => {
+      if (!authenticated) return;
+      persist({ challengeVersionId, credentialId, draftTitle: buildTitle, draftInstructions: instructions, draftSkillRefs: skillRefs });
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [authenticated, dirty, busy, skillBusy, persist, challengeVersionId, credentialId, buildTitle, instructions, skillRefs]);
+
+  useEffect(() => {
+    if (!runActive || !run?.id || loading) return;
+    const controller = new AbortController();
+    const scope = epoch.current;
+    let delay = 1500;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
       try {
-        const next = await getCreationRun(run.id);
-        if (stopped) return;
+        const next = await getCreationRun(run.id, controller.signal);
+        if (controller.signal.aborted || scope !== epoch.current) return;
+        setPollingFailed(false);
         setRunStatus(next);
-        if (next.run.artifactBundleId) {
-          persist({ runId: next.run.id });
-          await loadBundle(next.run.artifactBundleId);
-        }
-      } catch (reason) {
-        if (!stopped) fail(reason);
+        delay = 1500;
+        if (next.run.artifactBundleId) await loadBundle(next.run.artifactBundleId);
+        if (next.run.status !== 'running' && next.run.status !== 'queued') return;
+      } catch {
+        if (controller.signal.aborted || scope !== epoch.current) return;
+        setPollingFailed(true);
+        delay = Math.min(delay * 2, 15000);
       }
-    }, 1500);
-    return () => { stopped = true; window.clearInterval(timer); };
-  }, [fail, loadBundle, persist, run?.id, runActive]);
+      if (!controller.signal.aborted && scope === epoch.current) timer = setTimeout(poll, delay);
+    };
+    timer = setTimeout(poll, delay);
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [loadBundle, loading, run?.id, runActive]);
 
   useEffect(() => {
-    if (partition) void refreshLeaderboard(false);
-  }, [partition, refreshLeaderboard]);
+    if (partition && !loading) void refreshLeaderboard(false);
+  }, [partition, refreshLeaderboard, loading]);
 
   const changeChallenge = (next: string) => {
+    if (loading || busyRef.current || runActive || skillBusy || next === challengeVersionId) return;
+    if (dirty && buildTitle && !window.confirm(t('builderPlus.discardChanges'))) return;
+    epoch.current += 1;
+    setPreviewLoading(false);
+    setPollingFailed(false);
     setChallengeVersionId(next);
     setBuild(null);
     setRunStatus(null);
@@ -335,26 +418,26 @@ export function AgentBuilderPage() {
     setBallot(null);
     setBallotPreviews({ a: [], b: [] });
     setLeaderboard(null);
-    setBuildTitle('');
-    persist({ challengeVersionId: next, buildId: '', buildVersionId: '', runId: '', publicationId: '', entryId: '' });
+    const version = challenges.flatMap((challenge) => challenge.versions).find((item) => item.id === next);
+    const title = language === 'zh-CN' ? version?.title ?? '' : version?.titleEn ?? '';
+    setBuildTitle(title);
+    setPublicTitle(title);
+    setInstructions(t('builderPlus.defaultInstructions'));
+    setSkillRefs([]);
+    setBallotRequested(false);
+    setLikes({});
+    setError('');
+    persist({ draftTitle: title, draftInstructions: t('builderPlus.defaultInstructions'), draftSkillRefs: [], challengeVersionId: next, buildId: '', buildVersionId: '', runId: '', publicationId: '', entryId: '' });
   };
 
-  const saveCredential = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setBusy('credential'); setError('');
-    try {
-      const saved = await addProvider({ protocol, name: credentialName.trim(), baseUrl: baseUrl.trim(), modelId: modelId.trim(), apiKey });
-      setCredentials((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]);
-      setCredentialId(saved.id);
-      setApiKey('');
-      persist({ credentialId: saved.id });
-      toast(t('artifactArena.credentialSaved'));
-    } catch (reason) { fail(reason); }
-    finally { setBusy(null); }
+  const credentialSaved = (saved: ProviderCredentialView) => {
+    setCredentials((rows) => [saved, ...rows.filter((row) => row.id !== saved.id)]);
+    setCredentialId(saved.id);
+    persist({ credentialId: saved.id });
   };
 
   const saveBuild = async () => {
-    if (!selected) return;
+    if (!selected || editingLocked || busyRef.current || !buildTitle.trim() || !instructions.trim()) return;
     setBusy('build'); setError('');
     try {
       const saved = await saveAgentBuild({
@@ -368,7 +451,7 @@ export function AgentBuilderPage() {
           definitionSchemaVersion: 1,
           instructions: instructions.trim(),
           modelSelection: selected.challenge.agentBuildContract.modelSelection,
-          skillRefs: [],
+          skillRefs,
           requestedCapabilities: [],
           outputContractRef: selected.challenge.agentBuildContract.outputContractRef,
           profileRef: null,
@@ -376,8 +459,11 @@ export function AgentBuilderPage() {
           runtimeSelection: selected.challenge.agentBuildContract.runtimeSelection,
         },
       });
+      epoch.current += 1;
+      setPreviewLoading(false);
       setBuild(saved);
-      persist({ challengeVersionId: selected.version.id, buildId: saved.id, buildVersionId: saved.version.id, runId: '', publicationId: '', entryId: '' });
+      setSkillRefs(saved.version.agentDefinition.skillRefs);
+      persist({ draftTitle: buildTitle, draftInstructions: instructions, draftSkillRefs: skillRefs, challengeVersionId: selected.version.id, buildId: saved.id, buildVersionId: saved.version.id, runId: '', publicationId: '', entryId: '' });
       setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
       toast(t('artifactArena.buildSaved'));
     } catch (reason) { fail(reason); }
@@ -385,11 +471,17 @@ export function AgentBuilderPage() {
   };
 
   const startRun = async () => {
-    if (!selected || !build || !credentialId) return;
+    if (!selected || !build || !credentialId || editingLocked || dirty || busyRef.current) return;
     setBusy('run'); setError('');
     try {
-      const key = crypto.randomUUID();
+      const previous = runRequest.current;
+      const key = previous?.versionId === build.version.id && previous.credentialId === credentialId ? previous.key : crypto.randomUUID();
+      runRequest.current = { versionId: build.version.id, credentialId, key };
       const next = await createCreationRun({ buildVersionId: build.version.id, challengeVersionId: selected.version.id, credentialId, idempotencyKey: key }, { idempotencyKey: key });
+      epoch.current += 1;
+      runRequest.current = null;
+      setPreviewLoading(false);
+      setPollingFailed(false);
       setRunStatus(next);
       setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
       persist({ runId: next.run.id, publicationId: '', entryId: '' });
@@ -398,6 +490,7 @@ export function AgentBuilderPage() {
   };
 
   const cancelRun = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!run) return;
     setBusy('cancel');
     try { setRunStatus(await cancelCreationRun(run.id)); }
@@ -406,17 +499,25 @@ export function AgentBuilderPage() {
   };
 
   const retryRun = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!run) return;
     setBusy('retry');
     try {
-      const next = await retryCreationRun(run.id, crypto.randomUUID());
+      const key = retryRequest.current?.runId === run.id ? retryRequest.current.key : crypto.randomUUID();
+      retryRequest.current = { runId: run.id, key };
+      const next = await retryCreationRun(run.id, key);
+      retryRequest.current = null;
+      epoch.current += 1;
+      setPreviewLoading(false);
+      setPublication(null); setEntryId('');
       setRunStatus(next); setBundle(null); setPreviews([]);
-      persist({ runId: next.run.id });
+      persist({ runId: next.run.id, publicationId: '', entryId: '' });
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
   };
 
   const publish = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!run || !bundle) return;
     setBusy('publish');
     try {
@@ -437,6 +538,7 @@ export function AgentBuilderPage() {
   };
 
   const refreshPublication = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!publication) return;
     setBusy('publication');
     try {
@@ -451,20 +553,26 @@ export function AgentBuilderPage() {
   };
 
   const forkBuild = async () => {
+    if (editingLocked || dirty || busyRef.current) return;
     if (!build) return;
     setBusy('fork');
     try {
       const fork = await forkAgentBuild(build.id, build.version.id);
       setBuild(fork);
+      epoch.current += 1;
+      setPreviewLoading(false);
       setBuildTitle(fork.title);
+      setInstructions(fork.version.agentDefinition.instructions);
+      setSkillRefs(fork.version.agentDefinition.skillRefs);
       setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
-      persist({ buildId: fork.id, buildVersionId: fork.version.id, runId: '', publicationId: '', entryId: '' });
+      persist({ draftTitle: fork.title, draftInstructions: fork.version.agentDefinition.instructions, draftSkillRefs: fork.version.agentDefinition.skillRefs, buildId: fork.id, buildVersionId: fork.version.id, runId: '', publicationId: '', entryId: '' });
       toast(t('artifactArena.buildForked'));
     } catch (reason) { fail(reason); }
     finally { setBusy(null); }
   };
 
   const enterRanking = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!publication || !partition) return;
     setBusy('entry');
     try {
@@ -478,6 +586,7 @@ export function AgentBuilderPage() {
   };
 
   const issueBallot = async () => {
+    if (locked || busyRef.current || skillBusy) return;
     if (!partition) return;
     setBusy('ballot'); setBallotRequested(true); setBallot(null); setBallotPreviews({ a: [], b: [] });
     try {
@@ -498,10 +607,14 @@ export function AgentBuilderPage() {
   };
 
   const vote = async (choice: 'a' | 'b' | 'tie' | 'skip') => {
-    if (!ballot) return;
+    if (locked || busyRef.current || skillBusy || !ballot || ballot.status !== 'open' || Date.parse(ballot.expiresAt) <= Date.now()) return;
     setBusy('vote');
     try {
-      const result = await castShowcaseVote(ballot.id, choice, crypto.randomUUID());
+      const previous = voteRequest.current;
+      const key = previous?.ballotId === ballot.id && previous.choice === choice ? previous.key : crypto.randomUUID();
+      voteRequest.current = { ballotId: ballot.id, choice, key };
+      const result = await castShowcaseVote(ballot.id, choice, key);
+      voteRequest.current = null;
       setBallot(result.ballot);
       toast(t('artifactArena.voteSent'));
       await refreshLeaderboard(false);
@@ -510,8 +623,10 @@ export function AgentBuilderPage() {
   };
 
   const toggleLike = async (publicationId: string) => {
+    if (locked || busyRef.current || skillBusy) return;
     const current = likes[publicationId];
     setBusy(`like:${publicationId}`);
+    likeRevision.current += 1;
     try {
       const next = current?.likedByViewer ? await unlikePublication(publicationId) : await likePublication(publicationId);
       setLikes((rows) => ({ ...rows, [publicationId]: next }));
@@ -519,10 +634,25 @@ export function AgentBuilderPage() {
     finally { setBusy(null); }
   };
 
+  useEffect(() => {
+    if (ballot?.status !== 'open') return;
+    const timer = window.setTimeout(() => setBallot((current) => current?.id === ballot.id ? { ...current, status: 'expired' } : current),
+      Math.max(0, Math.min(Date.parse(ballot.expiresAt) - Date.now(), 2_147_483_647)));
+    return () => window.clearTimeout(timer);
+  }, [ballot?.id, ballot?.status, ballot?.expiresAt]);
+
   const reset = () => {
-    window.localStorage.removeItem(STORAGE_KEY);
-    setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId(''); setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
-    setPublicTitle(''); setBuildTitle(''); setError('');
+    if (editingLocked || busyRef.current) return;
+    if (!window.confirm(t('builderPlus.resetConfirm'))) return;
+    epoch.current += 1;
+    try { if (storageKey.current) window.localStorage.removeItem(storageKey.current); }
+    catch { setStorageWarning(true); }
+    setBuild(null); setRunStatus(null); setBundle(null); setPreviews([]); setPublication(null); setEntryId('');
+    setBallot(null); setBallotRequested(false); setBallotPreviews({ a: [], b: [] });
+    setPickerGeneration((n) => n + 1);
+    setSkillRefs([]); setInstructions(t('builderPlus.defaultInstructions')); setPollingFailed(false); setPreviewLoading(false);
+    const title = language === 'zh-CN' ? selected?.version.title ?? '' : selected?.version.titleEn ?? '';
+    setPublicTitle(title); setBuildTitle(title); setPublicDescription(t('builderPlus.defaultDescription')); setError('');
   };
 
   if (!UI_ENABLED) {
@@ -534,7 +664,7 @@ export function AgentBuilderPage() {
       <header className={styles.hero}>
         <div className={styles.heroTop}>
           <Link href="/" className={styles.brand}>AgentForge / Artifact Arena</Link>
-          <div className={styles.heroActions}><LanguageSwitcher /><Button variant="ghost" size="sm" onClick={reset}><RotateCcw size={13} />{t('artifactArena.reset')}</Button></div>
+          <div className={styles.heroActions}><LanguageSwitcher /><Button variant="ghost" size="sm" onClick={reset} disabled={editingLocked}><RotateCcw size={13} />{t('artifactArena.reset')}</Button></div>
         </div>
         <div className={styles.heroGrid}>
           <div>
@@ -547,7 +677,7 @@ export function AgentBuilderPage() {
         <div className={styles.steps}>
           <StepLabel complete={Boolean(selected)}>{t('artifactArena.step.challenge')}</StepLabel>
           <StepLabel complete={Boolean(credentialId)}>{t('artifactArena.step.provider')}</StepLabel>
-          <StepLabel complete={Boolean(build)}>{t('artifactArena.step.build')}</StepLabel>
+          <StepLabel complete={Boolean(build) && !dirty}>{t('artifactArena.step.build')}</StepLabel>
           <StepLabel complete={runComplete}>{t('artifactArena.step.run')}</StepLabel>
           <StepLabel complete={previews.length > 0}>{t('artifactArena.step.preview')}</StepLabel>
           <StepLabel complete={Boolean(publication)}>{t('artifactArena.step.publish')}</StepLabel>
@@ -556,6 +686,9 @@ export function AgentBuilderPage() {
       </header>
 
       {loading && <div className={styles.banner}><LoaderCircle className={styles.spin} size={16} />{t('artifactArena.recovering')}</div>}
+      {!loading && !authenticated && <div className={styles.banner}><Link href="/login?next=/agent-builder">{t('builderPlus.signIn')}</Link></div>}
+      {!loading && (!authenticated || challenges.length === 0) && <Button variant="outline" onClick={() => { setError(''); setBootAttempt((n) => n + 1); }}>{t('common.tryAgain')}</Button>}
+      {storageWarning && <div className={styles.banner} role="status">{t('builderPlus.storageUnavailable')}</div>}
       {error && <div className={`${styles.banner} ${styles.errorBanner}`} role="alert"><AlertTriangle size={16} />{error}</div>}
       <div className={styles.securityNote}><ShieldCheck size={18} /><p>{t('artifactArena.securityNote')}</p></div>
 
@@ -564,7 +697,7 @@ export function AgentBuilderPage() {
         <div className={styles.challengeGrid}>
           {challenges.flatMap((challenge) => challenge.versions.map((version) => {
             const active = version.id === challengeVersionId;
-            return <button key={version.id} type="button" className={`${styles.challengeCard} ${active ? styles.challengeActive : ''}`} onClick={() => changeChallenge(version.id)} aria-pressed={active}>
+            return <button key={version.id} type="button" className={`${styles.challengeCard} ${active ? styles.challengeActive : ''}`} disabled={loading || busy !== null || runActive || skillBusy} onClick={() => changeChallenge(version.id)} aria-pressed={active}>
               <div className={styles.challengeCardTop}><span>{String(challenge.position).padStart(2, '0')}</span><small>{t('artifactArena.version', { version: version.versionNumber })}</small></div>
               <h3>{language === 'zh-CN' ? version.title : version.titleEn}</h3>
               <p>{language === 'zh-CN' ? version.instructions : version.instructionsEn}</p>
@@ -572,34 +705,26 @@ export function AgentBuilderPage() {
             </button>;
           }))}
         </div>
-        {selected && <div className={styles.promptPlate}><span>{t('artifactArena.originalPrompt')}</span><blockquote>{selected.version.instructions}</blockquote><p>{t('artifactArena.requirements')}</p></div>}
+        {selected && <div className={styles.promptPlate}><span>{t('artifactArena.originalPrompt')}</span><blockquote>{language === 'zh-CN' ? selected.version.instructions : selected.version.instructionsEn}</blockquote><p>{t('artifactArena.requirements')}</p></div>}
       </section>
 
       <div className={styles.twoColumn}>
         <section className={styles.stage}>
           <div className={styles.stageHeader}><span>02</span><div><h2>{t('artifactArena.providerTitle')}</h2><p>{t('artifactArena.providerHelp')}</p></div></div>
-          <form className={styles.formGrid} onSubmit={saveCredential}>
-            <label><span>{t('providers.protocol')}</span><select value={protocol} onChange={(event) => {
-              const next = event.target.value as ProviderProtocol;
-              setProtocol(next);
-              if (Object.values(PROVIDER_PROTOCOL_BASE_URLS).includes(baseUrl)) setBaseUrl(PROVIDER_PROTOCOL_BASE_URLS[next]);
-            }}>{PROVIDER_PROTOCOLS.map((value) => <option value={value} key={value}>{t(`providers.protocol.${value}`)}</option>)}</select></label>
-            <label><span>{t('artifactArena.credentialName')}</span><input required minLength={1} maxLength={80} value={credentialName} onChange={(event) => setCredentialName(event.target.value)} /></label>
-            <label className={styles.fullField}><span>{t('artifactArena.baseUrl')}</span><input required type="url" maxLength={300} value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} /></label>
-            <label><span>{t('artifactArena.modelId')}</span><input required maxLength={160} value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="gpt-5.2 / claude-sonnet / gemini-2.5-pro" /></label>
-            <label><span>{t('artifactArena.apiKey')}</span><input required type="password" autoComplete="off" maxLength={1000} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={t('providers.keyPlaceholder')} /></label>
-            <div className={styles.fullField}><Button type="submit" variant="default" disabled={busy === 'credential'}>{busy === 'credential' ? <LoaderCircle className={styles.spin} size={14} /> : <KeyRound size={14} />}{busy === 'credential' ? t('artifactArena.savingCredential') : t('artifactArena.saveCredential')}</Button></div>
-          </form>
-          <div className={styles.savedBox}><label><span>{t('artifactArena.selectCredential')}</span><select value={credentialId} onChange={(event) => { setCredentialId(event.target.value); persist({ credentialId: event.target.value }); }}><option value="">{t('artifactArena.noCredentials')}</option>{credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.modelId} · {credential.keyMask}</option>)}</select></label>{selectedCredential && <small>{t(`providers.protocol.${selectedCredential.protocol}`)} · {selectedCredential.baseUrl}</small>}</div>
+          <AgentProviderForm disabled={editingLocked || credentials.length >= 10} allowedHosts={allowedHosts} onSaved={credentialSaved} />
+          <p className={styles.providerNote}>{t('builderPlus.credentialCount', { count: credentials.length })} <Link href="/providers">{t('navigation.manageCredentials')}</Link></p>
+          <div className={styles.savedBox}><label><span>{t('artifactArena.selectCredential')}</span><select disabled={editingLocked} value={credentialId} onChange={(event) => { setCredentialId(event.target.value); persist({ credentialId: event.target.value }); }}><option value="">{t('artifactArena.noCredentials')}</option>{credentials.map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.modelId} · {credential.keyMask}</option>)}</select></label>{selectedCredential && <small>{t(`providers.protocol.${selectedCredential.protocol}`)} · {selectedCredential.baseUrl}</small>}</div>
         </section>
 
         <section className={styles.stage}>
           <div className={styles.stageHeader}><span>03</span><div><h2>{t('artifactArena.buildTitle')}</h2><p>{t('artifactArena.instructionsHelp')}</p></div></div>
           <div className={styles.formGrid}>
-            <label className={styles.fullField}><span>{t('artifactArena.buildName')}</span><input required minLength={1} maxLength={160} value={buildTitle} onChange={(event) => setBuildTitle(event.target.value)} /></label>
-            <label className={styles.fullField}><span>{t('artifactArena.instructions')}</span><textarea required minLength={1} maxLength={8000} rows={9} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
-            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={saveBuild} disabled={!selected || !buildTitle.trim() || !instructions.trim() || busy === 'build'}>{busy === 'build' ? <LoaderCircle className={styles.spin} size={14} /> : <Save size={14} />}{busy === 'build' ? t('artifactArena.savingBuild') : t('artifactArena.saveBuild')}</Button>{build && <Button variant="outline" onClick={forkBuild} disabled={busy === 'fork'}>{busy === 'fork' ? <LoaderCircle className={styles.spin} size={14} /> : <GitFork size={14} />}{busy === 'fork' ? t('artifactArena.forkingBuild') : t('artifactArena.forkBuild')}</Button>}</div>
+            <label className={styles.fullField}><span>{t('artifactArena.buildName')}</span><input disabled={editingLocked} required minLength={1} maxLength={80} value={buildTitle} onChange={(event) => setBuildTitle(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.instructions')}</span><textarea disabled={editingLocked} required minLength={1} maxLength={8000} rows={9} value={instructions} onChange={(event) => setInstructions(event.target.value)} /></label>
+            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={saveBuild} disabled={editingLocked || !selected || !buildTitle.trim() || !instructions.trim()}>{busy === 'build' ? <LoaderCircle className={styles.spin} size={14} /> : <Save size={14} />}{busy === 'build' ? t('artifactArena.savingBuild') : t('artifactArena.saveBuild')}</Button>{build && <Button variant="outline" onClick={forkBuild} disabled={editingLocked || dirty}>{busy === 'fork' ? <LoaderCircle className={styles.spin} size={14} /> : <GitFork size={14} />}{busy === 'fork' ? t('artifactArena.forkingBuild') : t('artifactArena.forkBuild')}</Button>}</div>
           </div>
+          {authenticated && <AgentSkillPicker key={`${challengeVersionId}:${pickerGeneration}`} value={skillRefs} onChange={setSkillRefs} disabled={locked || runActive} onBusyChange={setSkillBusy} />}
+          <p className={styles.providerNote} role="status">{t(dirty ? 'builderPlus.unsavedChanges' : 'builderPlus.savedVersion')}</p>
           {build && <div className={styles.digestLine}><span>Build {build.id}</span><span>v{build.version.revision}</span><code>{build.version.definitionDigest.slice(0, 24)}…</code></div>}
         </section>
       </div>
@@ -608,16 +733,18 @@ export function AgentBuilderPage() {
         <div className={styles.stageHeader}><span>04</span><div><h2>{t('artifactArena.runTitle')}</h2><p>{t('artifactArena.resumeHint')}</p></div></div>
         <div className={styles.runConsole}>
           <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{run ? t(RUN_STATUS_KEYS[run.status]) : t('artifactArena.status.idle')}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
-          <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
+          <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={editingLocked || dirty || !selected?.challenge.runAvailability.enabled || !build || !credentialId}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={locked}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={locked || skillBusy}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
         </div>
+        {pollingFailed && <p className={styles.providerNote} role="status">{t('builderPlus.pollingRetry')}</p>}
+        {dirty && <p className={styles.providerNote}>{t('builderPlus.saveBeforeRun')}</p>}
         {run && <div className={styles.timeline}><span>{run.id}</span><span>{runStatus?.job?.state ?? run.status}</span><span>{run.updatedAt}</span></div>}
       </section>
 
       <section className={styles.stage}>
         <div className={styles.stageHeader}><span>05</span><div><h2>{t('artifactArena.previewTitle')}</h2><p>{t('artifactArena.previewDescription')}</p></div></div>
-        {busy === 'preview' && previews.length === 0 ? <div className={styles.empty}><LoaderCircle className={styles.spin} />{t('artifactArena.previewLoading')}</div> : <ArtifactPreviewPanel files={previews} heading={t('artifactArena.previewTitle')} description={t('artifactArena.previewDescription')} sourceLabel="sealed / no-script" emptyMessage={t('artifactArena.previewEmpty')} />}
+        {previewLoading && previews.length === 0 ? <div className={styles.empty}><LoaderCircle className={styles.spin} />{t('artifactArena.previewLoading')}</div> : <ArtifactPreviewPanel files={previews} heading={t('artifactArena.previewTitle')} description={t('artifactArena.previewDescription')} sourceLabel="sealed / no-script" emptyMessage={t('artifactArena.previewEmpty')} />}
         {bundle && <div className={styles.fileActions}>{bundle.entries.map((entry) => <Button key={entry.artifactId} variant="ghost" size="sm" onClick={async () => {
-          try { const blob = await downloadArtifact(entry.artifactId); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = entry.relativePath.split('/').pop() || 'artifact'; anchor.click(); URL.revokeObjectURL(url); } catch (reason) { fail(reason); }
+          try { const blob = await downloadArtifact(entry.artifactId); const url = URL.createObjectURL(blob); const anchor = document.createElement('a'); anchor.href = url; anchor.download = entry.relativePath.split('/').pop() || 'artifact'; document.body.append(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (reason) { fail(reason); }
         }}><Download size={13} />{t('artifactArena.download')} {entry.relativePath}</Button>)}</div>}
       </section>
 
@@ -625,19 +752,19 @@ export function AgentBuilderPage() {
         <section className={styles.stage}>
           <div className={styles.stageHeader}><span>06</span><div><h2>{t('artifactArena.publishTitle')}</h2><p>{t('artifactArena.publishHelp')}</p></div></div>
           <div className={styles.formGrid}>
-            <label className={styles.fullField}><span>{t('artifactArena.publicTitle')}</span><input minLength={1} maxLength={160} value={publicTitle} onChange={(event) => setPublicTitle(event.target.value)} /></label>
-            <label className={styles.fullField}><span>{t('artifactArena.publicDescription')}</span><textarea minLength={1} maxLength={2000} rows={5} value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></label>
-            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={publish} disabled={!runComplete || !bundle || Boolean(publication) || busy === 'publish'}>{busy === 'publish' ? <LoaderCircle className={styles.spin} size={14} /> : <Sparkles size={14} />}{busy === 'publish' ? t('artifactArena.requestingReview') : t('artifactArena.requestReview')}</Button>{publication && <Button variant="outline" onClick={refreshPublication} disabled={busy === 'publication'}><RefreshCw className={busy === 'publication' ? styles.spin : ''} size={14} />{t('artifactArena.refreshStatus')}</Button>}</div>
+            <label className={styles.fullField}><span>{t('artifactArena.publicTitle')}</span><input disabled={locked || Boolean(publication)} minLength={1} maxLength={160} value={publicTitle} onChange={(event) => setPublicTitle(event.target.value)} /></label>
+            <label className={styles.fullField}><span>{t('artifactArena.publicDescription')}</span><textarea disabled={locked || Boolean(publication)} minLength={1} maxLength={2000} rows={5} value={publicDescription} onChange={(event) => setPublicDescription(event.target.value)} /></label>
+            <div className={`${styles.fullField} ${styles.buttonRow}`}><Button variant="default" onClick={publish} disabled={locked || !runComplete || !bundle || Boolean(publication) || !publicTitle.trim() || !publicDescription.trim()}>{busy === 'publish' ? <LoaderCircle className={styles.spin} size={14} /> : <Sparkles size={14} />}{busy === 'publish' ? t('artifactArena.requestingReview') : t('artifactArena.requestReview')}</Button>{publication && <Button variant="outline" onClick={refreshPublication} disabled={locked}><RefreshCw className={busy === 'publication' ? styles.spin : ''} size={14} />{t('artifactArena.refreshStatus')}</Button>}</div>
           </div>
           {publication && <div className={`${styles.publicationState} ${isPublished ? styles.published : ''}`}><span>{t('artifactArena.publicationStatus')}</span><strong>{t(PUBLICATION_STATUS_KEYS[publication.status])}</strong><code>{publication.releaseDigest.slice(0, 24)}…</code></div>}
         </section>
 
         <section className={styles.stage}>
           <div className={styles.stageHeader}><span>07</span><div><h2>{t('artifactArena.communityTitle')}</h2><p>{t('artifactArena.communityHelp')}</p></div></div>
-          <div className={styles.communityActions}><Button variant="default" onClick={enterRanking} disabled={!isPublished || Boolean(entryId) || busy === 'entry'}>{busy === 'entry' ? <LoaderCircle className={styles.spin} size={14} /> : <Trophy size={14} />}{busy === 'entry' ? t('artifactArena.enteringRanking') : entryId ? t('artifactArena.enteredRanking') : t('artifactArena.enterRanking')}</Button><Button variant="outline" onClick={issueBallot} disabled={!partition || busy === 'ballot'}>{busy === 'ballot' ? <LoaderCircle className={styles.spin} size={14} /> : <Vote size={14} />}{busy === 'ballot' ? t('artifactArena.issuingBallot') : t('artifactArena.issueBallot')}</Button></div>
+          <div className={styles.communityActions}><Button variant="default" onClick={enterRanking} disabled={locked || !isPublished || Boolean(entryId)}>{busy === 'entry' ? <LoaderCircle className={styles.spin} size={14} /> : <Trophy size={14} />}{busy === 'entry' ? t('artifactArena.enteringRanking') : entryId ? t('artifactArena.enteredRanking') : t('artifactArena.enterRanking')}</Button><Button variant="outline" onClick={issueBallot} disabled={locked || !partition}>{busy === 'ballot' ? <LoaderCircle className={styles.spin} size={14} /> : <Vote size={14} />}{busy === 'ballot' ? t('artifactArena.issuingBallot') : t('artifactArena.issueBallot')}</Button></div>
           {ballot && ballot.candidates ? <div className={styles.ballot}>
             {(['a', 'b'] as const).map((side) => <article key={side} className={styles.candidate}><div className={styles.candidateHeader}><span>{side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')}</span><ShieldCheck size={14} /></div><ArtifactPreviewPanel files={ballotPreviews[side]} heading={side === 'a' ? t('artifactArena.candidateA') : t('artifactArena.candidateB')} description={t('artifactArena.previewDescription')} sourceLabel="blind / published" emptyMessage={t('artifactArena.previewLoading')} /></article>)}
-            <div className={styles.voteRow}><Button onClick={() => vote('a')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteA')}</Button><Button onClick={() => vote('tie')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteTie')}</Button><Button onClick={() => vote('b')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteB')}</Button><Button variant="ghost" onClick={() => vote('skip')} disabled={ballot.status !== 'open' || busy === 'vote'}>{t('artifactArena.voteSkip')}</Button></div>
+            <div className={styles.voteRow}><Button onClick={() => vote('a')} disabled={locked || ballot.status !== 'open' || Date.parse(ballot.expiresAt) <= Date.now()}>{t('artifactArena.voteA')}</Button><Button onClick={() => vote('tie')} disabled={locked || ballot.status !== 'open' || Date.parse(ballot.expiresAt) <= Date.now()}>{t('artifactArena.voteTie')}</Button><Button onClick={() => vote('b')} disabled={locked || ballot.status !== 'open' || Date.parse(ballot.expiresAt) <= Date.now()}>{t('artifactArena.voteB')}</Button><Button variant="ghost" onClick={() => vote('skip')} disabled={locked || ballot.status !== 'open' || Date.parse(ballot.expiresAt) <= Date.now()}>{t('artifactArena.voteSkip')}</Button></div>
           </div> : ballotRequested ? <div className={styles.empty}>{t('artifactArena.noBallot')}</div> : null}
         </section>
       </div>
@@ -645,7 +772,7 @@ export function AgentBuilderPage() {
       <section className={styles.stage}>
         <div className={styles.stageHeader}><span>08</span><div><h2>{t('artifactArena.leaderboard')}</h2><p>{partition}</p></div><Button variant="ghost" size="sm" onClick={() => refreshLeaderboard()} disabled={busy === 'leaderboard'}><RefreshCw className={busy === 'leaderboard' ? styles.spin : ''} size={13} />{t('artifactArena.refreshLeaderboard')}</Button></div>
         {leaderboard && <><div className={`${styles.sampleBar} ${leaderboard.sample.qualified ? styles.sampleQualified : ''}`}><div><strong>{leaderboard.sample.qualified ? t('artifactArena.sampleQualified') : t('artifactArena.sampleInsufficient', { votes: leaderboard.sample.minValidVotes, voters: leaderboard.sample.minIndependentVoters })}</strong><span>{t('artifactArena.sample', { votes: leaderboard.sample.validVotes, voters: leaderboard.sample.independentVoters })}</span></div><div><span>{t('artifactArena.validVotes')}</span><strong>{formatNumber(leaderboard.sample.validVotes)}</strong></div><div><span>{t('artifactArena.independentVoters')}</span><strong>{formatNumber(leaderboard.sample.independentVoters)}</strong></div></div>
-          {leaderboard.rows.length ? <div className={styles.leaderRows}>{leaderboard.rows.map((row, index) => { const summary = likes[row.publication.publicationId]; return <article className={styles.leaderRow} key={row.entryId}><span className={styles.rank}>{row.qualified ? String(index + 1).padStart(2, '0') : '—'}</span><div><strong>{row.publication.title}</strong><p>{row.publication.description}</p></div><div className={styles.scoreCell}><span>{t('artifactArena.communityScore')}</span><strong>{row.qualified ? Math.round(row.score * 100) : '—'}</strong><small>{t('artifactArena.sample', { votes: row.comparisons, voters: row.validVoters })}</small>{!row.qualified && <small>{t('artifactArena.sampleInsufficient', { votes: leaderboard.sample.minValidVotes, voters: leaderboard.sample.minIndependentVoters })}</small>}</div><div className={styles.likeCell}><Button variant={summary?.likedByViewer ? 'default' : 'outline'} size="sm" onClick={() => toggleLike(row.publication.publicationId)} disabled={busy === `like:${row.publication.publicationId}`}><Heart size={13} fill={summary?.likedByViewer ? 'currentColor' : 'none'} />{summary?.likedByViewer ? t('artifactArena.unlike') : t('artifactArena.like')}</Button><span>{t('artifactArena.likes', { count: summary?.count ?? 0 })}</span></div></article>; })}</div> : <div className={styles.empty}>{t('artifactArena.noEntries')}</div>}
+          {leaderboard.rows.length ? <div className={styles.leaderRows}>{leaderboard.rows.map((row, index) => { const summary = likes[row.publication.publicationId]; return <article className={styles.leaderRow} key={row.entryId}><span className={styles.rank}>{row.qualified ? String(index + 1).padStart(2, '0') : '—'}</span><div><strong>{row.publication.title}</strong><p>{row.publication.description}</p></div><div className={styles.scoreCell}><span>{t('artifactArena.communityScore')}</span><strong>{row.qualified ? Math.round(row.score * 100) : '—'}</strong><small>{t('artifactArena.sample', { votes: row.comparisons, voters: row.validVoters })}</small>{!row.qualified && <small>{t('artifactArena.sampleInsufficient', { votes: leaderboard.sample.minValidVotes, voters: leaderboard.sample.minIndependentVoters })}</small>}</div><div className={styles.likeCell}><Button variant={summary?.likedByViewer ? 'default' : 'outline'} size="sm" onClick={() => toggleLike(row.publication.publicationId)} disabled={locked}><Heart size={13} fill={summary?.likedByViewer ? 'currentColor' : 'none'} />{summary?.likedByViewer ? t('artifactArena.unlike') : t('artifactArena.like')}</Button><span>{t('artifactArena.likes', { count: summary?.count ?? 0 })}</span></div></article>; })}</div> : <div className={styles.empty}>{t('artifactArena.noEntries')}</div>}
         </>}
       </section>
     </main>

@@ -506,7 +506,11 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         return json(result);
       }
       if (path[0] === 'profile' && path[1]) return json(await service.profile(path[1] === 'me' ? auth() : path[1], userId));
-      if (path[0] === 'providers') return json(await service.providers(auth()));
+      if (path[0] === 'agent-skills' && path.length === 1) return json(await service.creationSkills(auth()));
+      if (path[0] === 'providers' && path[1] && path[2] === 'models' && path.length === 3) {
+        return json(await service.savedProviderModels(auth(), path[1], request.signal));
+      }
+      if (path[0] === 'providers' && path.length === 1) return json(await service.providers(auth()));
       if (path[0] === 'pi-self-test') return json(await service.piSelfTestStatus(auth()));
       if (path[0] === 'runs' && path[1]) return json(await service.runDetail(auth(), path[1]));
       if (path[0] === 'failures') return json(await service.failures(url.searchParams.get('problemId') || undefined));
@@ -520,7 +524,7 @@ export async function handleArena(request: Request, options: { service: ArenaSer
       return json(await requireLikeService(artifactArena?.likes, service).unlike(auth(), path[2]));
     }
 
-    if (method === 'DELETE' && path[0] === 'providers' && path[1]) return json(await service.deleteProvider(auth(), path[1]));
+    if (method === 'DELETE' && path[0] === 'providers' && path[1] && path.length === 2) return json(await service.deleteProvider(auth(), path[1]));
 
     if (method === 'POST' || method === 'PATCH') {
       const isCancellation = path[0] === 'evaluation-jobs' && path[1] && path[2] === 'cancel';
@@ -678,7 +682,11 @@ export async function handleArena(request: Request, options: { service: ArenaSer
         return json(await service.fork(auth(), path[1], source.version.id), 201);
       }
       if (path[0] === 'builds') return json(await service.saveBuild(auth(), body), 201);
-      if (path[0] === 'providers') return json(await service.addProvider(auth(), body), 201);
+      if (method === 'POST' && path[0] === 'agent-skills' && path.length === 1) return json(await service.importCreationSkill(auth(), body), 201);
+      if (method === 'POST' && path[0] === 'providers' && path[1] === 'models' && path.length === 2) {
+        return json(await service.providerModels(auth(), body, request.signal));
+      }
+      if (method === 'POST' && path[0] === 'providers' && path.length === 1) return json(await service.addProvider(auth(), body), 201);
       if (path[0] === 'problems') return json(await service.createProblem(auth(), body), 201);
       if (path[0] === 'failure-cases') return json(await service.hunt(auth(), body), 201);
       if (path[0] === 'pi-self-test') {

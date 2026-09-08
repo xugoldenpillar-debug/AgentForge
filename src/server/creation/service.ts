@@ -1,3 +1,5 @@
+import { resolveCreationSkills } from './skills.ts';
+import { digestAgentBuildDefinition } from '../../lib/agent-build/digest.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError, ERROR_CODES, ensure } from '../../shared/errors.ts';
 import {
@@ -167,6 +169,11 @@ export class CreationRunService {
       requireOutputContract: true,
       requireRuntime: true,
     });
+    ensure(buildVersion.definitionDigest === digestAgentBuildDefinition(definition),
+      'Build definition digest mismatch.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    ensure(definition.requestedCapabilities.length === 0 && definition.profileRef === null,
+      'Custom execution capabilities are not enabled.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    await resolveCreationSkills(this.#repository, ownerId, definition.skillRefs);
     ensure(buildVersion.definitionDigest && definition.environmentRef?.id === CREATION_ENVIRONMENT_TEMPLATE.templateId
       && definition.environmentRef.versionId === CREATION_ENVIRONMENT_TEMPLATE.versionId
       && definition.environmentRef.contentDigest === CREATION_ENVIRONMENT_DIGEST,

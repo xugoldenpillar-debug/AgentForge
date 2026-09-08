@@ -1,3 +1,4 @@
+import { resolveCreationSkills, type ResolvedCreationSkill } from '../creation/skills.ts';
 import { createHash } from 'node:crypto';
 import { AppError, ERROR_CODES, ensure } from '../../shared/errors.ts';
 import { validateConfiguredAgentBuild } from '../../shared/agent-build-contract.ts';
@@ -88,9 +89,10 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         inputAttachments: briefRow.inputAttachments,
         outputPolicy: briefRow.outputPolicy,
       });
+      const skills = await resolveCreationSkills(this.#options.repository, run.ownerId, definition.skillRefs);
       const apiKey = decryptCredential(credential.ciphertext, this.#options.encryptionKey, run.ownerId, credential.id);
       const provider = this.#options.createProvider(credential, apiKey);
-      return await this.#executeAuthorized(context, run, definition.instructions, brief.instructions, provider, credential.modelId);
+      return await this.#executeAuthorized(context, run, definition.instructions, brief.instructions, provider, credential.modelId, skills);
     } catch (error) {
       await this.#markRun(run.id, run.ownerId, 'failed');
       if (error instanceof AppError && error.code === ERROR_CODES.PROVIDER_NOT_FOUND) return failure('PROVIDER_AUTHORIZATION_REVOKED');
@@ -106,13 +108,15 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     brief: string,
     provider: AIProvider,
     modelId: string,
+    skills: readonly ResolvedCreationSkill[],
   ): Promise<EvaluationExecutionOutcome> {
     const abort = new AbortController();
     let sandboxHandle: SandboxHandle | undefined;
     let timer: NodeJS.Timeout | undefined;
+    let authorizationFailure: unknown;
     let sealedBundleId: string | undefined;
     let outcome: EvaluationExecutionOutcome;
-    const assertAuthorized = async (): Promise<void> => {
+    const assertLeaseAndCredential = async (): Promise<void> => {
       const job = await this.#options.repository.read('evaluationJobs', { id: String(context.job.id), userId: String(context.job.userId) });
       const state = job[0]?.state;
       if (state === 'cancelling' || state === 'cancelled') {
@@ -120,6 +124,21 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         throw new AppError('Run cancelled.', 499, ERROR_CODES.RUN_CANCELLED);
       }
       ensure(state === 'running', 'Creation execution lease is no longer authorized.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+      const [credential] = await this.#options.repository.read('credentials', { id: context.job.snapshot.credentialAuthorizationId!, userId: run.ownerId });
+      ensure(credential && credential.modelId === modelId, 'Provider authorization was revoked.', 409, ERROR_CODES.PROVIDER_NOT_FOUND);
+    };
+    const assertAuthorized = async (): Promise<void> => {
+      await assertLeaseAndCredential();
+      await resolveCreationSkills(this.#options.repository, run.ownerId, skills.map((skill) => skill.ref));
+    };
+    const pollAuthorization = async (): Promise<void> => {
+      try {
+        await assertLeaseAndCredential();
+        if (!abort.signal.aborted) timer = setTimeout(() => { void pollAuthorization(); }, this.#options.pollCancellationMs ?? 500);
+      } catch (error) {
+        authorizationFailure = error;
+        abort.abort();
+      }
     };
     let invocationIndex = 0;
     const recordingProvider = new InvocationRecordingProvider(
@@ -132,7 +151,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     );
     try {
       await this.#markRun(run.id, run.ownerId, 'running', this.#now());
-      timer = setInterval(() => { void assertAuthorized().catch(() => abort.abort()); }, this.#options.pollCancellationMs ?? 500);
+      timer = setTimeout(() => { void pollAuthorization(); }, this.#options.pollCancellationMs ?? 500);
       const module = await loadPiCoreModule({ env: { ...process.env, PI_RUNTIME_ENABLED: 'true' } });
       sandboxHandle = await this.#options.sandbox.create({
         environmentId: CREATION_ENVIRONMENT_TEMPLATE.versionId,
@@ -163,6 +182,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         sandboxHandle,
         instructions,
         brief,
+        skillInstructions: skills.map((skill) => skill.instruction),
         signal: abort.signal,
         assertAuthorized,
       });
@@ -216,7 +236,9 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         },
       };
     } catch (error) {
-      if (isCancelled(error, abort.signal)) {
+      if (authorizationFailure instanceof AppError && authorizationFailure.code !== ERROR_CODES.RUN_CANCELLED) {
+        outcome = failure(authorizationFailure.code ?? 'CREATION_AUTHORIZATION_REVOKED');
+      } else if (isCancelled(error, abort.signal)) {
         outcome = { kind: 'cancelled' };
       } else if (error instanceof UnknownProviderResultError) {
         outcome = { kind: 'unknown', code: error.code };
@@ -225,7 +247,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         outcome = failure(typeof code === 'string' ? code : 'CREATION_EXECUTION_FAILED', false);
       }
     } finally {
-      if (timer) clearInterval(timer);
+      if (timer) clearTimeout(timer);
       abort.abort();
     }
 

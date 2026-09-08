@@ -1,3 +1,6 @@
+import { discoverProviderModels, parseProviderDiscoveryInput } from './provider-models.ts';
+import { normalizeProviderBaseUrl } from '../shared/provider-models.ts';
+import { importCreationSkill, listCreationSkills } from './creation/skills.ts';
 import { parseProviderProtocol } from '../shared/provider-protocol.ts';
 import { classifyProviderLane } from '../lib/ai/provider-lane.ts';
 import { artifactArenaAvailability } from './artifact-arena-availability.ts';
@@ -51,6 +54,7 @@ export interface ServiceOptions {
   platform?:{model:string;inputPrice:number|null;outputPrice:number|null};
   createRealProvider?:(credential:Credential,apiKey:string)=>AIProvider;
   createPlatformProvider?:()=>AIProvider;
+  createProviderFetch?: (baseUrl: string) => typeof fetch;
   /** Durable competitive scheduling is injected; legacy run() remains an explicit compatibility path. */
   competitiveRunScheduler?: CompetitiveRunJobScheduler;
   env?: Record<string, string | undefined>;
@@ -470,7 +474,30 @@ export class ArenaService {
       await this.badge(tx, userId, 'first-build');
     });return this.build(newId,userId);
   }
-  async providers(userId:string){await this.user(userId);return {credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:'next'};}
+  async providers(userId:string){await this.user(userId);return {ownerId:userId,credentials:(await this.repo.read('credentials',{userId})).map(publicCredential),demo:this.options.demoMode,platform:this.options.platform?{id:'platform',name:'Platform AI Gateway',modelId:this.options.platform.model,inputPrice:this.options.platform.inputPrice,outputPrice:this.options.platform.outputPrice}:null,allowedHosts:this.options.allowedHosts,runtime:'next'};}
+  async providerModels(userId: string, body: Record<string, unknown>, signal?: AbortSignal) {
+    await this.user(userId);
+    await this.limit(userId, 'provider-models', 20);
+    const input = parseProviderDiscoveryInput(body);
+    ensure(this.options.createProviderFetch, 'Provider discovery is unavailable.', 503, ERROR_CODES.RUNTIME_UNAVAILABLE);
+    return discoverProviderModels(input, { allowedHosts: this.options.allowedHosts, createFetch: this.options.createProviderFetch, signal });
+  }
+  async savedProviderModels(userId: string, credentialId: string, signal?: AbortSignal) {
+    await this.user(userId);
+    const [credential] = await this.repo.read('credentials', { id: credentialId, userId });
+    ensure(credential, 'Provider not found.', 404, ERROR_CODES.PROVIDER_NOT_FOUND);
+    const apiKey = decryptCredential(credential.ciphertext, this.options.encryptionKey, userId, credential.id);
+    return this.providerModels(userId, { protocol: credential.protocol, baseUrl: credential.baseUrl, apiKey }, signal);
+  }
+  async creationSkills(userId: string) {
+    await this.user(userId);
+    return listCreationSkills(this.repo, userId);
+  }
+  async importCreationSkill(userId: string, body: Record<string, unknown>) {
+    await this.user(userId);
+    await this.limit(userId, 'skill-import', 20);
+    return importCreationSkill(this.repo, userId, body);
+  }
   async addProvider(userId: string, body: Record<string, unknown>) {
     await this.user(userId);
     await this.limit(userId, 'provider', 10);
@@ -478,7 +505,9 @@ export class ArenaService {
       'At most 10 credentials may be saved.', 400, ERROR_CODES.PROVIDER_CONFIGURATION_INVALID);
     const protocol = parseProviderProtocol(body.protocol);
     const name = text(body.name, 'Provider name', 1, 60);
-    const baseUrl = text(body.baseUrl, 'Base URL', 8, 300);
+    const rawBaseUrl = text(body.baseUrl, 'Base URL', 8, 300);
+    withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID, () => validateProviderUrl(rawBaseUrl, this.options.allowedHosts));
+    const baseUrl = normalizeProviderBaseUrl(rawBaseUrl, protocol);
     const apiKey = text(body.apiKey, 'API key', 16, 512);
     const modelId = text(body.modelId, 'Model ID', 1, 160);
     withErrorCode(ERROR_CODES.PROVIDER_CONFIGURATION_INVALID,

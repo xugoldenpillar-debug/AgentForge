@@ -143,3 +143,44 @@
   .scoreCell, .likeCell { grid-column: 2; }
   .publicationState code { width: 100%; margin-left: 0; }
 }
+
+/* Builder forms must remain readable with long model IDs and file names. */
+.formGrid, .skillFields { min-inline-size: 0; margin: 0; border: 0; }
+.helpText, .providerNote { font-size: 12px; line-height: 1.65; color: var(--arena-muted); overflow-wrap: anywhere; }
+.providerNote { margin: 0 18px 16px; }
+.providerNote a { text-decoration: underline; text-underline-offset: 3px; }
+.secretInput { display: flex; gap: 6px; align-items: center; }
+.secretInput input { min-width: 0; flex: 1; }
+.secretInput button { flex-shrink: 0; }
+.skillPicker { margin: 0 18px 18px; padding: 16px; border: 1px solid var(--arena-line); border-radius: 10px; }
+.skillPicker h3 { font-size: 15px; font-weight: 650; }
+.skillPicker > .helpText { margin: 10px 0; }
+.skillFields { padding: 0; }
+.uploadArea { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px 12px; border: 1px dashed #688957; border-radius: 10px; background: #0d170e; cursor: pointer; font-size: 13px; }
+.uploadArea input { max-width: 100%; min-width: 0; font-size: 11px; }
+.skillSearch { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; font-size: 12px; color: var(--arena-muted); }
+.skillSearch input { min-width: 0; width: 100%; padding: 10px; border: 1px solid var(--arena-line); border-radius: 8px; background: #080d0a; color: var(--arena-ink); }
+.skillList { max-height: 340px; overflow: auto; margin-bottom: 12px; }
+.skillOption { border-bottom: 1px solid var(--arena-line); padding: 12px 0; overflow-wrap: anywhere; }
+.skillOption label { display: flex; gap: 10px; align-items: center; cursor: pointer; }
+.skillOption input { width: 18px; height: 18px; flex-shrink: 0; accent-color: #b8e891; }
+.skillOption strong { font-size: 13px; }
+.skillOption small { display: block; color: var(--arena-muted); font-size: 11px; margin-top: 4px; }
+.skillOption summary { cursor: pointer; color: #b8e891; font-size: 12px; margin: 10px 0; }
+.skillOption p, .skillOption code { font-size: 11px; line-height: 1.65; }
+.skillPreview { padding: 12px; margin-top: 12px; border: 1px solid var(--arena-line); border-radius: 8px; }
+.skillPreview pre, .skillOption pre { max-height: 200px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.7 var(--mono); margin: 10px 0; }
+.shell :is(button, input, select, textarea, summary, a):focus-visible { outline: 2px solid #b8e891; outline-offset: 3px; }
+.shell :is(button, input, select, textarea):disabled { cursor: not-allowed; opacity: .55; }
+.challengeCard:disabled:hover { transform: none; }
+.buttonRow button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.digestLine code { overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .formGrid { grid-template-columns: minmax(0, 1fr); }
+  .heroTop, .heroActions { flex-wrap: wrap; }
+  .skillPicker { margin: 0 12px 12px; padding: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+  .challengeCard { transition: none; }
+}

@@ -108,3 +108,8 @@ The integration fixes that composition without replaying or deleting unknown wor
 See [the executable spec](../specs/artifact-arena/README.md) and [conflict decisions](../specs/artifact-arena/reconciliation.md). Artifact/Environment/Agent contracts, additive migrations, collector/preview contracts, Showcase/Voting domain seams, owner-aware environment compilation, fail-closed HTTP and the Agent Builder foundation exist. Real isolated sandbox/storage providers, EF/Pi execution, independent preview origin, browser security and production composition/opening remain gated.
 
 Agent/environment canvas edges declare configuration/capability requests; Workflow edges retain their existing DAG dataflow and Model-required validation. HTML/Markdown/SVG preview is a separate isolated, initially script-free surface, not main-origin execution. First ship fixed approved environments, then composable environment modules; running Attempts cannot gain new permissions from canvas edits. These targets do not authorize host shell, production execution, payment or data deletion.
+
+
+## Agent Builder model discovery and private Skills
+
+See `docs/AGENT-BUILDER-COMPLETION.md` for the authenticated model-list adapter, private immutable component-version import, owner/digest checks across save/schedule/worker, and client draft-state boundaries. Skill files are instructions only; the approved Creation sandbox capability and artifact policies are unchanged. No schema migration is introduced.
