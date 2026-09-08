@@ -6,7 +6,7 @@
 
 This is the production runbook for the two-challenge BYOK launch on one VPS. It uses the conventional trusted control-plane/isolated-executor split. A successful run persists only its sealed artifact files and metadata; its gVisor state and per-attempt working directory are disposed.
 
-Current production record (2026-09-08): commit `bd47c913479ccfa9c9217c8a42fa60c2b739d508` is deployed as `agentforge:bd47c913479ccfa9c9217c8a42fa60c2b739d508` at `https://arena.pillarit.cn`. The dedicated PostgreSQL/Redis stack, Worker, loopback web origin, backups, restore-check and Cloudflare route have been verified. See `docs/verification/animation-launch-df6c-2026-09-08.md` for evidence and the remaining real-BYOK success gate.
+Current production record (2026-09-08 23:08 CST): commit `bc90108afc13ef095e46d68f86f1387feba7a29f` is deployed as `agentforge:bc90108afc13ef095e46d68f86f1387feba7a29f` at `https://arena.pillarit.cn`. The dedicated PostgreSQL/Redis stack, Worker, loopback web origin, backups, restore-check and Cloudflare route have been verified. See `docs/verification/animation-launch-df6c-2026-09-08.md` for evidence and the remaining real-BYOK success gate.
 
 ## 1. 拓扑 / Topology
 

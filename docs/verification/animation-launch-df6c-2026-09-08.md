@@ -2,7 +2,7 @@
 
 ## 结论
 
-分支：`codex/two-challenge-launch`。当前生产运行时代码提交：`4131b4bdf3efa19ccf0959ac473046358975db28`，已推送到 `origin/main`；初始公开版提交为 `bd47c913479ccfa9c9217c8a42fa60c2b739d508`。
+分支：`codex/two-challenge-launch`。当前生产运行时代码提交：`bc90108afc13ef095e46d68f86f1387feba7a29f`，已推送到 `origin/main`；初始公开版提交为 `bd47c913479ccfa9c9217c8a42fa60c2b739d508`。
 
 本轮实现并部署了以下产品闭环：
 
@@ -16,6 +16,28 @@
 生产入口为 `https://arena.pillarit.cn`，已对全部正常注册用户开放。模型调用只使用用户自己提供并经服务端加密的 API Key。首版支持 `openai-chat`、`openai-responses`、`anthropic-messages`、`google-generative-ai` 四种显式协议，不按 Key 前缀猜测协议。动画 CreationRun 不设置平台美元费用上限；token、轮次、工具、时长、内存、磁盘、进程、并发、取消和恢复边界仍然保留。
 
 **准确边界：代码、生产数据栈、真实 outbox/Worker、gVisor 沙箱、Cloudflare HTTPS、公开注册和无效凭据失败/恢复路径已经验证。两题各一次成功的真实付费模型运行仍未完成，因为本轮没有用户授权的有效 BYOK Key；因此不能把 L7 写成全部通过，也不能验证成功产物的生产动画播放、发布、点赞和真实盲选。**
+
+## 2026-09-08 23:08 CST BYOK 恢复发布
+
+提交 `bc90108afc13ef095e46d68f86f1387feba7a29f` 已在 Hubei 构建为不可变镜像并切换 Web 与 systemd Worker。该发布修复：
+
+- Provider 协议只使用用户显式选择，不按 API Key 前缀、长度或 Provider 域名猜测，也不自动切换/fallback；自定义模型 ID 原样透传。
+- API Key 作为不透明字符串处理，前后端统一接受 trim 后 1–2048 字符；生产继续加密保存、owner 隔离且不写日志。
+- 明确 HTTP/Provider 响应失败进入 `failed` 并释放活跃槽；只有无法确认上游结果的 transport/finalization 情况进入 `unknown`。
+- `unknown` 绝不自动重放。用户在界面明确确认潜在费用后，才转为 `incomplete`、清除执行 token 并释放活跃槽。
+- Creation 调度被活跃任务拒绝时，会把尚未关联 Job 的新 Run 标为失败，不再新增永久 `queued` 孤儿记录。
+
+Hubei 对该精确 release 执行结果：
+
+- `pnpm test`：494 通过、0 失败、1 跳过；
+- `pnpm typecheck`、`pnpm build`：通过；
+- `pnpm test:provider-sdk`：31 通过、0 失败；
+- `pnpm test:deploy`：15 通过、0 失败；
+- Web 容器 `healthy`，Worker `active` 且 `WorkingDirectory` 指向该 release；公网 HTTPS 返回 200，Creation/Showcase/Voting 与 kill switch 状态正常；
+- 部署前备份 `/var/backups/agentforge/agentforge-20260908T150509Z.sql.gz`、部署后备份 `/var/backups/agentforge/agentforge-20260908T151522Z.sql.gz` 均完成独立恢复校验；
+- 未使用任何用户 API Key，未执行付费模型调用。
+
+历史 `unknown` 任务仍要求作品所有者在界面确认潜在费用后解除，运维不得代替用户作该费用确认。
 
 ## 生产 CreationRun 故障修复
 
