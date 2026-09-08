@@ -9,6 +9,11 @@ services:
     env_file:
       - ${AGENTFORGE_ENV_FILE:?Set an absolute production env file path}
     environment:
+      # The trusted host worker uses DATABASE_URL/REDIS_URL from the shared env
+      # file. The unprivileged web container reaches same-host dependencies via
+      # the dedicated backend network using these explicitly paired URLs.
+      DATABASE_URL: ${AGENTFORGE_WEB_DATABASE_URL:?Set the web-container PostgreSQL URL}
+      REDIS_URL: ${AGENTFORGE_WEB_REDIS_URL:?Set the web-container Redis URL}
       NODE_ENV: production
       PORT: "3000"
       APP_ENV: production
@@ -20,6 +25,8 @@ services:
     command: ["node", "node_modules/next/dist/bin/next", "start", "--hostname", "0.0.0.0"]
     ports:
       - "127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}:3000"
+    networks:
+      - backend
     volumes:
       - ${ARTIFACT_STORAGE_ROOT:?Set ARTIFACT_STORAGE_ROOT}:${ARTIFACT_STORAGE_ROOT:?Set ARTIFACT_STORAGE_ROOT}:ro
     group_add:
@@ -33,3 +40,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  backend:
+    external: true
+    name: agentforge-production-backend

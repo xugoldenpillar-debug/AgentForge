@@ -27,7 +27,7 @@
     "audit:community-export": "node scripts/audit-community-export.mjs",
     "worker:start": "tsx scripts/evaluation-worker-production.ts",
     "worker:healthcheck": "node --experimental-strip-types scripts/worker-healthcheck.ts",
-    "test:deploy": "bash -n scripts/deploy/app.sh scripts/deploy/worker.sh scripts/deploy/install-gvisor.sh scripts/deploy/prepare-sandbox-rootfs.sh && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/deploy/sandbox-smoke.py').read_text())\" && node --experimental-strip-types --test tests/deployment-preflight.test.ts tests/deployment-cli.test.ts"
+    "test:deploy": "bash -n scripts/deploy/app.sh scripts/deploy/data.sh scripts/deploy/worker.sh scripts/deploy/install-gvisor.sh scripts/deploy/prepare-sandbox-rootfs.sh && python3 -c \"import ast,pathlib; ast.parse(pathlib.Path('scripts/deploy/sandbox-smoke.py').read_text())\" && node --experimental-strip-types --test tests/deployment-preflight.test.ts tests/deployment-cli.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "3.0.116",

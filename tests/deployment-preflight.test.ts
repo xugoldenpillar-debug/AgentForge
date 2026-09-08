@@ -7,6 +7,8 @@ function environment() {
   return {
     DATABASE_URL: 'postgres://operator:secret@db.example.invalid/agentforge?sslmode=require',
     REDIS_URL: 'rediss://worker:secret@redis.example.invalid:6380/0',
+    AGENTFORGE_WEB_DATABASE_URL: 'postgres://operator:secret@postgres:5432/agentforge?sslmode=require',
+    AGENTFORGE_WEB_REDIS_URL: 'rediss://worker:secret@redis:6379/0',
     BETTER_AUTH_URL: 'https://arena.example.invalid',
     BETTER_AUTH_SECRET: 'test-only-auth-secret-not-for-production',
     CREDENTIAL_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64'),
@@ -50,6 +52,8 @@ test('production preflight refuses disabled launch, kill switch, test mode and n
 test('production preflight refuses incomplete sandbox, storage, queue and provider configuration', () => {
   for (const key of [
     'REDIS_URL',
+    'AGENTFORGE_WEB_DATABASE_URL',
+    'AGENTFORGE_WEB_REDIS_URL',
     'EVALUATION_QUEUE_NAME',
     'SANDBOX_RUNSC_PATH',
     'SANDBOX_ROOTFS',
@@ -69,7 +73,7 @@ test('production preflight refuses incomplete sandbox, storage, queue and provid
 });
 
 test('production preflight refuses invalid keys and auth origins without exposing values', () => {
-  for (const key of ['DATABASE_URL', 'REDIS_URL', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'CREDENTIAL_ENCRYPTION_KEY']) {
+  for (const key of ['DATABASE_URL', 'REDIS_URL', 'AGENTFORGE_WEB_DATABASE_URL', 'AGENTFORGE_WEB_REDIS_URL', 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET', 'CREDENTIAL_ENCRYPTION_KEY']) {
     const secret = 'DO-NOT-PRINT-PRIVATE-VALUE';
     const errors = validateProductionEnvironment({ ...environment(), [key]: secret });
     assert.ok(errors.length);
@@ -78,6 +82,14 @@ test('production preflight refuses invalid keys and auth origins without exposin
   for (const origin of ['http://arena.example.invalid', 'https://user:password@arena.example.invalid', 'https://arena.example.invalid/path']) {
     assert.ok(validateProductionEnvironment({ ...environment(), BETTER_AUTH_URL: origin }).length);
   }
+  assert.ok(validateProductionEnvironment({
+    ...environment(),
+    AGENTFORGE_WEB_DATABASE_URL: 'postgres://different:credentials@postgres:5432/other',
+  }).length);
+  assert.ok(validateProductionEnvironment({
+    ...environment(),
+    AGENTFORGE_WEB_REDIS_URL: 'rediss://different:credentials@redis:6379/1',
+  }).length);
 });
 
 test('production topology keeps runsc off the web container and mounts artifacts read-only by shared GID', () => {
@@ -93,6 +105,10 @@ test('production topology keeps runsc off the web container and mounts artifacts
   assert.match(compose, /PI_RUNTIME_ENABLED: "true"/);
   assert.match(compose, /ARTIFACT_STORAGE_ROOT[^\n]+:ro/);
   assert.match(compose, /group_add:[\s\S]+ARTIFACT_STORAGE_GID/);
+  assert.match(compose, /AGENTFORGE_WEB_DATABASE_URL/);
+  assert.match(compose, /AGENTFORGE_WEB_REDIS_URL/);
+  assert.match(compose, /agentforge-production-backend/);
+  assert.doesNotMatch(compose, /network_mode:\s*host/);
 });
 
 test('trusted worker unit and installer are bounded to dedicated AgentForge resources', () => {

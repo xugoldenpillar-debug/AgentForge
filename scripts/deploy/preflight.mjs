@@ -6,6 +6,8 @@ import { parse } from 'dotenv';
 const REQUIRED = [
   'DATABASE_URL',
   'REDIS_URL',
+  'AGENTFORGE_WEB_DATABASE_URL',
+  'AGENTFORGE_WEB_REDIS_URL',
   'BETTER_AUTH_URL',
   'BETTER_AUTH_SECRET',
   'CREDENTIAL_ENCRYPTION_KEY',
@@ -62,6 +64,37 @@ export function validateProductionEnvironment(env) {
   }
   if (!validUrl(env.REDIS_URL, ['redis:', 'rediss:'], { allowCredentials: true })) {
     errors.push('REDIS_URL: Redis URL required / 必须是 Redis 地址');
+  }
+  if (!validUrl(env.AGENTFORGE_WEB_DATABASE_URL, ['postgres:', 'postgresql:'], { allowCredentials: true })) {
+    errors.push('AGENTFORGE_WEB_DATABASE_URL: web PostgreSQL URL required / Web 容器 PostgreSQL 地址必填');
+  }
+  if (!validUrl(env.AGENTFORGE_WEB_REDIS_URL, ['redis:', 'rediss:'], { allowCredentials: true })) {
+    errors.push('AGENTFORGE_WEB_REDIS_URL: web Redis URL required / Web 容器 Redis 地址必填');
+  }
+  try {
+    const hostDatabase = new URL(env.DATABASE_URL);
+    const webDatabase = new URL(env.AGENTFORGE_WEB_DATABASE_URL);
+    if (hostDatabase.protocol !== webDatabase.protocol
+      || hostDatabase.username !== webDatabase.username
+      || hostDatabase.password !== webDatabase.password
+      || hostDatabase.pathname !== webDatabase.pathname
+      || hostDatabase.search !== webDatabase.search) {
+      errors.push('Database host/web URLs must share protocol, credentials, database and options / 数据库双地址配置不一致');
+    }
+  } catch {
+    // The URL-specific errors above are sufficient and never echo values.
+  }
+  try {
+    const hostRedis = new URL(env.REDIS_URL);
+    const webRedis = new URL(env.AGENTFORGE_WEB_REDIS_URL);
+    if (hostRedis.protocol !== webRedis.protocol
+      || hostRedis.username !== webRedis.username
+      || hostRedis.password !== webRedis.password
+      || hostRedis.pathname !== webRedis.pathname) {
+      errors.push('Redis host/web URLs must share protocol, credentials and database / Redis 双地址配置不一致');
+    }
+  } catch {
+    // The URL-specific errors above are sufficient and never echo values.
   }
   const key = Buffer.from(env.CREDENTIAL_ENCRYPTION_KEY ?? '', 'base64');
   if (key.length !== 32 || key.toString('base64') !== env.CREDENTIAL_ENCRYPTION_KEY) {

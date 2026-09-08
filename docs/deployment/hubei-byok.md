@@ -13,11 +13,13 @@ Internet
   └─ Cloudflare Tunnel
        └─ http://127.0.0.1:53180
             └─ Next.js web container (unprivileged, no Docker socket, no runsc)
-                 ├─ PostgreSQL: users, builds, EF/outbox, bundles, publications, votes, likes
+                 ├─ agentforge-production-backend Docker network
+                 │    ├─ PostgreSQL: users, builds, EF/outbox, bundles, publications, votes, likes
+                 │    └─ Redis/BullMQ durable queue
                  └─ /var/lib/agentforge/artifacts (read-only bind mount, shared GID)
 
 Host systemd: agentforge-evaluation-worker.service (trusted root process)
-  ├─ PostgreSQL + Redis/BullMQ
+  ├─ PostgreSQL + Redis/BullMQ through dedicated loopback high ports
   ├─ BYOK provider HTTPS calls (allowlisted public hosts only)
   ├─ /usr/local/bin/runsc --network=none
   │    └─ one OCI sandbox per attempt, read-only digest-pinned rootfs
@@ -85,7 +87,9 @@ ARTIFACT_ARENA_KILL_SWITCH=false
 PI_RUNTIME_ENABLED=true
 ```
 
-The same environment file is consumed by the web container and trusted Worker so queue names, encryption key, database, Redis, storage path and launch flags cannot drift. The file must include the sandbox paths/digest, `ARTIFACT_STORAGE_GID`, and exact provider host allowlist. User API keys are stored encrypted in PostgreSQL; never place a user's key in this file.
+The same root-only environment file is consumed by the dedicated dependency stack, web container and trusted Worker so queue names, encryption key, database, Redis, storage path and launch flags cannot drift. PostgreSQL and Redis each have two equivalent URLs: `DATABASE_URL` / `REDIS_URL` use loopback high ports for the host Worker, while `AGENTFORGE_WEB_DATABASE_URL` / `AGENTFORGE_WEB_REDIS_URL` use the service names on `agentforge-production-backend` for the web container. Their protocol, credentials, database/index and URL options must match; production preflight rejects drift. The file must also include the sandbox paths/digest, `ARTIFACT_STORAGE_GID`, and exact provider host allowlist. User API keys are stored encrypted in PostgreSQL; never place a user's key in this file.
+
+For the dedicated same-VPS data services, set strong random PostgreSQL/Redis passwords and pin both images to exact repository digests. The high ports stay bound to `127.0.0.1`; do not publish them to `0.0.0.0` and do not reuse the existing `deeix-chat-postgres` or `deeix-chat-redis` services.
 
 Supported user-selected protocol shapes are:
 
@@ -100,7 +104,42 @@ Protocol selection is explicit; the platform does not infer provider semantics f
 
 This BYOK release has no platform USD model-spend cap. That does **not** remove token, tool-call, duration, memory, disk, process, queue, cancellation, concurrency or unknown-result retry limits. `RUN_MAX_TOTAL_COST` remains the legacy DAG setting and is not an animation-CreationRun budget.
 
-## 5. Build and stage one immutable release
+## 5. Start the dedicated data services and prove backups
+
+Pull reviewed PostgreSQL 16 and Redis 7 tags, record each immutable `RepoDigest`, and place those complete `name@sha256:...` values in the production environment. Then render the configuration without changing the host and start only the dedicated `agentforge-data` Compose project:
+
+```sh
+sudo scripts/deploy/data.sh check /etc/agentforge/production.env
+sudo scripts/deploy/data.sh up /etc/agentforge/production.env
+sudo scripts/deploy/data.sh status /etc/agentforge/production.env
+```
+
+This creates only the named network and volumes below, and binds host access to the configured loopback high ports (defaults `55432` and `56379`):
+
+```text
+agentforge-production-backend
+agentforge-production-postgres-data
+agentforge-production-redis-data
+```
+
+Before the first application migration, create a backup in a root-only directory. On a fresh database the dump can legitimately predate `schema_migrations`; after migration create another backup and exercise a disposable restore database:
+
+```sh
+sudo scripts/deploy/data.sh backup \
+  /etc/agentforge/production.env \
+  /var/backups/agentforge
+
+post_migration_backup=$(sudo scripts/deploy/data.sh backup \
+  /etc/agentforge/production.env \
+  /var/backups/agentforge)
+sudo scripts/deploy/data.sh restore-check \
+  /etc/agentforge/production.env \
+  "$post_migration_backup"
+```
+
+`backup` writes a gzip-tested SQL dump plus SHA-256 sidecar at mode `0600`. `restore-check` creates a uniquely named temporary database, restores into it, verifies a non-empty `schema_migrations` ledger, and drops only that temporary database. Neither command removes volumes or operates on another Compose project.
+
+## 6. Build and stage one immutable release
 
 Build on the target Hubei host so the Docker image and host Worker use the same reviewed source SHA. Place each release in a new directory; do not overwrite a prior release:
 
@@ -117,7 +156,7 @@ corepack pnpm build
 
 Keep `node_modules` in the host release because the Worker runs the TypeScript entrypoint through Node 22 native type stripping. The web image is built by `scripts/deploy/app.sh` from the same checkout.
 
-## 6. Preflight and install the trusted Worker
+## 7. Preflight and install the trusted Worker
 
 Choose an unused numeric system GID and write it as `ARTIFACT_STORAGE_GID`. Then run:
 
@@ -143,9 +182,9 @@ agentforge-artifacts system group at the configured GID
 
 It normalizes only the dedicated artifact tree to directory mode `2750` and file mode `0640`, reloads systemd, and enables—but does not start—the Worker. The script verifies the pinned Node executable, frozen host dependencies, runsc, read-only rootfs, OCI template, metadata digest, shared group and paths.
 
-## 7. Release the web app, migrate, and start the Worker
+## 8. Release the web app, migrate, and start the Worker
 
-Back up PostgreSQL first. From the staged release:
+Confirm the dedicated data services are healthy and record the pre-migration backup path first. From the staged release:
 
 ```sh
 sudo scripts/deploy/app.sh check \
@@ -162,7 +201,7 @@ sudo scripts/deploy/worker.sh restart \
   "/opt/agentforge/releases/$release_sha"
 ```
 
-The app release order is immutable image build → one-off additive migration/seed → container health wait. It binds only `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. The Worker is an independent systemd service, so a web rollback does not silently leave a mismatched Worker; install/restart the matching prior Worker release explicitly.
+The app release order is immutable image build → one-off additive migration/seed → container health wait. It joins only `agentforge-production-backend` and binds HTTP only to `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. Immediately create and restore-check a post-migration backup using Section 5. The Worker is an independent systemd service, so a web rollback does not silently leave a mismatched Worker; install/restart the matching prior Worker release explicitly.
 
 Useful checks:
 
@@ -177,7 +216,7 @@ curl --fail http://127.0.0.1:53180/api/arena/boot
 
 Do not paste environment files into a shell on a multi-user host; the expanded `env $(cat ...)` form above is only illustrative. Prefer `systemctl show`, the service `ExecStartPre`/health command, or a root-only shell that sources a safely reviewed file.
 
-## 8. Cloudflare Tunnel
+## 9. Cloudflare Tunnel
 
 The tunnel ingress should proxy the production hostname to:
 
@@ -189,7 +228,7 @@ Set `BETTER_AUTH_URL` to the exact public HTTPS origin. Preserve the original ho
 
 After the tunnel is active, verify the exact public origin, registration/login, secure cookies and `/api/arena/boot`. Browser origin/CSP checks must use that HTTPS hostname, not only localhost.
 
-## 9. Sandbox and artifact lifecycle
+## 10. Sandbox and artifact lifecycle
 
 For every CreationRun attempt:
 
@@ -204,7 +243,7 @@ For every CreationRun attempt:
 
 Only the sealed files and database evidence survive. If disposal cannot be verified, the attempt fails closed and must be investigated; never expose the working directory as a fallback artifact.
 
-## 10. Public-launch verification
+## 11. Public-launch verification
 
 Before routing users, execute and record:
 
@@ -232,7 +271,7 @@ Then use two fresh normal accounts in the real browser:
 
 The two required real-model acceptance runs need user-authorized BYOK credentials. Offline provider-wire tests, a fixed sandbox smoke, or a previous unrelated model sample cannot replace them.
 
-## 11. Kill switch and rollback
+## 12. Kill switch and rollback
 
 To stop new creation/publication/voting while preserving authorized historical reads:
 
@@ -256,4 +295,4 @@ sudo scripts/deploy/worker.sh restart \
   /opt/agentforge/releases/<previous-release-sha>
 ```
 
-Do not roll back migrations by dropping tables/columns, delete sealed artifacts, run `docker compose down -v`, or prune shared Docker resources. Preserve EF v2 messages and use a compatible Worker. Restore PostgreSQL only under a separately approved disaster-recovery procedure.
+Do not roll back migrations by dropping tables/columns, delete sealed artifacts, remove the dedicated data volumes, or prune shared Docker resources. Preserve EF v2 messages and use a compatible Worker. Restore PostgreSQL only under a separately approved disaster-recovery procedure using a verified backup; application rollback must leave the dedicated PostgreSQL and Redis services running.

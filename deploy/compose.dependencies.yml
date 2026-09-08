@@ -1,0 +1,68 @@
+# Dedicated same-VPS PostgreSQL and Redis for AgentForge only. The services bind
+# high ports to loopback; they never join or modify another project's network.
+services:
+  postgres:
+    image: ${AGENTFORGE_POSTGRES_IMAGE:?Set an immutable PostgreSQL image digest}
+    environment:
+      POSTGRES_USER: ${AGENTFORGE_POSTGRES_USER:?Set PostgreSQL user}
+      POSTGRES_PASSWORD: ${AGENTFORGE_POSTGRES_PASSWORD:?Set PostgreSQL password}
+      POSTGRES_DB: ${AGENTFORGE_POSTGRES_DB:?Set PostgreSQL database}
+    ports:
+      - "127.0.0.1:${AGENTFORGE_POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  redis:
+    image: ${AGENTFORGE_REDIS_IMAGE:?Set an immutable Redis image digest}
+    environment:
+      AGENTFORGE_REDIS_PASSWORD: ${AGENTFORGE_REDIS_PASSWORD:?Set Redis password}
+    command:
+      - sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${AGENTFORGE_REDIS_PASSWORD}"
+    ports:
+      - "127.0.0.1:${AGENTFORGE_REDIS_PORT:-56379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$AGENTFORGE_REDIS_PASSWORD\" ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - backend
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  postgres-data:
+    name: agentforge-production-postgres-data
+  redis-data:
+    name: agentforge-production-redis-data
+
+networks:
+  backend:
+    name: agentforge-production-backend
