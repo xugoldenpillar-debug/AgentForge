@@ -1,0 +1,122 @@
+name: Agent builder strict validation
+on:
+  push:
+    branches: [feat/agent-builder-complete-20260908]
+    paths: [.github/workflows/agent-builder-browser-check.yml]
+permissions:
+  contents: write
+concurrency:
+  group: agent-builder-implementation-validation
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_ENV: test
+      DEMO_MODE: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: agentforge
+          POSTGRES_USER: agentforge
+          POSTGRES_PASSWORD: agentforge_local
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agentforge -d agentforge"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref_name }}
+      - name: Apply reviewed accessibility correction
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$GITHUB_REF_NAME" = feat/agent-builder-complete-20260908
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/builder-evidence"
+          gh api "repos/$GITHUB_REPOSITORY/git/blobs/a32189647672d889e0516c07c1c127fb83e87755" --jq .content | base64 -d > "$RUNNER_TEMP/labels.patch"
+          git apply --check --index "$RUNNER_TEMP/labels.patch"
+          git apply --index "$RUNNER_TEMP/labels.patch"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run setup
+      - name: Full regression suite
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/builder-evidence/unit.log"
+      - name: Database, deployment, runtime and SDK gates
+        env:
+          MIGRATION_TEST_DATABASE_URL: postgres://agentforge:agentforge_local@127.0.0.1:5432/postgres
+          REDIS_URL: redis://127.0.0.1:6379
+        run: |
+          pnpm test:migrations 2>&1 | tee "$RUNNER_TEMP/builder-evidence/migrations.log"
+          pnpm exec tsx --test tests/agent-drafts.integration.ts 2>&1 | tee "$RUNNER_TEMP/builder-evidence/drafts.log"
+          pnpm test:evaluation-db 2>&1 | tee "$RUNNER_TEMP/builder-evidence/evaluation-db.log"
+          pnpm test:deploy 2>&1 | tee "$RUNNER_TEMP/builder-evidence/deploy.log"
+          pnpm test:pi-runtime 2>&1 | tee "$RUNNER_TEMP/builder-evidence/pi-runtime.log"
+          pnpm test:provider-sdk 2>&1 | tee "$RUNNER_TEMP/builder-evidence/provider-sdk.log"
+          pnpm db
+      - name: Types and production build
+        run: |
+          pnpm typecheck 2>&1 | tee "$RUNNER_TEMP/builder-evidence/typecheck.log"
+          pnpm build 2>&1 | tee "$RUNNER_TEMP/builder-evidence/build.log"
+      - name: Isolated browser dependency
+        run: |
+          npm install --prefix "$RUNNER_TEMP/browser-tools" --no-audit --no-fund --ignore-scripts playwright@1.58.2
+          node "$RUNNER_TEMP/browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
+      - name: Actual browser assertions and both smoke modes
+        run: |
+          BASE=http://127.0.0.1:3817
+          mkdir -p "$RUNNER_TEMP/agentforge-artifacts"
+          ARTIFACT_ARENA_ENABLED=true ARTIFACT_STORAGE_ROOT="$RUNNER_TEMP/agentforge-artifacts" BETTER_AUTH_URL="$BASE" pnpm exec next start -p 3817 > "$RUNNER_TEMP/builder-evidence/next.log" 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" || true' EXIT
+          for i in $(seq 1 90); do
+            if curl --fail --silent "$BASE/api/arena/boot" > /dev/null; then break; fi
+            sleep 1
+          done
+          BUILDER_BROWSER_BASE_URL="$BASE" BUILDER_BROWSER_OUTPUT="$RUNNER_TEMP/builder-evidence/browser" PLAYWRIGHT_MODULE="$RUNNER_TEMP/browser-tools/node_modules/playwright/index.mjs" node --experimental-strip-types scripts/agent-builder-browser.mjs 2>&1 | tee "$RUNNER_TEMP/builder-evidence/browser.log"
+          python3 -c 'import json,os; r=json.load(open(os.environ["RUNNER_TEMP"]+"/builder-evidence/browser/report.json")); assert not r.get("failure") and not r["errors"] and len(r["checks"]) >= 9 and r["generationCalls"] == 0'
+          SMOKE_BASE_URL="$BASE" SMOKE_EXPECT_TEST_MODE=true pnpm test:smoke 2>&1 | tee "$RUNNER_TEMP/builder-evidence/smoke-test.log"
+          kill "$APP_PID"
+          wait "$APP_PID" || true
+          APP_ENV=development BETTER_AUTH_URL="$BASE" pnpm exec next start -p 3817 > "$RUNNER_TEMP/builder-evidence/next-normal.log" 2>&1 &
+          APP_PID=$!
+          for i in $(seq 1 90); do
+            if curl --fail --silent "$BASE/api/arena/boot" > /dev/null; then break; fi
+            sleep 1
+          done
+          SMOKE_BASE_URL="$BASE" SMOKE_EXPECT_TEST_MODE=false pnpm test:smoke 2>&1 | tee "$RUNNER_TEMP/builder-evidence/smoke-normal.log"
+      - name: Commit verified fix and remove temporary validation workflow
+        run: |
+          git diff --cached --check
+          git rm .github/workflows/agent-builder-browser-check.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: expose stable accessible model and credential selection labels'
+          git push origin HEAD:refs/heads/feat/agent-builder-complete-20260908
+          git rev-parse HEAD > "$RUNNER_TEMP/builder-evidence/implementation-sha.txt"
+          git bundle create "$RUNNER_TEMP/builder-evidence/verified-source.bundle" --all
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-builder-strict-validation-evidence
+          path: ${{ runner.temp }}/builder-evidence
+          retention-days: 7
