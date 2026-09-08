@@ -94,10 +94,11 @@ export class CreationLeaderboardService {
     if (!record(metadata)) return null;
     const providerClass = metadata.providerClass === 'official' ? 'official' : metadata.providerClass === 'custom' ? 'custom' : null;
     const providerId = typeof metadata.providerId === 'string' ? metadata.providerId : null;
-    const providerHost = typeof metadata.providerHost === 'string' ? metadata.providerHost : null;
+    const privateProviderHost = typeof metadata.providerHost === 'string' ? metadata.providerHost : null;
     const protocol = typeof metadata.providerProtocol === 'string' ? metadata.providerProtocol : null;
     const modelId = job.snapshot.modelOfferingId;
-    if (!providerClass || !providerId || !providerHost || !protocol || !modelId) return null;
+    if (!providerClass || !providerId || !privateProviderHost || !protocol || !modelId) return null;
+    const providerHost = providerClass === 'official' ? privateProviderHost : 'custom';
     const skills = Array.isArray(metadata.skills)
       ? metadata.skills.map(skillProjection).filter((skill): skill is PublicCreationSkillRef => skill !== null)
       : [];
