@@ -179,8 +179,8 @@ function sanitizeMarkup(input: string, svg: boolean): string {
     allowedAttributes: {
       '*': GLOBAL_ATTRIBUTES,
       animate: ANIMATION_ATTRIBUTES,
-      animatemotion: ANIMATION_ATTRIBUTES,
-      animatetransform: ANIMATION_ATTRIBUTES,
+      animateMotion: ANIMATION_ATTRIBUTES,
+      animateTransform: ANIMATION_ATTRIBUTES,
       set: ANIMATION_ATTRIBUTES,
       use: ['href', 'xlink:href'],
       mpath: ['href', 'xlink:href'],

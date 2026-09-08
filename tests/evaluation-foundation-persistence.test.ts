@@ -122,6 +122,33 @@ test('creating a durable job leaves historical runs untouched and does not backf
   assert.equal((await base.read('evaluationAttempts')).length, 0);
 });
 
+test('creation job association failure rolls back the job, idempotency row, and outbox together', async () => {
+  const base = new MemoryRepository();
+  const repository = new EvaluationRepositoryAdapter(base, () => now);
+  const record: EvaluationJobRecord = {
+    ...jobRecord('sha256:creation-request'),
+    id: asOpaqueId<'evaluation-job'>('creation-job-missing-run'),
+    purpose: 'creation',
+    association: {
+      kind: 'creation-run',
+      creationRunId: asOpaqueId<'creation-run'>('creation-run-missing'),
+    },
+    idempotency: {
+      scope: 'evaluation-job-create',
+      key: 'creation-request',
+      requestDigest: 'sha256:creation-request',
+    },
+  };
+
+  await assert.rejects(
+    repository.createIfAbsent(record, acceptedEvent(record.id, record.idempotency.requestDigest)),
+    (error: unknown) => error instanceof EvaluationPersistenceError && error.code === 'not-found',
+  );
+  assert.equal((await base.read('evaluationJobs')).length, 0);
+  assert.equal((await base.read('evaluationIdempotencyKeys')).length, 0);
+  assert.equal((await base.read('evaluationOutbox')).length, 0);
+});
+
 test('same idempotency key is replay-safe and a different digest is rejected', async () => {
   const { repository } = await createRepository();
   const replay = await repository.createIfAbsent(jobRecord(), acceptedEvent());

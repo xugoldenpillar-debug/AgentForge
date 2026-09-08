@@ -94,7 +94,7 @@ async function textFile(sandbox: InMemorySandboxProvider, handle: string, path: 
   return new TextDecoder().decode(file.bytes);
 }
 
-test('Creation Pi writes, reads, and finalizes index.html through the restricted artifact tools', async () => {
+test('Creation Pi completes immediately after writing the required immutable index.html', async () => {
   const html = '<!doctype html><html><body><svg><animate attributeName="opacity" values="0;1" dur="1s" repeatCount="indefinite"/></svg></body></html>';
   const provider = new ScriptedProvider([
     JSON.stringify({ tool: 'artifact.write', arguments: { path: 'index.html', content: html } }),
@@ -103,7 +103,10 @@ test('Creation Pi writes, reads, and finalizes index.html through the restricted
   ]);
   const { sandbox, handle, result } = await fixture(provider);
   assert.equal(await textFile(sandbox, handle, 'index.html'), html);
-  assert.deepEqual({ turns: result.turns, toolCalls: result.toolCalls, finalText: result.finalText }, { turns: 3, toolCalls: 2, finalText: 'done' });
+  assert.deepEqual({ turns: result.turns, toolCalls: result.toolCalls, finalText: result.finalText }, {
+    turns: 1, toolCalls: 1, finalText: 'index.html created.',
+  });
+  assert.equal(provider.requests.length, 1);
   assert.equal(provider.requests[0]?.tools.length, 0);
   assert.match(provider.requests[0]?.systemPrompt ?? '', /do not have shell, network, browser/i);
 });
@@ -136,15 +139,16 @@ test('Creation Pi rejects shell and unknown model actions', async () => {
   );
 });
 
-test('Creation Pi rejects a second write to the same immutable output path', async () => {
+test('Creation Pi does not spend another model turn or attempt a duplicate write after index.html succeeds', async () => {
   const provider = new ScriptedProvider([
     JSON.stringify({ tool: 'artifact.write', arguments: { path: 'index.html', content: '<html><svg/></html>' } }),
     JSON.stringify({ tool: 'artifact.write', arguments: { path: 'index.html', content: '<html>changed</html>' } }),
   ]);
-  await assert.rejects(
-    () => fixture(provider),
-    (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.RUNTIME_POLICY_DENIED,
-  );
+  const { sandbox, handle, result } = await fixture(provider);
+  assert.equal(await textFile(sandbox, handle, 'index.html'), '<html><svg/></html>');
+  assert.equal(provider.requests.length, 1);
+  assert.equal(result.turns, 1);
+  assert.equal(result.toolCalls, 1);
 });
 
 test('Creation Pi enforces turn and token budgets', async () => {

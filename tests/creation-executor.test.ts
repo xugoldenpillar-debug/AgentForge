@@ -356,9 +356,10 @@ test('Creation executor seals the final bundle, links the run, records usage, di
   assert.equal((await f.repository.read('artifactBundles', { id: run!.artifactBundleId! })).length, 1);
   assert.equal((await f.repository.read('artifacts', { bundleId: run!.artifactBundleId! })).length, 1);
   const invocations = await f.repository.read('evaluationInvocations', { jobId: JOB_ID });
-  assert.equal(invocations.length, 2);
-  assert.deepEqual(invocations.map((invocation) => invocation.invocationIndex), [1, 2]);
-  assert.equal((await f.repository.read('evaluationUsageRecords', { jobId: JOB_ID })).length, 2);
+  assert.equal(invocations.length, 1);
+  assert.deepEqual(invocations.map((invocation) => invocation.invocationIndex), [1]);
+  assert.equal((await f.repository.read('evaluationUsageRecords', { jobId: JOB_ID })).length, 1);
+  assert.equal(f.provider.requests.length, 1);
   assert.equal(f.sandbox.createCalls, 1);
   assert.equal(f.sandbox.disposeCalls, 1);
   assert.equal(f.getRunStatusAtDispose(), 'running');

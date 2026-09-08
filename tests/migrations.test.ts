@@ -51,7 +51,7 @@ const second = parseMigration('0002_second.sql', 'SELECT 2;');
 
 test('migration files are frozen, ordered and checksummed independently of target schema', async () => {
   const migrations = await loadMigrations();
-  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017']);
+  assert.deepEqual(migrations.map(migration => migration.version), ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018']);
   assert.match(migrations[0].sql, /CREATE TABLE IF NOT EXISTS "provider_credentials"/);
   assert.match(migrations[1].sql, /ADD COLUMN IF NOT EXISTS issuer TEXT/);
   assert.match(migrations[2].sql, /CREATE TABLE IF NOT EXISTS "components"/);
@@ -75,6 +75,11 @@ test('migration files are frozen, ordered and checksummed independently of targe
   assert.match(migrations[15].sql, /ADD COLUMN IF NOT EXISTS animation_challenge_version_id TEXT/);
   assert.match(migrations[15].sql, /ADD CONSTRAINT builds_target_check CHECK/);
   assert.match(migrations[16].sql, /DROP CONSTRAINT IF EXISTS evaluation_jobs_check/);
+  assert.match(migrations[17].sql, /showcase_ballots_voter_pair_open_unique/);
+  assert.match(migrations[17].sql, /showcase_ballots_voter_id_round_id_comparator_key_policy_ve_key/);
+  assert.match(migrations[17].sql, /showcase_ballots_voter_id_round_id_comparator_key_policy_versio/);
+  assert.match(migrations[17].sql, /status = 'open'/);
+  assert.doesNotMatch(migrations[17].sql, /\b(?:BEGIN|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE|START|TRANSACTION)\b/i);
   assert.equal(first.checksum.length, 64);
   assert.notEqual(first.checksum, parseMigration(first.name, `${first.sql}\n`).checksum);
 });
@@ -223,7 +228,10 @@ test('versioned migrations match the fresh schema phases and preserve legacy upg
     .replace(/\n  artifact_bundle_id TEXT,/, '')
     .replace(/\nCREATE INDEX IF NOT EXISTS creation_runs_challenge_version_idx[^;]+;/, '')
     .replace(/\nALTER TABLE public\.creation_runs[\s\S]*?ON public\.creation_runs\(artifact_bundle_id\) WHERE artifact_bundle_id IS NOT NULL;\n/, '');
-  const legacyShowcase = showcase.replace(/\nCREATE TABLE IF NOT EXISTS public\.work_likes \([\s\S]*?work_likes_publication_idx ON public\.work_likes\(publication_id, created_at DESC\);\n/, '');
+  const legacyShowcase = showcase
+    .replace(/\nCREATE UNIQUE INDEX IF NOT EXISTS showcase_ballots_voter_pair_open_unique[\s\S]*?WHERE status = 'open';\n/, '\n')
+    .replace('  UNIQUE (voter_id, idempotency_key),', '  UNIQUE (voter_id, round_id, comparator_key, policy_version, pair_key),\n  UNIQUE (voter_id, idempotency_key),')
+    .replace(/\nCREATE TABLE IF NOT EXISTS public\.work_likes \([\s\S]*?work_likes_publication_idx ON public\.work_likes\(publication_id, created_at DESC\);\n/, '');
   assert.equal(migrations[9].sql.trim(), `${artifactMarker}${legacyArtifact}`.trim());
   assert.equal(migrations[10].sql.trim(), `${showcaseMarker}${legacyShowcase}`.trim());
   const legacy = await readFile(new URL('./fixtures/migrations/legacy-schema.sql', import.meta.url), 'utf8');

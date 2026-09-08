@@ -32,7 +32,7 @@ test('only exact Pi prefixes select the audited alternate sequence; ledger input
       '0006_community_component_library.sql', '0007_community_audit_events.sql',
       '0008_component_attachment_contents.sql', '0009_evaluation_foundation.sql',
       '0010_artifact_arena_foundation.sql', '0011_artifact_arena_showcase.sql', '0012_animation_challenge_catalog.sql', '0013_provider_protocol.sql', '0014_creation_evaluation.sql',
-      '0015_showcase_likes_and_creation_bundle.sql', '0016_animation_build_binding.sql', '0017_drop_legacy_creation_job_check.sql',
+      '0015_showcase_likes_and_creation_bundle.sql', '0016_animation_build_binding.sql', '0017_drop_legacy_creation_job_check.sql', '0018_showcase_ballot_generations.sql',
     ]);
     assert.equal(selected[5].checksum, canonical[2].checksum);
     assert.equal(selected.filter(row => row.sql.includes('ADD CONSTRAINT build_versions_mode_payload')).length, 1);

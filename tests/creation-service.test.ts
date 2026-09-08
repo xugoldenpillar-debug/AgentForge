@@ -12,6 +12,7 @@ import { digestAgentBuildDefinition } from '../src/lib/agent-build/digest.ts';
 import { CREATION_AGENT_BUILD_CONTRACT } from '../src/server/creation/catalog.ts';
 import { CreationRunService, type CreationJobScheduler } from '../src/server/creation/service.ts';
 import { ANIMATION_CHALLENGE_VERSIONS } from '../src/server/animation-challenges.ts';
+import { createDurableOutboxCompetitiveRunScheduler } from '../src/server/evaluation/runtime.ts';
 import type { Credential, User } from '../src/shared/types.ts';
 import { MemoryRepository } from './helpers/memory-repository.ts';
 
@@ -123,9 +124,36 @@ class FakeScheduler implements CreationJobScheduler {
   }
 }
 
-async function harness() {
+class RaceObservingScheduler implements CreationJobScheduler {
+  private readonly scheduler: CreationJobScheduler;
+  private readonly onCreated: (job: EvaluationJobView) => Promise<void>;
+
+  constructor(repository: MemoryRepository, onCreated: (job: EvaluationJobView) => Promise<void>) {
+    this.scheduler = createDurableOutboxCompetitiveRunScheduler(repository);
+    this.onCreated = onCreated;
+  }
+
+  async createJob(input: CreateEvaluationJobInput): Promise<CreateEvaluationJobResult> {
+    const result = await this.scheduler.createJob(input);
+    // This callback runs after the durable outbox transaction commits but
+    // before CreationRunService can perform any follow-up update. It models a
+    // worker consuming the just-published creation job at the race boundary.
+    await this.onCreated(result.job);
+    return result;
+  }
+
+  getJob(jobId: EvaluationJobId): Promise<EvaluationJobView> {
+    return this.scheduler.getJob(jobId);
+  }
+
+  requestCancellation(jobId: EvaluationJobId, reason?: 'user-requested'): Promise<EvaluationTransitionResult> {
+    return this.scheduler.requestCancellation(jobId, reason);
+  }
+}
+
+async function harness(schedulerFactory?: (repository: MemoryRepository) => CreationJobScheduler) {
   const repository = new MemoryRepository();
-  const scheduler = new FakeScheduler();
+  const scheduler = schedulerFactory?.(repository) ?? new FakeScheduler();
   await repository.insert('users', [user(OWNER), user(OTHER)]);
   await repository.insert('builds', [{
     id: BUILD_ID,
@@ -185,6 +213,48 @@ test('CreationRun scheduling is idempotent and its safe projection excludes cred
   assert.doesNotMatch(serialized, new RegExp(CREDENTIAL_ID));
   assert.doesNotMatch(serialized, /smooth declarative motion/i);
   assert.doesNotMatch(serialized, /executionToken|credentialAuthorizationId|contextDigest/i);
+});
+
+test('CreationRun association is visible before the durable outbox can be consumed', async () => {
+  let observedAssociation: string | null = null;
+  let observedOutboxRows = 0;
+  const { repository, service } = await harness((base) => new RaceObservingScheduler(base, async (job) => {
+    assert.equal(job.association.kind, 'creation-run');
+    const runId = String(job.association.creationRunId);
+    const run = (await base.read('creationRuns', { id: runId }))[0];
+    observedAssociation = run?.evaluationJobId ?? null;
+    observedOutboxRows = (await base.read('evaluationOutbox', { jobId: String(job.id) })).length;
+
+    // This is the executor's association guard at the exact point where the
+    // old implementation could observe a committed outbox row too early.
+    assert.equal(observedAssociation, String(job.id));
+    assert.equal(observedOutboxRows, 1);
+  }));
+
+  const accepted = await service.schedule(OWNER, input({ idempotencyKey: 'creation-race-boundary' }));
+
+  assert.equal(observedAssociation, String(accepted.job.id));
+  assert.equal(observedOutboxRows, 1);
+  assert.equal(accepted.run.evaluationJobId, String(accepted.job.id));
+});
+
+test('CreationRun scheduling does not overwrite a state already advanced by a worker', async () => {
+  const { repository, service } = await harness((base) => new RaceObservingScheduler(base, async (job) => {
+    assert.equal(job.association.kind, 'creation-run');
+    const runId = String(job.association.creationRunId);
+    const updated = await base.update('creationRuns', { id: runId, evaluationJobId: String(job.id) }, {
+      status: 'running',
+      startedAt: NOW,
+      updatedAt: NOW,
+    });
+    assert.equal(updated[0]?.status, 'running');
+  }));
+
+  const accepted = await service.schedule(OWNER, input({ idempotencyKey: 'creation-worker-won-race' }));
+
+  assert.equal(accepted.run.evaluationJobId, String(accepted.job.id));
+  assert.equal(accepted.run.status, 'running');
+  assert.equal((await repository.read('creationRuns', { id: accepted.run.id }))[0]?.status, 'running');
 });
 
 test('CreationRun idempotency rejects a different challenge, build, or provider authorization', async () => {

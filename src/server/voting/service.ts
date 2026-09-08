@@ -51,6 +51,16 @@ function canonicalPair(roundId: string, comparatorKey: string, policyVersion: st
   ensure(a.roundId === roundId && b.roundId === roundId && a.comparatorKey === comparatorKey && b.comparatorKey === comparatorKey && a.policyVersion === policyVersion && b.policyVersion === policyVersion, 'Entries do not share the requested comparator partition.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
   return a.id < b.id ? [a, b] : [b, a];
 }
+
+function isBallotExpired(ballot: ShowcaseBallot, now: string): boolean {
+  return Date.parse(ballot.expiresAt) <= Date.parse(now);
+}
+
+function isUniqueConflict(error: unknown): boolean {
+  if (error instanceof AppError) return error.code === ERROR_CODES.CONCURRENT_SAVE;
+  const candidate = error as { code?: unknown; cause?: { code?: unknown } } | null;
+  return candidate?.code === '23505' || candidate?.cause?.code === '23505';
+}
 function validatePolicy(policy: ComparatorPolicy): ComparatorPolicy {
   ensure(Number.isInteger(policy.minValidVotes) && policy.minValidVotes > 0, 'Comparator policy requires a positive vote threshold.', 500, ERROR_CODES.RUNTIME_POLICY_DENIED);
   ensure(Number.isInteger(policy.minIndependentVoters) && policy.minIndependentVoters > 0, 'Comparator policy requires a positive voter threshold.', 500, ERROR_CODES.RUNTIME_POLICY_DENIED);
@@ -65,14 +75,46 @@ export class ShowcaseVotingService {
   private readonly now: () => string;
   private readonly id: () => string;
   private readonly policy: ComparatorPolicy;
-  private readonly choosePair: NonNullable<VotingServiceOptions['choosePair']>;
+  private readonly choosePair: VotingServiceOptions['choosePair'];
 
   constructor(repo: VotingRepository, options: VotingServiceOptions) {
     this.repo = repo;
     this.now = options.now ?? (() => new Date().toISOString());
     this.id = options.id ?? randomUUID;
     this.policy = validatePolicy(options.policy);
-    this.choosePair = options.choosePair ?? ((candidates) => candidates.length < 2 ? null : [candidates[0], candidates[1]]);
+    this.choosePair = options.choosePair;
+  }
+
+  private orderedPairs(
+    candidates: readonly ShowcaseEntryCandidate[],
+    voterId: string,
+    roundId: string,
+    comparatorKey: string,
+    policyVersion: string,
+  ): Array<[ShowcaseEntryCandidate, ShowcaseEntryCandidate]> {
+    const ordered = [...candidates].sort((left, right) => left.id.localeCompare(right.id));
+    const pairs: Array<[ShowcaseEntryCandidate, ShowcaseEntryCandidate]> = [];
+    for (let leftIndex = 0; leftIndex < ordered.length; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < ordered.length; rightIndex += 1) {
+        const left = ordered[leftIndex];
+        const right = ordered[rightIndex];
+        if (left.ownerId === voterId || right.ownerId === voterId || left.ownerId === right.ownerId) continue;
+        pairs.push(canonicalPair(roundId, comparatorKey, policyVersion, left, right));
+      }
+    }
+    if (pairs.length > 1) {
+      const rotationSeed = createHash('sha256')
+        .update(`${voterId}\0${roundId}\0${comparatorKey}\0${policyVersion}`)
+        .digest('hex');
+      const offset = Number.parseInt(rotationSeed.slice(0, 8), 16) % pairs.length;
+      pairs.push(...pairs.splice(0, offset));
+    }
+    if (!this.choosePair) return pairs;
+    const preferred = this.choosePair(candidates, voterId);
+    if (!preferred) return [];
+    const canonicalPreferred = canonicalPair(roundId, comparatorKey, policyVersion, preferred[0], preferred[1]);
+    const preferredKey = pairKey(roundId, comparatorKey, policyVersion, canonicalPreferred[0].id, canonicalPreferred[1].id);
+    return [canonicalPreferred, ...pairs.filter(([left, right]) => pairKey(roundId, comparatorKey, policyVersion, left.id, right.id) !== preferredKey)];
   }
 
   async createEntry(actor: { id?: string; userId?: string } | string | null | undefined, input: CreateShowcaseEntryInput): Promise<ShowcaseEntry> {
@@ -150,31 +192,59 @@ export class ShowcaseVotingService {
     const policyVersion = text(input.policyVersion, 'policyVersion', 100);
     const idempotencyKey = text(input.idempotencyKey, 'idempotencyKey', 200);
     ensure(comparatorKey === this.policy.comparatorKey && policyVersion === this.policy.policyVersion, 'The requested comparator policy is not configured for this service.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    const requestDigest = digest({ roundId, comparatorKey, policyVersion });
     const prior = await this.repo.findBallotByIdempotencyKey(voterId, idempotencyKey);
     if (prior) {
-      const expectedDigest = digest({ roundId, comparatorKey, policyVersion });
-      ensure(prior.requestDigest === expectedDigest, 'The idempotency key was reused for a different ballot request.', 409, ERROR_CODES.CONCURRENT_SAVE);
+      ensure(prior.requestDigest === requestDigest, 'The idempotency key was reused for a different ballot request.', 409, ERROR_CODES.CONCURRENT_SAVE);
       return clone(prior);
     }
     ensure(await this.repo.rateLimit(`showcase-ballot:${voterId}`, this.policy.maxBallotRequestsPerHour, 60 * 60 * 1000), 'Ballot request rate limit exceeded.', 429, ERROR_CODES.RATE_LIMITED);
-    const candidates = (await this.repo.listActiveEntries(roundId, comparatorKey, policyVersion)).filter((entry) => entry.status === 'active' && entry.ownerId !== voterId);
-    const selected = this.choosePair(candidates, voterId);
-    if (!selected) return null;
-    const [a, b] = canonicalPair(roundId, comparatorKey, policyVersion, selected[0], selected[1]);
-    const key = pairKey(roundId, comparatorKey, policyVersion, a.id, b.id);
-    const priorOpen = await this.repo.findOpenBallot(voterId, roundId, key);
-    if (priorOpen) return clone(priorOpen);
-    const priorVote = await this.repo.findVoteByPair(voterId, roundId, key);
-    if (priorVote) return null;
-    const issuedAt = this.now();
-    const ballot: ShowcaseBallot = {
-      id: this.id(), voterId, roundId, comparatorKey, policyVersion, entryAId: a.id, entryBId: b.id, pairKey: key,
-      requestDigest: digest({ roundId, comparatorKey, policyVersion }), idempotencyKey, issuedAt,
-      expiresAt: new Date(Date.parse(issuedAt) + this.policy.ballotTtlMs).toISOString(), status: 'open', castVoteId: null,
-    };
-    const audit: VoteAuditEvent = { id: this.id(), action: 'showcase-ballot.issued', actorId: voterId, entityId: ballot.id, occurredAt: issuedAt, metadata: { roundId, comparatorKey, policyVersion, pairKey: key } };
-    await this.repo.transaction(async (tx) => { await tx.insertBallot(ballot); await tx.appendAuditEvent(audit); });
-    return clone(ballot);
+
+    // The partial unique index on open ballots is the final concurrency fence. A
+    // serializable transaction normally prevents duplicate issuance; retry once
+    // when another request wins that fence so callers receive the live ballot.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const ballot = await this.repo.transaction(async (tx) => {
+          const prior = await tx.findBallotByIdempotencyKey(voterId, idempotencyKey);
+          if (prior) {
+            ensure(prior.requestDigest === requestDigest, 'The idempotency key was reused for a different ballot request.', 409, ERROR_CODES.CONCURRENT_SAVE);
+            return prior;
+          }
+
+          const candidates = (await tx.listActiveEntries(roundId, comparatorKey, policyVersion))
+            .filter((entry) => entry.status === 'active' && entry.ownerId !== voterId);
+          const pairs = this.orderedPairs(candidates, voterId, roundId, comparatorKey, policyVersion);
+          for (const [a, b] of pairs) {
+            const key = pairKey(roundId, comparatorKey, policyVersion, a.id, b.id);
+            const priorOpen = await tx.findOpenBallot(voterId, roundId, key);
+            if (priorOpen) {
+              if (!isBallotExpired(priorOpen, this.now())) return priorOpen;
+              // Expired rows remain as audit history. They must be transitioned
+              // before a new generation can use the same pair.
+              await tx.updateBallot(priorOpen.id, { status: 'expired' });
+            }
+            if (await tx.findVoteByPair(voterId, roundId, key)) continue;
+
+            const issuedAt = this.now();
+            const ballot: ShowcaseBallot = {
+              id: this.id(), voterId, roundId, comparatorKey, policyVersion, entryAId: a.id, entryBId: b.id, pairKey: key,
+              requestDigest, idempotencyKey, issuedAt,
+              expiresAt: new Date(Date.parse(issuedAt) + this.policy.ballotTtlMs).toISOString(), status: 'open', castVoteId: null,
+            };
+            const audit: VoteAuditEvent = { id: this.id(), action: 'showcase-ballot.issued', actorId: voterId, entityId: ballot.id, occurredAt: issuedAt, metadata: { roundId, comparatorKey, policyVersion, pairKey: key } };
+            await tx.insertBallot(ballot);
+            await tx.appendAuditEvent(audit);
+            return ballot;
+          }
+          return null;
+        });
+        return ballot ? clone(ballot) : null;
+      } catch (error) {
+        if (!isUniqueConflict(error) || attempt === 1) throw error;
+      }
+    }
+    return null;
   }
 
   async castBallot(actor: { id?: string; userId?: string } | string | null | undefined, input: CastBallotInput): Promise<VoteResult> {

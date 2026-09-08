@@ -42,7 +42,7 @@ test('disposable PostgreSQL: fresh, legacy, repeat, rollback, concurrency and pr
       },
     };
     const migrations = await loadMigrations();
-    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017'];
+    const expectedMigrationVersions = ['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011', '0012', '0013', '0014', '0015', '0016', '0017', '0018'];
     assert.deepEqual(migrations.map(migration => migration.version), expectedMigrationVersions);
     const expectedMigrationCount = expectedMigrationVersions.length;
     assert.ok(migrations.some(migration => migration.name === '0006_evaluation_foundation.sql'));

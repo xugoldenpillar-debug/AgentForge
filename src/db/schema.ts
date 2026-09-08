@@ -875,7 +875,7 @@ export const showcaseBallots = pgTable("showcase_ballots", {
   status: text("status").notNull().default("open"),
   castVoteId: text("cast_vote_id"),
 }, (t) => [
-  uniqueIndex("showcase_ballots_voter_pair_unique").on(t.voterId, t.roundId, t.comparatorKey, t.policyVersion, t.pairKey),
+  uniqueIndex("showcase_ballots_voter_pair_open_unique").on(t.voterId, t.roundId, t.comparatorKey, t.policyVersion, t.pairKey).where(sql`${t.status} = 'open'`),
   uniqueIndex("showcase_ballots_voter_idempotency_unique").on(t.voterId, t.idempotencyKey),
   index("showcase_ballots_partition_idx").on(t.voterId, t.roundId, t.comparatorKey, t.policyVersion, t.issuedAt.desc()),
   check("showcase_ballots_round_id_check", sql`length(${t.roundId}) BETWEEN 1 AND 160`),

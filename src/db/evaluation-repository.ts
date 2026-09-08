@@ -213,6 +213,7 @@ export class EvaluationRepositoryAdapter implements EvaluationRepository {
           }
           const existing = await tx.read('evaluationJobs', { id: existingKey.jobId });
           if (!existing[0]) throw new EvaluationPersistenceError('not-found', 'The idempotency record points to a missing evaluation job.');
+          await associateCreationRun(tx, record, existing[0].id);
           return { created: false, record: toJobRecord(existing[0]) };
         }
 
@@ -231,6 +232,10 @@ export class EvaluationRepositoryAdapter implements EvaluationRepository {
         }
 
         await tx.insert('evaluationJobs', [toJobRow(record)]);
+        // A creation outbox row becomes consumable as soon as this transaction
+        // commits. Bind the run to the job before that commit so a worker can
+        // never observe a durable job whose CreationRun still has no job id.
+        await associateCreationRun(tx, record, String(record.id));
         await tx.insert('evaluationIdempotencyKeys', [toIdempotencyRow(record)]);
         await tx.insert('evaluationOutbox', [toOutboxRow(acceptedEvent)]);
         return { created: true, record };
@@ -561,6 +566,36 @@ export class EvaluationRepositoryAdapter implements EvaluationRepository {
       status: 'dead-letter', lastErrorCode: errorCode, lastErrorAt: now, updatedAt: now, leaseOwner: null, leaseToken: null, leaseExpiresAt: null,
     });
     return updated.length > 0;
+  }
+}
+
+async function associateCreationRun(
+  repository: Repository,
+  record: EvaluationJobRecord,
+  jobId: string,
+): Promise<void> {
+  if (record.association.kind !== 'creation-run') return;
+
+  const creationRunId = String(record.association.creationRunId);
+  const run = (await repository.read('creationRuns', { id: creationRunId }))[0];
+  if (!run) {
+    throw new EvaluationPersistenceError('not-found', 'The creation job points to a missing creation run.');
+  }
+  if (run.ownerId !== String(record.userId)) {
+    throw new EvaluationPersistenceError('association-exists', 'The creation run belongs to a different user.');
+  }
+  if (run.evaluationJobId && run.evaluationJobId !== jobId) {
+    throw new EvaluationPersistenceError('association-exists', 'The creation run is already associated with another evaluation job.');
+  }
+  if (!run.evaluationJobId) {
+    const updated = await repository.update(
+      'creationRuns',
+      { id: creationRunId, ownerId: String(record.userId), evaluationJobId: null },
+      { evaluationJobId: jobId },
+    );
+    if (!updated[0]) {
+      throw new EvaluationPersistenceError('association-exists', 'The creation run association could not be claimed.');
+    }
   }
 }
 

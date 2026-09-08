@@ -20,6 +20,7 @@ import type {
   ShowcaseVote,
   VoteAuditEvent,
   VotingRepository,
+  VotingServiceOptions,
 } from '../src/server/voting/contracts.ts';
 import { ShowcaseVotingService } from '../src/server/voting/service.ts';
 
@@ -108,6 +109,17 @@ class MemoryVotingRepository implements VotingRepository {
     return ballot ? clone(ballot) : null;
   }
   async insertBallot(ballot: ShowcaseBallot): Promise<void> {
+    const duplicate = [...this.ballots.values()].find((candidate) =>
+      candidate.voterId === ballot.voterId && candidate.idempotencyKey === ballot.idempotencyKey);
+    if (duplicate) throw Object.assign(new Error('duplicate ballot idempotency key'), { code: '23505' });
+    const openPair = [...this.ballots.values()].find((candidate) =>
+      candidate.voterId === ballot.voterId
+      && candidate.roundId === ballot.roundId
+      && candidate.comparatorKey === ballot.comparatorKey
+      && candidate.policyVersion === ballot.policyVersion
+      && candidate.pairKey === ballot.pairKey
+      && candidate.status === 'open');
+    if (openPair) throw Object.assign(new Error('duplicate open ballot pair'), { code: '23505' });
     this.ballots.set(ballot.id, clone(ballot));
   }
   async updateBallot(ballotId: string, values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>): Promise<ShowcaseBallot | null> {
@@ -229,9 +241,13 @@ test('CreationRun seam requires a completed creation run with its own bundle', a
   await assert.rejects(() => seam.requireCompletedRun('author', 'run-2'), (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.EVALUATION_NOT_READY);
 });
 
-function votingService(repo: MemoryVotingRepository): ShowcaseVotingService {
+function votingService(
+  repo: MemoryVotingRepository,
+  now: () => string = () => '2026-09-07T00:00:00.000Z',
+  choosePair?: VotingServiceOptions['choosePair'],
+): ShowcaseVotingService {
   let sequence = 0;
-  return new ShowcaseVotingService(repo, { policy, id: () => `voting-id-${++sequence}`, now: () => '2026-09-07T00:00:00.000Z' });
+  return new ShowcaseVotingService(repo, { policy, id: () => `voting-id-${++sequence}`, now, choosePair });
 }
 
 function seedEntries(repo: MemoryVotingRepository): void {
@@ -280,7 +296,9 @@ test('pairwise voting canonicalizes pairs, enforces anti-self-vote and idempoten
   const replay = await service.castBallot('voter', { ballotId: ballot!.id, choice: 'tie', idempotencyKey: 'vote-1' });
   assert.equal(replay.vote.id, first.vote.id);
   const secondBallot = await service.issueBallot('voter', { roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'ballot-2' });
-  assert.equal(secondBallot, null);
+  assert.ok(secondBallot);
+  assert.notEqual(secondBallot.pairKey, ballot!.pairKey);
+  await service.castBallot('voter', { ballotId: secondBallot.id, choice: 'skip', idempotencyKey: 'vote-1b' });
   const selfCandidate = await service.issueBallot('alice', { roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'self' });
   assert.ok(selfCandidate);
   assert.notEqual(selfCandidate?.entryAId, 'entry-a');
@@ -289,10 +307,106 @@ test('pairwise voting canonicalizes pairs, enforces anti-self-vote and idempoten
   await service.castBallot('voter-2', { ballotId: skipBallot!.id, choice: 'skip', idempotencyKey: 'vote-2' });
 });
 
-test('leaderboard uses deterministic normalized pairwise score and sample threshold', async () => {
+test('three-author voters receive every legal pair instead of getting stuck on the first pair', async () => {
   const repo = new MemoryVotingRepository();
   seedEntries(repo);
   const service = votingService(repo);
+  const issue = (idempotencyKey: string) => service.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey,
+  });
+  const cast = (ballot: ShowcaseBallot, idempotencyKey: string) => service.castBallot('voter', {
+    ballotId: ballot.id, choice: 'skip', idempotencyKey,
+  });
+
+  const issuedPairs = new Set<string>();
+  for (const [ballotKey, voteKey] of [
+    ['ballot-first', 'vote-first'],
+    ['ballot-second', 'vote-second'],
+    ['ballot-third', 'vote-third'],
+  ] as const) {
+    const ballot = await issue(ballotKey);
+    assert.ok(ballot);
+    issuedPairs.add(ballot.pairKey);
+    await cast(ballot, voteKey);
+  }
+
+  assert.deepEqual([...issuedPairs].sort(), [
+    'round-1:pelican-bike:v1:showcase-pairwise-v1:entry-a:entry-b',
+    'round-1:pelican-bike:v1:showcase-pairwise-v1:entry-a:entry-c',
+    'round-1:pelican-bike:v1:showcase-pairwise-v1:entry-b:entry-c',
+  ]);
+  assert.equal(await issue('ballot-exhausted'), null);
+  assert.equal([...repo.votes.values()].length, 3);
+});
+
+test('default pair ordering is stable per voter and rotates exposure across voters', async () => {
+  const firstPairs = new Set<string>();
+  for (const voterId of ['voter', 'voter-a', 'voter-b']) {
+    const repo = new MemoryVotingRepository();
+    seedEntries(repo);
+    const service = votingService(repo);
+    const first = await service.issueBallot(voterId, {
+      roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion,
+      idempotencyKey: `first-${voterId}`,
+    });
+    const replay = await service.issueBallot(voterId, {
+      roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion,
+      idempotencyKey: `replay-${voterId}`,
+    });
+    assert.ok(first);
+    assert.equal(replay?.id, first.id);
+    firstPairs.add(first.pairKey);
+  }
+  assert.equal(firstPairs.size, 3);
+});
+
+test('expired open ballots are closed and can be reissued as a new generation', async () => {
+  const repo = new MemoryVotingRepository();
+  seedEntries(repo);
+  let now = '2026-09-07T00:00:00.000Z';
+  const service = votingService(repo, () => now);
+  const first = await service.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'expired-1',
+  });
+  assert.ok(first);
+
+  now = '2026-09-07T00:11:00.000Z';
+  const second = await service.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'expired-2',
+  });
+  assert.ok(second);
+  assert.notEqual(second.id, first.id);
+  assert.equal(repo.ballots.get(first.id)?.status, 'expired');
+  assert.equal(repo.ballots.get(second.id)?.status, 'open');
+  assert.equal([...repo.ballots.values()].filter((ballot) => ballot.pairKey === first.pairKey).length, 2);
+
+  const replay = await service.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'expired-1',
+  });
+  assert.equal(replay?.id, first.id);
+  assert.equal(replay?.status, 'expired');
+});
+
+test('concurrent ballot requests converge on one open ballot for a pair', async () => {
+  const repo = new MemoryVotingRepository();
+  seedEntries(repo);
+  const service = votingService(repo);
+  const request = (idempotencyKey: string) => service.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey,
+  });
+
+  const [left, right] = await Promise.all([request('concurrent-left'), request('concurrent-right')]);
+  assert.ok(left);
+  assert.ok(right);
+  assert.equal(left.id, right.id);
+  assert.equal([...repo.ballots.values()].filter((ballot) => ballot.status === 'open').length, 1);
+  assert.equal(repo.audits.filter((event) => event.action === 'showcase-ballot.issued').length, 1);
+});
+
+test('leaderboard uses deterministic normalized pairwise score and sample threshold', async () => {
+  const repo = new MemoryVotingRepository();
+  seedEntries(repo);
+  const service = votingService(repo, undefined, (candidates) => [candidates[0], candidates[1]]);
   const cast = async (voterId: string, ballotId: string, choice: 'a' | 'b' | 'tie') => service.castBallot(voterId, { ballotId, choice, idempotencyKey: `vote-${voterId}` });
   const b1 = await service.issueBallot('voter-1', { roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'b1' });
   await cast('voter-1', b1!.id, 'a');

@@ -1,24 +1,28 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
 import type { Repository, TableName, Tables } from '../shared/types.ts';
 import { tableRegistry } from './schema.ts';
 import { database } from './index.ts';
-const dates=new Set([
-  'createdAt','updatedAt','expiresAt','accessTokenExpiresAt','refreshTokenExpiresAt',
-  'frozenAt','startedAt','completedAt','decidedAt','releasedAt','occurredAt',
-  'acceptedAt','cancellationRequestedAt','leaseExpiresAt','heartbeatAt','finishedAt',
-  'recordedAt','availableAt','lastErrorAt','publishedAt',
-]);
-function toDatabase(value:Record<string,unknown>){return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).map(([k,v])=>[k,dates.has(k)&&typeof v==='string'?new Date(v):v]));}
+function toDatabase<K extends TableName>(name: K, value: Record<string, unknown>): Record<string, unknown> {
+  const table = tableRegistry[name] as unknown as Record<string, { dataType?: unknown }>;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, current]) => current !== undefined)
+      .map(([key, current]) => [
+        key,
+        table[key]?.dataType === 'date' && typeof current === 'string' ? new Date(current) : current,
+      ]),
+  );
+}
 function fromDatabase<T>(value:unknown):T {return JSON.parse(JSON.stringify(value)) as T;}
 // The only intentionally dynamic query builder: domain services stay strongly typed.
 export class DrizzleRepository implements Repository {
   private orm:any;private sql:ReturnType<typeof database>['sql'];private nested:boolean;
   constructor(orm:any=database().db,sql=database().sql,nested=false){this.orm=orm;this.sql=sql;this.nested=nested;}
-  private condition(table:any,where:Record<string,unknown>){const entries=Object.entries(where).map(([k,v])=>eq(table[k],v));return entries.length?and(...entries):undefined;}
+  private condition(table:any,where:Record<string,unknown>){const entries=Object.entries(where).map(([k,v])=>v===null?isNull(table[k]):eq(table[k],v));return entries.length?and(...entries):undefined;}
   async read<K extends TableName>(name:K,where:Partial<Tables[K]>={}):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.select().from(t).where(this.condition(t,where)));}
-  async insert<K extends TableName>(name:K,rows:Tables[K][]):Promise<void>{if(rows.length)await this.orm.insert(tableRegistry[name]).values(rows.map(r=>toDatabase(r as unknown as Record<string,unknown>)));}
-  async update<K extends TableName>(name:K,where:Partial<Tables[K]>,values:Partial<Tables[K]>):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.update(t).set(toDatabase(values as Record<string,unknown>)).where(this.condition(t,where)).returning());}
+  async insert<K extends TableName>(name:K,rows:Tables[K][]):Promise<void>{if(rows.length)await this.orm.insert(tableRegistry[name]).values(rows.map(r=>toDatabase(name, r as unknown as Record<string, unknown>)));}
+  async update<K extends TableName>(name:K,where:Partial<Tables[K]>,values:Partial<Tables[K]>):Promise<Tables[K][]> {const t=tableRegistry[name];return fromDatabase(await this.orm.update(t).set(toDatabase(name, values as Record<string, unknown>)).where(this.condition(t,where)).returning());}
   async remove<K extends TableName>(name:K,where:Partial<Tables[K]>):Promise<void>{const t=tableRegistry[name];await this.orm.delete(t).where(this.condition(t,where));}
   async transaction<T>(fn: (tx: Repository) => Promise<T>): Promise<T> {
     if (this.nested) return fn(this);

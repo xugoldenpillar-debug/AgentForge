@@ -344,6 +344,31 @@ test('preview sanitization independently rejects consecutive remote-valued SVG a
   assert.match(projection.body.content, /<rect\b/i);
 });
 
+test('animation preview preserves camel-case SVG motion attributes and mpath references', () => {
+  const content = `<svg viewBox="0 0 100 100">
+    <defs><path id="orbit" d="M 0 0 C 10 0 20 10 30 10" /></defs>
+    <circle cx="50" cy="50" r="8">
+      <animateTransform attributeName="transform" type="rotate" values="0 50 50;360 50 50" dur="2s" repeatCount="indefinite" additive="sum" />
+      <animateMotion path="M 0 0 L 10 10" dur="3s" rotate="auto" keyPoints="0;1" keyTimes="0;1" href="javascript:alert(1)" onbegin="alert(1)">
+        <mpath href="#orbit" xlink:href="https://remote.invalid/orbit" />
+      </animateMotion>
+    </circle>
+  </svg>`;
+  const bytes = new TextEncoder().encode(content);
+  const entry: ArtifactManifestEntry = {
+    artifactId: 'svg-motion-animation', slotId: 'entry', relativePath: 'animation.svg', mediaType: 'image/svg+xml',
+    bytes: bytes.byteLength, sha256: digest(bytes), objectVersion: 'v1', classification: 'public-feedback',
+  };
+  const projection = projectPreviewContent(previewManifest([entry]), entry.artifactId, bytes, bytes.byteLength);
+  assert.equal(projection.body.kind, 'text');
+  if (projection.body.kind !== 'text') return;
+
+  assert.match(projection.body.content, /<animateTransform\b[^>]*attributeName="transform"[^>]*type="rotate"[^>]*values="0 50 50;360 50 50"[^>]*dur="2s"/i);
+  assert.match(projection.body.content, /<animateMotion\b[^>]*path="M 0 0 L 10 10"[^>]*dur="3s"[^>]*rotate="auto"[^>]*keyPoints="0;1"[^>]*keyTimes="0;1"/i);
+  assert.match(projection.body.content, /<mpath\b[^>]*href="#orbit"/i);
+  assert.doesNotMatch(projection.body.content, /onbegin|javascript:|data:|https?:\/\/|remote\.invalid/i);
+});
+
 test('animation preview preserves approved CSS and SVG animation while rejecting active content', () => {
   const content = `<!doctype html><html><head><style>
     @keyframes pedal { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }

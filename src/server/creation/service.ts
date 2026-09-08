@@ -262,12 +262,25 @@ export class CreationRunService {
       idempotencyKey: `creation:${key}`,
       budgetReservationId: null,
     });
-    const updated = await this.#repository.update('creationRuns', { id: run.id, ownerId }, {
-      evaluationJobId: String(accepted.job.id),
-      status: jobStateToRunStatus(accepted.job.state),
-      updatedAt: this.#now(),
-    });
-    return { created: accepted.created, run: project(updated[0] ?? run), job: projectJob(accepted.job) };
+    const jobId = String(accepted.job.id);
+    let associatedRun = (await this.#repository.read('creationRuns', { id: run.id, ownerId }))[0] ?? run;
+    if (!associatedRun.evaluationJobId) {
+      const claimed = await this.#repository.update(
+        'creationRuns',
+        { id: run.id, ownerId, evaluationJobId: null },
+        { evaluationJobId: jobId, updatedAt: this.#now() },
+      );
+      associatedRun = claimed[0]
+        ?? (await this.#repository.read('creationRuns', { id: run.id, ownerId }))[0]
+        ?? associatedRun;
+    }
+    ensure(associatedRun.evaluationJobId === jobId,
+      'Creation evaluation association is invalid.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    // The durable scheduler binds the run in the same transaction as its outbox.
+    // Do not copy the returned job state here: a worker may already have advanced
+    // the run while createJob() was returning, and a stale accepted/queued view
+    // must never move it backwards.
+    return { created: accepted.created, run: project(associatedRun), job: projectJob(accepted.job) };
   }
 
   async getCreationRun(runId: string, ownerId: string): Promise<CreationRunRef | null> {

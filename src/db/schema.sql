@@ -839,12 +839,14 @@ CREATE TABLE IF NOT EXISTS public.showcase_ballots (
   expires_at TIMESTAMPTZ NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'cast', 'expired')),
   cast_vote_id TEXT,
-  UNIQUE (voter_id, round_id, comparator_key, policy_version, pair_key),
   UNIQUE (voter_id, idempotency_key),
   CHECK (entry_a_id <> entry_b_id),
   CHECK (expires_at > issued_at),
   CHECK ((status = 'cast' AND cast_vote_id IS NOT NULL) OR (status IN ('open', 'expired') AND cast_vote_id IS NULL))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS showcase_ballots_voter_pair_open_unique
+  ON public.showcase_ballots(voter_id, round_id, comparator_key, policy_version, pair_key)
+  WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS showcase_ballots_partition_idx ON public.showcase_ballots(voter_id, round_id, comparator_key, policy_version, issued_at DESC);
 
 CREATE TABLE IF NOT EXISTS public.showcase_votes (

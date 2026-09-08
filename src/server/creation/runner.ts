@@ -123,7 +123,12 @@ async function readArtifactText(options: CreationPiRunnerOptions, path: string):
   return new TextDecoder('utf-8', { fatal: true }).decode(file.bytes);
 }
 
-function createTools(options: CreationPiRunnerOptions, onTool: () => void, onError: (error: unknown) => void): PiAgentToolLike[] {
+function createTools(
+  options: CreationPiRunnerOptions,
+  onTool: () => void,
+  onWriteSuccess: (path: string) => void,
+  onError: (error: unknown) => void,
+): PiAgentToolLike[] {
   const write: PiAgentToolLike = {
     name: 'artifact.write',
     label: 'Write artifact',
@@ -133,15 +138,20 @@ function createTools(options: CreationPiRunnerOptions, onTool: () => void, onErr
     execute: async (toolCallId, params, signal) => {
       try {
         cancelled(options.signal);
-      if (signal?.aborted) cancelled(signal);
-      ensure(record(params) && typeof params.path === 'string' && typeof params.content === 'string',
-        'Invalid artifact.write arguments.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
-      await options.assertAuthorized();
-      onTool();
-      const result = await options.sandbox.invoke(options.sandboxHandle, {
-        toolId: 'artifact.write', versionId: 'artifact-write-v1', capability: 'write',
-      }, { path: params.path, content: params.content }, toolCallId || randomUUID());
-        return { content: [{ type: 'text', text: JSON.stringify({ written: params.path, bytes: result.outputBytes, digest: result.outputDigest }) }] };
+        if (signal?.aborted) cancelled(signal);
+        ensure(record(params) && typeof params.path === 'string' && typeof params.content === 'string',
+          'Invalid artifact.write arguments.', 400, ERROR_CODES.REQUEST_VALIDATION_FAILED);
+        await options.assertAuthorized();
+        onTool();
+        const result = await options.sandbox.invoke(options.sandboxHandle, {
+          toolId: 'artifact.write', versionId: 'artifact-write-v1', capability: 'write',
+        }, { path: params.path, content: params.content }, toolCallId || randomUUID());
+        onWriteSuccess(params.path);
+        return { content: [{ type: 'text', text: JSON.stringify({
+          written: params.path,
+          bytes: result.outputBytes,
+          digest: result.outputDigest,
+        }) }] };
       } catch (error) {
         onError(error);
         throw error;
@@ -182,40 +192,54 @@ export async function runCreationWithPi(options: CreationPiRunnerOptions): Promi
   let finalText = '';
   let terminalError: unknown;
   let agent: PiAgentLike | undefined;
+  let requiredOutputWritten = false;
 
   const controlled: ControlledStreamFn = async (_model, context, streamOptions) => {
     try {
       cancelled(options.signal);
-    await options.assertAuthorized();
-    turns += 1;
-    ensure(turns <= maxTurns, 'Creation turn budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
-    const combinedSignal = AbortSignal.any([options.signal, ...(streamOptions?.signal ? [streamOptions.signal] : [])]);
-    const remaining = maxTotalTokens - inputTokens - outputTokens;
-    ensure(remaining >= 256, 'Creation token budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
-    const result: AIResult = await options.provider.execute({
-      model: options.modelId,
-      systemPrompt: systemPrompt(options.instructions, options.skillInstructions ?? []),
-      userPrompt: `Creation brief:\n${options.brief}\n\nCurrent Pi conversation state:\n${safeContext(context)}`,
-      tools: [],
-      maxTokens: Math.min(8_192, remaining),
-      temperature: 0.4,
-      remainingTokens: remaining,
-      remainingToolCalls: Math.max(0, 64 - toolCalls),
-      remainingCost: 1_000_000,
-      signal: combinedSignal,
-    });
-    inputTokens += result.inputTokens;
-    outputTokens += result.outputTokens;
-    ensure(inputTokens + outputTokens <= maxTotalTokens, 'Creation token budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
-    const action = parseAction(result.text);
-    async function* chunks(): AsyncGenerator<ControlledStreamChunk> {
-      if (action.kind === 'tool') yield { type: 'tool_call', id: `creation-tool-${turns}`, name: action.name, args: action.args };
-      else {
-        finalText = action.text;
-        yield { type: 'text_delta', text: action.text };
+      if (requiredOutputWritten) {
+        finalText = 'index.html created.';
+        async function* completion(): AsyncGenerator<ControlledStreamChunk> {
+          yield { type: 'text_delta', text: finalText };
+          yield { type: 'usage', inputTokens: 0, outputTokens: 0 };
+        }
+        return completion();
       }
-      yield { type: 'usage', inputTokens: result.inputTokens, outputTokens: result.outputTokens };
-    }
+      await options.assertAuthorized();
+      turns += 1;
+      ensure(turns <= maxTurns, 'Creation turn budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
+      const combinedSignal = AbortSignal.any([options.signal, ...(streamOptions?.signal ? [streamOptions.signal] : [])]);
+      const remaining = maxTotalTokens - inputTokens - outputTokens;
+      ensure(remaining >= 256, 'Creation token budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
+      const result: AIResult = await options.provider.execute({
+        model: options.modelId,
+        systemPrompt: systemPrompt(options.instructions, options.skillInstructions ?? []),
+        userPrompt: `Creation brief:
+${options.brief}
+
+Current Pi conversation state:
+${safeContext(context)}`,
+        tools: [],
+        maxTokens: Math.min(8_192, remaining),
+        temperature: 0.4,
+        remainingTokens: remaining,
+        remainingToolCalls: Math.max(0, 64 - toolCalls),
+        remainingCost: 1_000_000,
+        signal: combinedSignal,
+      });
+      inputTokens += result.inputTokens;
+      outputTokens += result.outputTokens;
+      ensure(inputTokens + outputTokens <= maxTotalTokens, 'Creation token budget exceeded.', 429, ERROR_CODES.BUDGET_EXCEEDED);
+      const action = parseAction(result.text);
+      async function* chunks(): AsyncGenerator<ControlledStreamChunk> {
+        if (action.kind === 'tool') {
+          yield { type: 'tool_call', id: `creation-tool-${turns}`, name: action.name, args: action.args };
+        } else {
+          finalText = action.text;
+          yield { type: 'text_delta', text: action.text };
+        }
+        yield { type: 'usage', inputTokens: result.inputTokens, outputTokens: result.outputTokens };
+      }
       return chunks();
     } catch (error) {
       terminalError ??= error;
@@ -223,7 +247,9 @@ export async function runCreationWithPi(options: CreationPiRunnerOptions): Promi
     }
   };
 
-  const tools = createTools(options, () => { toolCalls += 1; }, (error) => {
+  const tools = createTools(options, () => { toolCalls += 1; }, (path) => {
+    if (path === 'index.html') requiredOutputWritten = true;
+  }, (error) => {
     terminalError ??= error;
     agent?.abort();
   });
