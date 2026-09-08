@@ -65,7 +65,15 @@ jobs:
       - name: Initialize application database
         run: pnpm db
       - name: Full unit and service regression
-        run: pnpm test
+        run: pnpm test 2>&1 | tee "$RUNNER_TEMP/pnpm-test.log"
+      - name: Upload regression failure log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconciliation-regression-log
+          path: ${{ runner.temp }}/pnpm-test.log
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Deployment validation
         run: pnpm test:deploy
       - name: Pi runtime integration
