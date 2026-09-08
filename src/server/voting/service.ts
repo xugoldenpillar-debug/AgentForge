@@ -285,14 +285,24 @@ export class ShowcaseVotingService {
       choice: input.choice as BallotChoice, idempotencyKey, createdAt, validity: input.choice === 'skip' ? 'accepted' : 'accepted', exclusionReason: null,
     };
     const audit: VoteAuditEvent = { id: this.id(), action: 'showcase-vote.recorded', actorId: voterId, entityId: vote.id, occurredAt: createdAt, metadata: { ballotId: ballot.id, choice: vote.choice, pairKey: vote.pairKey } };
-    const updated = await this.repo.transaction(async (tx) => {
-      await tx.insertVote(vote);
-      const nextBallot = await tx.updateBallot(ballot.id, { status: 'cast', castVoteId: vote.id }, 'open');
-      if (!nextBallot) conflict('The ballot changed before the vote could be saved.');
-      await tx.appendAuditEvent(audit);
-      return nextBallot;
-    });
-    return { vote: clone(vote), ballot: clone(updated) };
+    try {
+      const updated = await this.repo.transaction(async (tx) => {
+        await tx.insertVote(vote);
+        const nextBallot = await tx.updateBallot(ballot.id, { status: 'cast', castVoteId: vote.id }, 'open');
+        if (!nextBallot) conflict('The ballot changed before the vote could be saved.');
+        await tx.appendAuditEvent(audit);
+        return nextBallot;
+      });
+      return { vote: clone(vote), ballot: clone(updated) };
+    } catch (error) {
+      if (!isUniqueConflict(error)) throw error;
+      const winner = await this.repo.findVoteByPair(voterId, ballot.roundId, ballot.pairKey);
+      const currentBallot = await this.repo.getBallot(ballot.id);
+      if (winner && currentBallot && winner.ballotId === ballot.id && winner.choice === input.choice) {
+        return { vote: clone(winner), ballot: clone(currentBallot) };
+      }
+      conflict('The ballot changed before the vote could be saved.');
+    }
   }
 
   async projectLeaderboard(roundId: string, comparatorKey: string, policyVersion: string): Promise<LeaderboardProjection> {

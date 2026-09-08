@@ -207,12 +207,6 @@ export class EvaluationService {
       budgetReservationId: input.budgetReservationId ?? null
     }) as unknown as JsonObject);
 
-    const existing = await this.store.findByIdempotency(scope, scopedIdempotencyKey);
-    if (existing) {
-      ensureDigestMatches(existing, requestDigest);
-      return this.finishExistingCreate(existing);
-    }
-
     const now = this.now();
     const jobId = asOpaqueId<'evaluation-job'>(this.createId()) as EvaluationJobId;
     const record: EvaluationJobRecord = deepFreeze({
@@ -392,11 +386,6 @@ export class EvaluationService {
     const afterRace = await this.readRequired(jobId);
     if (isTerminalEvaluationJobState(afterRace.state)) return { applied: false, job: toPublicJob(afterRace) };
     throw new EvaluationServiceError('STALE_EXECUTION', 'The execution lease no longer owns this job.');
-  }
-
-  private async finishExistingCreate(existing: EvaluationJobRecord): Promise<CreateEvaluationJobResult> {
-    if (existing.state === 'accepted') await this.enqueueAccepted(existing);
-    return { created: false, job: toPublicJob(await this.readRequired(existing.id)) };
   }
 
   private async enqueueAccepted(record: EvaluationJobRecord): Promise<void> {

@@ -66,6 +66,7 @@ class MemoryVotingRepository implements VotingRepository {
   votes = new Map<string, ShowcaseVote>();
   audits: VoteAuditEvent[] = [];
   limits = new Map<string, number>();
+  concurrentVoteChoice: ShowcaseVote['choice'] | null = null;
 
   async transaction<T>(fn: (tx: VotingRepository) => Promise<T>): Promise<T> {
     return fn(this);
@@ -122,9 +123,13 @@ class MemoryVotingRepository implements VotingRepository {
     if (openPair) throw Object.assign(new Error('duplicate open ballot pair'), { code: '23505' });
     this.ballots.set(ballot.id, clone(ballot));
   }
-  async updateBallot(ballotId: string, values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>): Promise<ShowcaseBallot | null> {
+  async updateBallot(
+    ballotId: string,
+    values: Partial<Pick<ShowcaseBallot, 'status' | 'castVoteId'>>,
+    expectedStatus?: ShowcaseBallot['status'],
+  ): Promise<ShowcaseBallot | null> {
     const ballot = this.ballots.get(ballotId);
-    if (!ballot) return null;
+    if (!ballot || (expectedStatus !== undefined && ballot.status !== expectedStatus)) return null;
     Object.assign(ballot, clone(values));
     return clone(ballot);
   }
@@ -137,6 +142,19 @@ class MemoryVotingRepository implements VotingRepository {
     return vote ? clone(vote) : null;
   }
   async insertVote(vote: ShowcaseVote): Promise<void> {
+    if (this.concurrentVoteChoice) {
+      const winner: ShowcaseVote = {
+        ...clone(vote),
+        id: 'concurrent-vote',
+        choice: this.concurrentVoteChoice,
+        idempotencyKey: 'concurrent-idempotency-key',
+      };
+      this.concurrentVoteChoice = null;
+      this.votes.set(winner.id, winner);
+      const ballot = this.ballots.get(vote.ballotId);
+      if (ballot) Object.assign(ballot, { status: 'cast' as const, castVoteId: winner.id });
+      throw Object.assign(new Error('concurrent unique vote'), { code: '23505' });
+    }
     this.votes.set(vote.id, clone(vote));
   }
   async listVotes(roundId: string, comparatorKey: string, policyVersion: string): Promise<ShowcaseVote[]> {
@@ -311,6 +329,33 @@ test('pairwise voting canonicalizes pairs, enforces anti-self-vote and idempoten
   const skipBallot = await service.issueBallot('voter-2', { roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'ballot-3' });
   assert.ok(skipBallot);
   await service.castBallot('voter-2', { ballotId: skipBallot!.id, choice: 'skip', idempotencyKey: 'vote-2' });
+});
+
+test('concurrent vote uniqueness is returned idempotently for the same choice and normalized for a conflict', async () => {
+  const sameRepo = new MemoryVotingRepository();
+  seedEntries(sameRepo);
+  const sameService = votingService(sameRepo);
+  const sameBallot = await sameService.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'concurrent-ballot-same',
+  });
+  assert.ok(sameBallot);
+  sameRepo.concurrentVoteChoice = 'a';
+  const same = await sameService.castBallot('voter', { ballotId: sameBallot.id, choice: 'a', idempotencyKey: 'concurrent-cast-same' });
+  assert.equal(same.vote.id, 'concurrent-vote');
+  assert.equal(same.ballot.status, 'cast');
+
+  const conflictRepo = new MemoryVotingRepository();
+  seedEntries(conflictRepo);
+  const conflictService = votingService(conflictRepo);
+  const conflictBallot = await conflictService.issueBallot('voter', {
+    roundId: 'round-1', comparatorKey: policy.comparatorKey, policyVersion: policy.policyVersion, idempotencyKey: 'concurrent-ballot-conflict',
+  });
+  assert.ok(conflictBallot);
+  conflictRepo.concurrentVoteChoice = 'b';
+  await assert.rejects(
+    () => conflictService.castBallot('voter', { ballotId: conflictBallot.id, choice: 'a', idempotencyKey: 'concurrent-cast-conflict' }),
+    (error: unknown) => error instanceof AppError && error.status === 409 && error.code === ERROR_CODES.CONCURRENT_SAVE,
+  );
 });
 
 test('three-author voters receive every legal pair instead of getting stuck on the first pair', async () => {

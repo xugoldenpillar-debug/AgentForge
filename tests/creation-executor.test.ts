@@ -118,6 +118,7 @@ interface FixtureOptions {
   readonly jobState?: EvaluationJobRow['state'];
   readonly replies?: readonly (string | Error)[];
   readonly disposeFailure?: boolean;
+  readonly runEvaluationJobId?: string | null;
 }
 
 async function fixture(options: FixtureOptions = {}) {
@@ -268,7 +269,7 @@ async function fixture(options: FixtureOptions = {}) {
     challengeVersionId: challenge.id,
     environmentTemplateId: CREATION_ENVIRONMENT_TEMPLATE.templateId,
     environmentTemplateVersionId: CREATION_ENVIRONMENT_TEMPLATE.versionId,
-    evaluationJobId: JOB_ID,
+    evaluationJobId: options.runEvaluationJobId === undefined ? JOB_ID : options.runEvaluationJobId,
     status: 'queued',
     context: contextValue,
     createdAt: NOW,
@@ -373,6 +374,31 @@ test('Creation executor seals the final bundle, links the run, records usage, di
     outcome,
   });
   assert.doesNotMatch(publicEvidence, new RegExp(API_KEY));
+});
+
+test('Creation executor repairs a historical null job association before provider work', async () => {
+  const f = await fixture({ runEvaluationJobId: null });
+
+  const outcome = await f.executor.execute(f.execution);
+
+  assert.equal(outcome.kind, 'completed');
+  const run = (await f.repository.read('creationRuns', { id: RUN_ID }))[0];
+  assert.equal(run?.evaluationJobId, JOB_ID);
+  assert.equal(f.provider.requests.length, 1);
+});
+
+test('Creation executor never replaces a conflicting non-null job association', async () => {
+  const f = await fixture({ runEvaluationJobId: 'different-job' });
+
+  const outcome = await f.executor.execute(f.execution);
+
+  assert.deepEqual(outcome, {
+    kind: 'failed',
+    failure: { code: 'CREATION_JOB_ASSOCIATION_MISMATCH', retryable: false },
+  });
+  assert.equal((await f.repository.read('creationRuns', { id: RUN_ID }))[0]?.evaluationJobId, 'different-job');
+  assert.equal(f.provider.requests.length, 0);
+  assert.equal(f.sandbox.createCalls, 0);
 });
 
 test('Creation executor rejects missing or changed credentials before creating a sandbox', async () => {

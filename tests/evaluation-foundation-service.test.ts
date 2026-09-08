@@ -22,6 +22,7 @@ import {
 class MemoryJobStore implements EvaluationJobStore {
   readonly records = new Map<string, EvaluationJobRecord>();
   readonly byIdempotency = new Map<string, string>();
+  createIfAbsentCalls = 0;
 
   async findByIdempotency(scope: 'evaluation-job-create', key: string): Promise<EvaluationJobRecord | null> {
     const id = this.byIdempotency.get(`${scope}:${key}`);
@@ -32,6 +33,7 @@ class MemoryJobStore implements EvaluationJobStore {
     record: EvaluationJobRecord,
     _acceptedEvent: EvaluationOutboxEvent
   ): Promise<{ readonly created: boolean; readonly record: EvaluationJobRecord }> {
+    this.createIfAbsentCalls += 1;
     const key = `${record.idempotency.scope}:${record.idempotency.key}`;
     const existingId = this.byIdempotency.get(key);
     if (existingId) return { created: false, record: this.records.get(existingId)! };
@@ -118,7 +120,7 @@ function createHarness() {
 }
 
 test('create is async, snapshots the request, and emits one idempotent outbox event', async () => {
-  const { service, dispatch } = createHarness();
+  const { service, store, dispatch } = createHarness();
   const first = await service.createJob(input());
 
   assert.equal(first.created, true);
@@ -131,6 +133,7 @@ test('create is async, snapshots the request, and emits one idempotent outbox ev
   const second = await service.createJob(input());
   assert.equal(second.created, false);
   assert.equal(second.job.id, first.job.id);
+  assert.equal(store.createIfAbsentCalls, 2, 'idempotent replay must pass through the atomic store seam');
   assert.equal(dispatch.events.length, 1);
 });
 

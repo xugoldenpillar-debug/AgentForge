@@ -67,8 +67,8 @@
 在提交前补齐以下边界：
 
 - Drizzle repository 根据真实表 schema 的 `dataType` 自动转换所有 date/timestamp 字段，覆盖封存、审核、撤回和选票签发时间；无效时间会在数据库边界明确失败。
-- Evaluation Job 创建、CreationRun 外键关联、幂等记录和可消费 Outbox 事件保持在同一可串行化事务中；Worker 不会观察到未关联的可消费任务。创作状态读取增加孤立 Run 的宽限期恢复：可唯一匹配 durable job 时修复关联，否则只将过期孤立记录标记为失败，不重放 Provider 请求。
-- 盲选领取会枚举不同作者的未投作品组合，排除自作品和已投组合；过期票先用状态 CAS 封存，再创建新的 generation，投票写入同样使用 `open` 状态 CAS。
+- Evaluation Job 创建、CreationRun 外键关联、幂等记录和可消费 Outbox 事件保持在同一可串行化事务中；幂等重入同样经过原子 store seam。Worker 对旧版本遗留的 null 反向关联仅做 owner + run + null CAS 修复，对冲突的非空关联继续拒绝。创作状态读取增加孤立 Run 的宽限期恢复：可唯一匹配 durable job 时修复关联，否则只将过期孤立记录标记为失败，不重放 Provider 请求。
+- 盲选领取会枚举不同作者的未投作品组合，排除自作品和已投组合；过期票先用状态 CAS 封存，再创建新的 generation，投票写入同样使用 `open` 状态 CAS；并发唯一冲突会收敛为幂等结果或稳定的 `CONCURRENT_SAVE`，不向用户暴露数据库错误。
 - SVG 清洗器同时覆盖 camel-case 与兼容小写的 `animateMotion` / `animateTransform` 标签，并保留声明式动画所需属性；脚本、事件处理器、外链和危险 CSS 仍被拒绝。
 - 创作页面将上游结果未知显示为“结果待确认”，禁止把它误显示为运行中或自动重放；Provider 表单在提交前校验 HTTPS URL、字段长度和必填项，但 API Key 仍按不透明字符串透传，公网地址校验继续由服务端安全边界执行。
 

@@ -51,9 +51,25 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       return failure('UNSUPPORTED_EVALUATION_PURPOSE');
     }
     const runId = String(context.job.association.creationRunId);
-    const run = (await this.#options.repository.read('creationRuns', { id: runId, ownerId: String(context.job.userId) }))[0];
+    const ownerId = String(context.job.userId);
+    const jobId = String(context.job.id);
+    let run = (await this.#options.repository.read('creationRuns', { id: runId, ownerId }))[0];
     if (!run) return failure('CREATION_RUN_NOT_FOUND');
-    if (run.evaluationJobId !== String(context.job.id)) return failure('CREATION_JOB_ASSOCIATION_MISMATCH');
+    if (!run.evaluationJobId) {
+      // Older releases could publish the durable job before writing the reverse
+      // CreationRun association. The job itself already carries the immutable
+      // run id and owner, so claim only a still-null link before doing any
+      // provider work. A conflicting non-null link remains a hard failure.
+      const repaired = await this.#options.repository.update(
+        'creationRuns',
+        { id: runId, ownerId, evaluationJobId: null },
+        { evaluationJobId: jobId, updatedAt: this.#now() },
+      );
+      run = repaired[0]
+        ?? (await this.#options.repository.read('creationRuns', { id: runId, ownerId }))[0]
+        ?? run;
+    }
+    if (run.evaluationJobId !== jobId) return failure('CREATION_JOB_ASSOCIATION_MISMATCH');
     if (context.job.snapshot.snapshotDigest !== context.message.payload.snapshotDigest) return failure('EVALUATION_SNAPSHOT_DIGEST_MISMATCH');
 
     const buildVersion = (await this.#options.repository.read('buildVersions', { id: run.buildVersionId, buildId: run.buildId }))[0];
