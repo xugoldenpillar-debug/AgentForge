@@ -81,7 +81,15 @@ jobs:
       - name: Provider SDK integration
         run: pnpm test:provider-sdk
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm typecheck 2>&1 | tee "$RUNNER_TEMP/typecheck.log"
+      - name: Upload typecheck log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconciliation-typecheck-log
+          path: ${{ runner.temp }}/typecheck.log
+          retention-days: 1
+          if-no-files-found: ignore
       - name: Production build
         run: pnpm build
       - name: Smoke both runtime modes
