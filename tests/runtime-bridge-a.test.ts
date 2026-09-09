@@ -169,43 +169,79 @@ test('Bridge A handles BOM/comments/fields and stops at framed DONE without wait
   assert.equal(response.body?.locked, false);
 });
 
-for (const reason of ['caller', 'timeout'] as const) {
-  test(`Bridge A ${reason} interrupts pending reads and releases the response`, async (t) => {
-    const controller = new AbortController();
-    if (reason === 'timeout') {
-      t.mock.method(AbortSignal, 'timeout', (ms: number) => {
-        assert.equal(ms, 30_000);
-        return controller.signal;
-      });
-    }
-    let cancelled = 0;
-    const response = new Response(new ReadableStream({
-      start(stream) {
-        stream.enqueue(new TextEncoder().encode(usageFrame));
-      },
-      pull() {
-        queueMicrotask(() => controller.abort(new Error('private timeout detail')));
-      },
-      cancel() { cancelled += 1; }
-    }));
-    const stream = createBridgeAStreamFn({
-      apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
-      providerFetch: async () => response
-    });
-    const result = stream({}, offlineContext, reason === 'caller' ? { signal: controller.signal } : undefined);
-    if (reason === 'timeout') {
-      await assert.rejects(async () => result, (error: unknown) => error instanceof AppError
-        && error.code === ERROR_CODES.PROVIDER_REQUEST_FAILED
-        && !error.message.includes('private timeout detail'));
-    } else {
-      const chunks = [];
-      for await (const chunk of await result) chunks.push(chunk);
-      assert.deepEqual(chunks, [{ type: 'aborted' }]);
-    }
-    assert.equal(cancelled, 1);
-    assert.equal(response.body?.locked, false);
+test('Bridge A caller cancellation interrupts pending reads and releases the response', async () => {
+  const controller = new AbortController();
+  let cancelled = 0;
+  const response = new Response(new ReadableStream({
+    start(stream) {
+      stream.enqueue(new TextEncoder().encode(usageFrame));
+    },
+    pull() {
+      queueMicrotask(() => controller.abort(new Error('private caller detail')));
+    },
+    cancel() { cancelled += 1; }
+  }));
+  const stream = createBridgeAStreamFn({
+    apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+    providerFetch: async () => response
   });
-}
+  const chunks = [];
+  for await (const chunk of await stream({}, offlineContext, { signal: controller.signal })) chunks.push(chunk);
+  assert.deepEqual(chunks, [{ type: 'aborted' }]);
+  assert.equal(cancelled, 1);
+  assert.equal(response.body?.locked, false);
+});
+
+test('Bridge A idle timeout interrupts a stalled stream and sanitizes the failure', async () => {
+  let cancelled = 0;
+  const response = new Response(new ReadableStream({
+    start(stream) {
+      stream.enqueue(new TextEncoder().encode(usageFrame));
+    },
+    cancel() { cancelled += 1; }
+  }));
+  const stream = createBridgeAStreamFn({
+    apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+    streamIdleTimeoutMs: 20,
+    streamAbsoluteTimeoutMs: 1_000,
+    providerFetch: async () => response
+  });
+  await assert.rejects(async () => stream({}, offlineContext), (error: unknown) => error instanceof AppError
+    && error.code === ERROR_CODES.PROVIDER_REQUEST_FAILED
+    && !error.message.includes('timeout'));
+  assert.equal(cancelled, 1);
+  assert.equal(response.body?.locked, false);
+});
+
+test('Bridge A stream progress resets idle timeout beyond the total idle window', async () => {
+  const encoder = new TextEncoder();
+  const response = new Response(new ReadableStream({
+    start(controller) {
+      setTimeout(() => controller.enqueue(encoder.encode(
+        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n'
+      )), 10);
+      setTimeout(() => controller.enqueue(encoder.encode(
+        'data: {"choices":[{"delta":{"content":"lo."}}]}\n\n'
+      )), 30);
+      setTimeout(() => {
+        controller.enqueue(encoder.encode(usageFrame + 'data: [DONE]\n\n'));
+        controller.close();
+      }, 50);
+    }
+  }));
+  const stream = createBridgeAStreamFn({
+    apiKey: key, baseUrl: 'https://api.deepseek.com', modelId: model, maxTokens: 16,
+    streamIdleTimeoutMs: 30,
+    streamAbsoluteTimeoutMs: 1_000,
+    providerFetch: async () => response
+  });
+  const chunks = [];
+  for await (const chunk of await stream({}, offlineContext)) chunks.push(chunk);
+  assert.deepEqual(chunks, [
+    { type: 'text_delta', text: 'Hello.' },
+    { type: 'usage', inputTokens: 1, outputTokens: 2 }
+  ]);
+});
 
 test('Bridge A cancels HTTP error bodies and sanitizes body-read errors', async () => {
   let cancelled = 0;

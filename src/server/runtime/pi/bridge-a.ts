@@ -20,10 +20,14 @@ export type BridgeAConfig = {
   temperature?: number;
   providerFetch?: typeof fetch;
   onWire?: (wire: BridgeAWire) => void;
+  streamIdleTimeoutMs?: number;
+  streamAbsoluteTimeoutMs?: number;
 };
 
 const UNAVAILABLE = 'This runtime is not available in the current environment.';
 const FLASH_MAX_TOKENS = 128;
+const STREAM_IDLE_TIMEOUT_MS = 60_000;
+const STREAM_ABSOLUTE_TIMEOUT_MS = 10 * 60_000;
 
 function officialBaseUrl(raw: string): string {
   let url: URL;
@@ -47,6 +51,52 @@ function officialBaseUrl(raw: string): string {
     ERROR_CODES.PROVIDER_CONFIGURATION_INVALID
   );
   return 'https://api.deepseek.com';
+}
+
+type StreamWatchdog = {
+  signal: AbortSignal;
+  markChunk: () => void;
+  dispose: () => void;
+};
+
+function createStreamWatchdog(
+  externalSignal?: AbortSignal,
+  idleTimeoutMs = STREAM_IDLE_TIMEOUT_MS,
+  absoluteTimeoutMs = STREAM_ABSOLUTE_TIMEOUT_MS,
+): StreamWatchdog {
+  const controller = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let absoluteTimer: ReturnType<typeof setTimeout> | undefined;
+  let disposed = false;
+
+  const abort = (): void => {
+    if (!controller.signal.aborted) controller.abort();
+  };
+  const markChunk = (): void => {
+    if (disposed || controller.signal.aborted) return;
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+    idleTimer = setTimeout(abort, idleTimeoutMs);
+  };
+  const onExternalAbort = (): void => { abort(); };
+
+  if (externalSignal?.aborted) abort();
+  else externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+  if (!controller.signal.aborted) {
+    absoluteTimer = setTimeout(abort, absoluteTimeoutMs);
+    markChunk();
+  }
+
+  return {
+    signal: controller.signal,
+    markChunk,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      if (idleTimer !== undefined) clearTimeout(idleTimer);
+      if (absoluteTimer !== undefined) clearTimeout(absoluteTimer);
+      externalSignal?.removeEventListener('abort', onExternalAbort);
+    }
+  };
 }
 
 function textFromContent(content: unknown): string {
@@ -91,7 +141,8 @@ function openaiMessages(context: unknown): Array<Record<string, unknown>> {
 
 async function readSseText(
   response: Response,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  onChunk?: () => void
 ): Promise<{ text: string; usage?: { inputTokens: number; outputTokens: number; reasoningTokens: number } }> {
   ensure(response.body !== null, 'Official provider returned invalid token usage.', 502, ERROR_CODES.PROVIDER_RESPONSE_INVALID);
   const reader = response.body.getReader();
@@ -119,6 +170,7 @@ async function readSseText(
         finished = true;
         break;
       }
+      onChunk?.();
       // SSE dispatches at a blank line, not EOF or each individual data line.
       for (const character of decoder.decode(value, { stream: true })) {
         if (afterCr && character === '\n') {
@@ -227,8 +279,12 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
       toolCount: 0
     });
 
-    const timeout = AbortSignal.timeout(30_000);
-    const signal = options?.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const watchdog = createStreamWatchdog(
+      options?.signal,
+      config.streamIdleTimeoutMs,
+      config.streamAbsoluteTimeoutMs,
+    );
+    const signal = watchdog.signal;
     try {
       const response = await providerFetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
@@ -250,7 +306,7 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
         );
       }
 
-      const streamed = await readSseText(response, signal);
+      const streamed = await readSseText(response, signal, watchdog.markChunk);
       signal.throwIfAborted();
       const usage = streamed.usage;
       ensure(
@@ -284,6 +340,8 @@ export function createBridgeAStreamFn(config?: BridgeAConfig): ControlledStreamF
         502,
         ERROR_CODES.PROVIDER_REQUEST_FAILED
       );
+    } finally {
+      watchdog.dispose();
     }
   };
 }

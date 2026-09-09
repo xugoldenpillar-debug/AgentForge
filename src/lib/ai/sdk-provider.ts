@@ -10,7 +10,7 @@ import {
   NoOutputGeneratedError,
   RetryError,
   TypeValidationError,
-  generateText,
+  streamText,
   stepCountIs,
   type LanguageModel,
 } from 'ai';
@@ -24,22 +24,66 @@ import { AppError, ensure, ERROR_CODES } from '../../shared/errors.ts';
 import { safeProviderFetch } from './safe-fetch.ts';
 import { sdkTools } from './sdk-tools.ts';
 
+export interface ProviderRequestTiming {
+  idleTimeoutMs: number;
+  absoluteTimeoutMs: number;
+}
+
+const DEFAULT_PROVIDER_REQUEST_TIMING: ProviderRequestTiming = {
+  idleTimeoutMs: 60_000,
+  absoluteTimeoutMs: 10 * 60_000,
+};
+
+function createStreamWatchdog(
+  externalSignal: AbortSignal | undefined,
+  timing: ProviderRequestTiming,
+): { signal: AbortSignal; noteProgress: () => void; dispose: () => void } {
+  const idleController = new AbortController();
+  const absoluteController = new AbortController();
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const absoluteTimer = setTimeout(() => {
+    absoluteController.abort(new Error('Provider stream exceeded the absolute time limit.'));
+  }, timing.absoluteTimeoutMs);
+
+  const noteProgress = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleController.abort(new Error('Provider stream stopped making progress.'));
+    }, timing.idleTimeoutMs);
+  };
+  noteProgress();
+
+  const signals = [idleController.signal, absoluteController.signal];
+  if (externalSignal) signals.push(externalSignal);
+  return {
+    signal: AbortSignal.any(signals),
+    noteProgress,
+    dispose: () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(absoluteTimer);
+    },
+  };
+}
+
 class SDKProvider implements AIProvider {
   id: string;
   pricing: Pricing;
   private model: (id: string) => LanguageModel;
   private secret: string;
+  private timing: ProviderRequestTiming;
 
   constructor(
     id: string,
     model: (id: string) => LanguageModel,
     pricing: Pricing,
     secret: string,
+    timing: ProviderRequestTiming = DEFAULT_PROVIDER_REQUEST_TIMING,
   ) {
     this.id = id;
     this.model = model;
     this.pricing = pricing;
     this.secret = secret;
+    this.timing = timing;
   }
 
   async execute(r: AIRequest): Promise<AIResult> {
@@ -50,40 +94,60 @@ class SDKProvider implements AIProvider {
         ensure(calls < r.remainingToolCalls, 'Tool-call budget exceeded.', 400, ERROR_CODES.BUDGET_EXCEEDED);
         calls++;
       });
-      const result = await generateText({
-        model: this.model(r.model),
-        system: r.systemPrompt,
-        prompt: r.userPrompt,
-        tools,
-        maxOutputTokens: r.maxTokens,
-        temperature: r.temperature,
-        maxRetries: 0,
-        stopWhen: stepCountIs(Math.min(6, r.remainingToolCalls + 1)),
-        abortSignal: AbortSignal.any([AbortSignal.timeout(30000), ...(r.signal ? [r.signal] : [])]),
-        experimental_telemetry: { isEnabled: false },
-        prepareStep: async ({ steps, messages }) => {
-          const used = steps.reduce((n, s) => n + (s.usage.inputTokens || 0) + (s.usage.outputTokens || 0), 0);
-          const inputUpper = Buffer.byteLength(JSON.stringify(messages) + r.systemPrompt, 'utf8') + (r.tools.length ? 1200 : 0);
-          const maxOutputTokens = Math.min(r.maxTokens, r.remainingTokens - used - inputUpper);
-          ensure(maxOutputTokens >= 16, 'Energy budget exceeded between model steps.', 400, ERROR_CODES.BUDGET_EXCEEDED);
-          const spent = steps.reduce((n, s) => n + (calculateCost(s.usage.inputTokens || 0, s.usage.outputTokens || 0, this.pricing) || 0), 0);
-          const reserve = calculateCost(inputUpper, maxOutputTokens, this.pricing);
-          ensure(reserve === null || reserve + spent <= r.remainingCost, 'Cost budget exceeded between model steps.', 400, ERROR_CODES.BUDGET_EXCEEDED);
-          return { maxOutputTokens, ...(calls >= r.remainingToolCalls ? { activeTools: [] } : {}) };
-        },
-      });
-      const usage = result.totalUsage as unknown as {
+      const watchdog = createStreamWatchdog(r.signal, this.timing);
+      let result: ReturnType<typeof streamText>;
+      let rawText: string;
+      let usage: {
         inputTokens?: number;
         outputTokens?: number;
         reasoningTokens?: number;
         outputTokenDetails?: { reasoningTokens?: number };
       };
+      try {
+        result = streamText({
+          model: this.model(r.model),
+          system: r.systemPrompt,
+          prompt: r.userPrompt,
+          tools,
+          maxOutputTokens: r.maxTokens,
+          temperature: r.temperature,
+          maxRetries: 0,
+          stopWhen: stepCountIs(Math.min(6, r.remainingToolCalls + 1)),
+          abortSignal: watchdog.signal,
+          experimental_telemetry: { isEnabled: false },
+          // The full stream below surfaces errors without the SDK's default console logging.
+          onError: () => {},
+          prepareStep: async ({ steps, messages }) => {
+            const used = steps.reduce((n, s) => n + (s.usage.inputTokens || 0) + (s.usage.outputTokens || 0), 0);
+            const inputUpper = Buffer.byteLength(JSON.stringify(messages) + r.systemPrompt, 'utf8') + (r.tools.length ? 1200 : 0);
+            const maxOutputTokens = Math.min(r.maxTokens, r.remainingTokens - used - inputUpper);
+            ensure(maxOutputTokens >= 16, 'Energy budget exceeded between model steps.', 400, ERROR_CODES.BUDGET_EXCEEDED);
+            const spent = steps.reduce((n, s) => n + (calculateCost(s.usage.inputTokens || 0, s.usage.outputTokens || 0, this.pricing) || 0), 0);
+            const reserve = calculateCost(inputUpper, maxOutputTokens, this.pricing);
+            ensure(reserve === null || reserve + spent <= r.remainingCost, 'Cost budget exceeded between model steps.', 400, ERROR_CODES.BUDGET_EXCEEDED);
+            return { maxOutputTokens, ...(calls >= r.remainingToolCalls ? { activeTools: [] } : {}) };
+          },
+        });
+        for await (const part of result.fullStream) {
+          watchdog.noteProgress();
+          if (part.type === 'error') throw part.error;
+        }
+        [rawText, usage] = await Promise.all([
+          result.text,
+          result.totalUsage as PromiseLike<typeof usage>,
+        ]);
+      } catch (error) {
+        if (watchdog.signal.aborted) throw new ProviderResultUnknownError();
+        throw error;
+      } finally {
+        watchdog.dispose();
+      }
       const estimated = usage.inputTokens === undefined || usage.outputTokens === undefined;
       const inputTokens = usage.inputTokens ?? Math.ceil((r.systemPrompt.length + r.userPrompt.length) / 4);
-      const outputTokens = usage.outputTokens ?? Math.ceil(result.text.length / 4);
+      const outputTokens = usage.outputTokens ?? Math.ceil(rawText.length / 4);
       const reportedReasoning = usage.outputTokenDetails?.reasoningTokens ?? usage.reasoningTokens ?? 0;
       const reasoningTokens = Math.min(outputTokens, reportedReasoning);
-      const text = this.secret ? result.text.replaceAll(this.secret, '[credential redacted]') : result.text;
+      const text = this.secret ? rawText.replaceAll(this.secret, '[credential redacted]') : rawText;
       return {
         text, inputTokens, outputTokens, reasoningTokens, toolCalls: calls,
         latency: performance.now() - start,
@@ -163,14 +227,18 @@ function isKnownResponseError(error: unknown): boolean {
     || TypeValidationError.isInstance(error);
 }
 
-export function byokProvider(credential: Credential, key: string): AIProvider {
+export function byokProvider(
+  credential: Credential,
+  key: string,
+  timing: ProviderRequestTiming = DEFAULT_PROVIDER_REQUEST_TIMING,
+): AIProvider {
   const protocol = parseProviderProtocol(credential.protocol);
   const baseURL = credential.baseUrl;
   const settings = { baseURL, apiKey: key, fetch: safeProviderFetch(baseURL) };
   let model: (id: string) => LanguageModel;
   switch (protocol) {
     case 'openai-chat': {
-      const provider = createOpenAICompatible({ name: 'byok', ...settings });
+      const provider = createOpenAICompatible({ name: 'byok', ...settings, includeUsage: true });
       model = id => provider(id);
       break;
     }
@@ -192,7 +260,7 @@ export function byokProvider(credential: Credential, key: string): AIProvider {
   }
   return new SDKProvider(
     credential.id, model,
-    { inputPrice: credential.inputPrice, outputPrice: credential.outputPrice }, key,
+    { inputPrice: credential.inputPrice, outputPrice: credential.outputPrice }, key, timing,
   );
 }
 

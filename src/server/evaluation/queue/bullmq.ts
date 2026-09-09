@@ -242,7 +242,8 @@ export class BullMqEvaluationQueue implements EvaluationQueuePort {
         autorun: false,
         concurrency: 1,
         maxStalledCount: 1,
-        lockDuration: 120_000,
+        // Provider streams may legitimately run for up to ten minutes before artifact finalization.
+        lockDuration: 15 * 60_000,
         skipStalledCheck: true,
       },
     );
