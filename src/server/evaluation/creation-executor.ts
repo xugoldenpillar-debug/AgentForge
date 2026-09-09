@@ -37,6 +37,58 @@ function isCancelled(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (error instanceof AppError && error.code === ERROR_CODES.RUN_CANCELLED);
 }
 
+type CreationExecutionStage =
+  | 'state-update'
+  | 'pi-load'
+  | 'sandbox-start'
+  | 'sandbox-mount'
+  | 'pi-run'
+  | 'artifact-stop'
+  | 'artifact-snapshot'
+  | 'artifact-collect'
+  | 'artifact-seal';
+
+class CreationExecutionAuthorizationLostError extends AppError {
+  constructor() {
+    super('Creation execution lease is no longer authorized.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    this.name = 'CreationExecutionAuthorizationLostError';
+  }
+}
+
+function creationFailureCode(error: unknown, stage: CreationExecutionStage): string {
+  if (error instanceof CreationExecutionAuthorizationLostError) {
+    return 'CREATION_EXECUTION_AUTHORIZATION_LOST';
+  }
+  if (error instanceof AppError) {
+    const artifactInputFailure = error.code === ERROR_CODES.RUNTIME_POLICY_DENIED
+      || error.code === ERROR_CODES.REQUEST_VALIDATION_FAILED
+      || error.code === ERROR_CODES.REQUEST_BODY_TOO_LARGE
+      || error.code === ERROR_CODES.RESOURCE_NOT_FOUND;
+    if (stage === 'pi-run' && artifactInputFailure) return 'CREATION_ARTIFACT_POLICY_DENIED';
+    if ((stage === 'artifact-stop' || stage === 'artifact-snapshot' || stage === 'artifact-collect')
+      && artifactInputFailure) {
+      return 'CREATION_ARTIFACT_COLLECTION_FAILED';
+    }
+    if (stage === 'artifact-seal' && artifactInputFailure) return 'CREATION_ARTIFACT_SEAL_FAILED';
+    if (error.code === ERROR_CODES.RUNTIME_UNAVAILABLE) {
+      if (stage === 'sandbox-start' || stage === 'sandbox-mount') return 'CREATION_SANDBOX_START_FAILED';
+      if (stage === 'artifact-stop' || stage === 'artifact-snapshot' || stage === 'artifact-collect') {
+        return 'CREATION_ARTIFACT_COLLECTION_FAILED';
+      }
+      if (stage === 'artifact-seal') return 'CREATION_ARTIFACT_SEAL_FAILED';
+      return 'CREATION_PI_RUNTIME_FAILED';
+    }
+    if (error.code) return error.code;
+  }
+  if (stage === 'pi-load' || stage === 'pi-run') return 'CREATION_PI_RUNTIME_FAILED';
+  if (stage === 'sandbox-start' || stage === 'sandbox-mount') return 'CREATION_SANDBOX_START_FAILED';
+  if (stage === 'artifact-stop' || stage === 'artifact-snapshot' || stage === 'artifact-collect') {
+    return 'CREATION_ARTIFACT_COLLECTION_FAILED';
+  }
+  if (stage === 'artifact-seal') return 'CREATION_ARTIFACT_SEAL_FAILED';
+  return 'CREATION_EXECUTION_FAILED';
+}
+
 export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
   readonly #options: CreationEvaluationExecutorOptions;
   readonly #now: () => string;
@@ -128,6 +180,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     let timer: NodeJS.Timeout | undefined;
     let sealedBundleId: string | undefined;
     let outcome: EvaluationExecutionOutcome;
+    let stage: CreationExecutionStage = 'state-update';
     const assertAuthorized = async (): Promise<void> => {
       const job = await this.#options.repository.read('evaluationJobs', { id: String(context.job.id), userId: String(context.job.userId) });
       const state = job[0]?.state;
@@ -135,7 +188,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         abort.abort();
         throw new AppError('Run cancelled.', 499, ERROR_CODES.RUN_CANCELLED);
       }
-      ensure(state === 'running', 'Creation execution lease is no longer authorized.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+      if (state !== 'running') throw new CreationExecutionAuthorizationLostError();
     };
     let invocationIndex = 0;
     const recordingProvider = new InvocationRecordingProvider(
@@ -149,7 +202,9 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     try {
       await this.#markRun(run.id, run.ownerId, 'running', this.#now());
       timer = setInterval(() => { void assertAuthorized().catch(() => abort.abort()); }, this.#options.pollCancellationMs ?? 500);
+      stage = 'pi-load';
       const module = await loadPiCoreModule({ env: { ...process.env, PI_RUNTIME_ENABLED: 'true' } });
+      stage = 'sandbox-start';
       sandboxHandle = await this.#options.sandbox.create({
         environmentId: CREATION_ENVIRONMENT_TEMPLATE.versionId,
         environmentDigest: CREATION_ENVIRONMENT_DIGEST,
@@ -170,7 +225,9 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         attemptId: String(context.attempt.id),
         fenceToken: fenceToken(context.executionToken),
       });
+      stage = 'sandbox-mount';
       await this.#options.sandbox.mountApprovedInputs(sandboxHandle, []);
+      stage = 'pi-run';
       const result = await runCreationWithPi({
         createAgent: (options) => new module.Agent(options),
         provider: recordingProvider,
@@ -183,8 +240,11 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         assertAuthorized,
       });
       await assertAuthorized();
+      stage = 'artifact-stop';
       await this.#options.sandbox.stopAll(sandboxHandle);
+      stage = 'artifact-snapshot';
       const snapshot = await this.#options.sandbox.snapshot(sandboxHandle);
+      stage = 'artifact-collect';
       const collection = await collectArtifacts({
         snapshot,
         readFile: (relativePath, limit) => this.#options.sandbox.readSnapshotFile(sandboxHandle!, snapshot, relativePath, limit),
@@ -205,6 +265,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         { slotId: 'scene', relativePath: 'scene.svg', mediaTypes: ['image/svg+xml'], classification: 'public-feedback', required: false, maxBytes: 4 * 1024 * 1024 },
         { slotId: 'style', relativePath: 'style.css', mediaTypes: ['text/css'], classification: 'public-feedback', required: false, maxBytes: 512 * 1024 },
       ]);
+      stage = 'artifact-seal';
       const sealed = await sealArtifactBundle({
         ownerId: run.ownerId,
         creationRunId: run.id,
@@ -237,8 +298,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       } else if (error instanceof UnknownProviderResultError) {
         outcome = { kind: 'unknown', code: error.code };
       } else {
-        const code = error instanceof AppError ? error.code : 'CREATION_EXECUTION_FAILED';
-        outcome = failure(typeof code === 'string' ? code : 'CREATION_EXECUTION_FAILED', false);
+        outcome = failure(creationFailureCode(error, stage), false);
       }
     } finally {
       if (timer) clearInterval(timer);

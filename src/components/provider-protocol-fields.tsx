@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useLocale } from '@/lib/i18n';
-import { PROVIDER_PROTOCOLS, PROVIDER_PROTOCOL_BASE_URLS, type ProviderProtocol } from '@/shared/provider-protocol';
+import { PROVIDER_FIELD_LIMITS, PROVIDER_PROTOCOLS, PROVIDER_PROTOCOL_BASE_URLS, type ProviderProtocol } from '@/shared/provider-protocol';
 
 export function ProviderProtocolFields() {
   const { t } = useLocale();
@@ -25,7 +25,7 @@ export function ProviderProtocolFields() {
     </div>
     <div className="field">
       <label htmlFor="provider-url" className="label">{t('providers.baseUrl')}</label>
-      <input id="provider-url" name="baseUrl" type="url" required maxLength={300}
+      <input id="provider-url" name="baseUrl" type="url" required maxLength={PROVIDER_FIELD_LIMITS.baseUrl}
         value={baseUrl} onChange={event => setBaseUrl(event.target.value)} className="mono-input" />
       <small>{t('providers.protocolUrlHelp')}</small>
     </div>

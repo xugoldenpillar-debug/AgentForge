@@ -89,6 +89,7 @@
 .runStatus > span { color: #7f8b83; font: 9px var(--mono); text-transform: uppercase; }
 .runStatus strong { font-size: 24px; }
 .runStatus code { color: #ec9a9a; font-size: 10px; }
+.runFailureHelp { max-width: 760px; margin: 8px 0 0; color: #b5c0b8; font-size: 12px; line-height: 1.6; }
 .live { color: #f2c66d; }
 .success { color: #b3ea87; }
 .timeline { margin-top: -8px; padding-top: 12px; border-top: 1px solid var(--arena-line); }

@@ -4,11 +4,15 @@ import test from 'node:test';
 
 const pageUrl = new URL('../src/features/builder/agent-builder-page.tsx', import.meta.url);
 const previewUrl = new URL('../src/components/agent/artifact-preview.tsx', import.meta.url);
+const providerProtocolUrl = new URL('../src/shared/provider-protocol.ts', import.meta.url);
+const providersPageUrl = new URL('../src/components/arena-app.tsx', import.meta.url);
 
 test('Artifact Arena creation UI uses the durable product APIs and contains no fixture preview path', async () => {
-  const [source, previewSource] = await Promise.all([
+  const [source, previewSource, providerProtocolSource, providersPageSource] = await Promise.all([
     readFile(pageUrl, 'utf8'),
     readFile(previewUrl, 'utf8'),
+    readFile(providerProtocolUrl, 'utf8'),
+    readFile(providersPageUrl, 'utf8'),
   ]);
 
   for (const stale of ['FIXTURE_FILES', 'PREVIEW_FILES', 'Design mode only', 'static local preview']) {
@@ -44,7 +48,9 @@ test('Artifact Arena creation UI uses the durable product APIs and contains no f
   assert.match(source, /runStatus\?\.job\?\.state === 'unknown'/);
   assert.match(source, /jobUnknown && <Button[^>]+onClick=\{acknowledgeUnknownRun\}/);
   assert.match(source, /jobUnknown[\s\S]+artifactArena\.status\.unknown/, 'unknown jobs must not render as actively running');
-  assert.match(source, /providerValidation\.baseUrlInvalid/);
+  assert.match(source, /validateProviderFormValues/);
+  assert.match(providerProtocolSource, /providerValidation\.baseUrlInvalid/);
+  assert.match(providersPageSource, /validateProviderFormValues/);
   assert.match(source, /isApiError\(reason\) && reason\.code === 'AUTH_REQUIRED'/);
   assert.match(source, /\/login\?next=\/agent-builder/);
   assert.match(source, /\(run\?\.status === 'queued' \|\| run\?\.status === 'running'\) && !jobUnknown/, 'unknown jobs must stop the active polling state');

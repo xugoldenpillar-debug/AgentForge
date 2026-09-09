@@ -21,6 +21,7 @@ import {
   Vote,
 } from 'lucide-react';
 import { ArtifactPreviewPanel, type ArtifactPreviewFile } from '@/components/agent/artifact-preview';
+import { normalizeProviderBaseUrl, validateProviderFormValues } from '@/shared/provider-protocol';
 import { LanguageSwitcher, localizeError, useToast } from '@/components/common';
 import { Button } from '@/components/ui/button';
 import {
@@ -107,6 +108,27 @@ const RUN_STATUS_KEYS: Record<NonNullable<CreationRunStatusView['run']>['status'
   cancelled: 'artifactArena.status.cancelled',
   incomplete: 'artifactArena.status.incomplete',
 };
+
+const RUN_FAILURE_MESSAGE_KEYS: Readonly<Record<string, MessageKey>> = Object.freeze({
+  CREATION_EXECUTION_AUTHORIZATION_LOST: 'artifactArena.failure.executionAuthorizationLost',
+  CREATION_PI_RUNTIME_FAILED: 'artifactArena.failure.piRuntime',
+  CREATION_SANDBOX_START_FAILED: 'artifactArena.failure.sandboxStart',
+  CREATION_ARTIFACT_POLICY_DENIED: 'artifactArena.failure.artifactPolicy',
+  CREATION_ARTIFACT_COLLECTION_FAILED: 'artifactArena.failure.artifactCollection',
+  CREATION_ARTIFACT_SEAL_FAILED: 'artifactArena.failure.artifactSeal',
+  UPSTREAM_RESULT_UNKNOWN: 'artifactArena.failure.upstreamUnknown',
+  PROVIDER_AUTHENTICATION_FAILED: 'errors.providerAuthenticationFailed',
+  PROVIDER_REQUEST_INVALID: 'errors.providerRequestInvalid',
+  PROVIDER_REQUEST_FAILED: 'errors.providerRequestFailed',
+  PROVIDER_RESPONSE_INVALID: 'errors.providerResponseInvalid',
+  PROVIDER_NETWORK_REJECTED: 'errors.providerNetworkRejected',
+  BUDGET_EXCEEDED: 'errors.budgetExceeded',
+  PROVIDER_AUTHORIZATION_REVOKED: 'errors.providerNotFound',
+  CREATION_SNAPSHOT_INVALID: 'artifactArena.failure.configuration',
+  CREATION_CONFIGURATION_INVALID: 'artifactArena.failure.configuration',
+  CREATION_SNAPSHOT_DEPENDENCY_MISSING: 'artifactArena.failure.configuration',
+  CREATION_JOB_ASSOCIATION_MISMATCH: 'artifactArena.failure.configuration',
+});
 
 const PUBLICATION_STATUS_KEYS: Record<OwnerPublicationView['status'], MessageKey> = {
   pending: 'artifactArena.publication.pending',
@@ -207,6 +229,8 @@ export function AgentBuilderPage() {
   const runRetryable = Boolean(run?.evaluationJobId) && !jobUnknown
     && (run?.status === 'failed' || run?.status === 'cancelled' || run?.status === 'incomplete');
   const runComplete = run?.status === 'completed' && Boolean(run.artifactBundleId);
+  const runFailureCode = runStatus?.job?.failure?.code;
+  const runFailureMessageKey = runFailureCode ? RUN_FAILURE_MESSAGE_KEYS[runFailureCode] : undefined;
   const displayedRunStatusKey = jobUnknown
     ? 'artifactArena.status.unknown' as const
     : run
@@ -366,30 +390,13 @@ export function AgentBuilderPage() {
     event.preventDefault();
     setError('');
     const name = credentialName.trim();
-    const urlText = baseUrl.trim();
+    const urlText = normalizeProviderBaseUrl(protocol, baseUrl);
     const model = modelId.trim();
     const key = apiKey.trim();
-    const invalidMessage = (() => {
-      if (!name) return t('artifactArena.providerValidation.nameRequired');
-      if (name.length > PROVIDER_FIELD_LIMITS.name) return t('artifactArena.providerValidation.nameTooLong');
-      if (!urlText || urlText.length > PROVIDER_FIELD_LIMITS.baseUrl) return t('artifactArena.providerValidation.baseUrlInvalid');
-      try {
-        const parsed = new URL(urlText);
-        if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password || parsed.search || parsed.hash) {
-          return t('artifactArena.providerValidation.baseUrlInvalid');
-        }
-      } catch {
-        return t('artifactArena.providerValidation.baseUrlInvalid');
-      }
-      if (!model) return t('artifactArena.providerValidation.modelRequired');
-      if (model.length > PROVIDER_FIELD_LIMITS.modelId) return t('artifactArena.providerValidation.modelTooLong');
-      if (!key) return t('artifactArena.providerValidation.apiKeyRequired');
-      if (key.length > PROVIDER_FIELD_LIMITS.apiKey) return t('artifactArena.providerValidation.apiKeyTooLong');
-      return '';
-    })();
-    if (invalidMessage) {
-      setError(invalidMessage);
-      toast(invalidMessage, true);
+    const issue = validateProviderFormValues({ name, baseUrl: urlText, modelId: model, apiKey: key }, t);
+    if (issue) {
+      setError(issue.message);
+      toast(issue.message, true);
       return;
     }
     setBusy('credential');
@@ -670,7 +677,10 @@ export function AgentBuilderPage() {
       <section className={styles.stage}>
         <div className={styles.stageHeader}><span>04</span><div><h2>{t('artifactArena.runTitle')}</h2><p>{t('artifactArena.resumeHint')}</p></div></div>
         <div className={styles.runConsole}>
-          <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{t(displayedRunStatusKey)}</strong>{runStatus?.job?.failure && <code>{runStatus.job.failure.code}</code>}</div>
+          <div>
+            <div className={styles.runStatus}><span>{t('artifactArena.status')}</span><strong className={runActive ? styles.live : runComplete ? styles.success : ''}>{t(displayedRunStatusKey)}</strong>{runFailureCode && <code>{runFailureCode}</code>}</div>
+            {runFailureMessageKey && <p className={styles.runFailureHelp}>{t(runFailureMessageKey)}</p>}
+          </div>
           <div className={styles.buttonRow}><Button variant="default" onClick={startRun} disabled={!selected?.challenge.runAvailability.enabled || !build || !credentialId || runActive || jobUnknown || busy === 'run'}>{busy === 'run' ? <LoaderCircle className={styles.spin} size={14} /> : <Play size={14} />}{busy === 'run' ? t('artifactArena.runStarting') : t('artifactArena.startRun')}</Button>{runActive && <Button variant="destructive" onClick={cancelRun} disabled={busy === 'cancel'}>{busy === 'cancel' ? <LoaderCircle className={styles.spin} size={14} /> : <PauseCircle size={14} />}{busy === 'cancel' ? t('artifactArena.cancellingRun') : t('artifactArena.cancelRun')}</Button>}{jobUnknown && <Button variant="outline" onClick={acknowledgeUnknownRun} disabled={busy === 'acknowledge'}>{busy === 'acknowledge' ? <LoaderCircle className={styles.spin} size={14} /> : <AlertTriangle size={14} />}{busy === 'acknowledge' ? t('artifactArena.acknowledgingUnknown') : t('artifactArena.acknowledgeUnknown')}</Button>}{runRetryable && <Button variant="outline" onClick={retryRun} disabled={busy === 'retry'}>{busy === 'retry' ? <LoaderCircle className={styles.spin} size={14} /> : <RefreshCw size={14} />}{busy === 'retry' ? t('artifactArena.retryingRun') : t('artifactArena.retryRun')}</Button>}</div>
           {jobUnknown && <p className={styles.hint}>{t('artifactArena.unknownHelp')}</p>}
         </div>

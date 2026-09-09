@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AppError, ERROR_CODES, ensure } from '../../shared/errors.ts';
-import type { AIProvider, AIResult } from '../../lib/ai/types.ts';
+import { ProviderResultUnknownError, type AIProvider, type AIResult } from '../../lib/ai/types.ts';
 import type { SandboxHandle, SandboxProvider } from '../sandbox/types.ts';
 import type { PiAgentLike, PiAgentOptionsLike, PiAgentToolLike, PiCreateAgent } from '../runtime/pi/package.ts';
 import { PI_PLACEHOLDER_MODEL } from '../runtime/pi/package.ts';
@@ -52,6 +52,14 @@ type ModelAction =
 
 function cancelled(signal: AbortSignal): void {
   if (signal.aborted) throw new AppError('Run cancelled.', 499, ERROR_CODES.RUN_CANCELLED);
+}
+
+function preferredTerminalError(current: unknown, candidate: unknown): unknown {
+  // A provider request with an unknown result must dominate deterministic local
+  // failures. Pi can race one final provider dispatch with a tool-triggered
+  // abort; treating that attempt as retry-safe could charge the user twice.
+  if (candidate instanceof ProviderResultUnknownError) return candidate;
+  return current ?? candidate;
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -242,7 +250,7 @@ ${safeContext(context)}`,
       }
       return chunks();
     } catch (error) {
-      terminalError ??= error;
+      terminalError = preferredTerminalError(terminalError, error);
       throw error;
     }
   };
@@ -250,7 +258,7 @@ ${safeContext(context)}`,
   const tools = createTools(options, () => { toolCalls += 1; }, (path) => {
     if (path === 'index.html') requiredOutputWritten = true;
   }, (error) => {
-    terminalError ??= error;
+    terminalError = preferredTerminalError(terminalError, error);
     agent?.abort();
   });
   const agentOptions: PiAgentOptionsLike = {

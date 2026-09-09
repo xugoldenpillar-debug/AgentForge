@@ -56,10 +56,12 @@ class TrackingSandbox extends InMemorySandboxProvider {
   createCalls = 0;
   disposeCalls = 0;
   failDispose = false;
+  failCreate = false;
   beforeDispose?: () => Promise<void>;
 
   override async create(...args: Parameters<InMemorySandboxProvider['create']>): Promise<SandboxHandle> {
     this.createCalls += 1;
+    if (this.failCreate) throw new Error('sandbox startup failed');
     return super.create(...args);
   }
 
@@ -72,10 +74,12 @@ class TrackingSandbox extends InMemorySandboxProvider {
 }
 
 class MemoryArtifactWriter implements ArtifactStorageWriter {
+  failWrite = false;
   readonly writes: ArtifactStorageWriteRequest[] = [];
   readonly removals: Array<Pick<ArtifactStorageWriteRequest, 'storageKey' | 'objectVersion'>> = [];
 
   async write(request: ArtifactStorageWriteRequest): Promise<ArtifactStorageWriteResult> {
+    if (this.failWrite) throw new Error('object storage unavailable');
     this.writes.push({ ...request, bytes: new Uint8Array(request.bytes) });
     return { storageKey: request.storageKey, objectVersion: request.objectVersion };
   }
@@ -118,6 +122,8 @@ interface FixtureOptions {
   readonly jobState?: EvaluationJobRow['state'];
   readonly replies?: readonly (string | Error)[];
   readonly disposeFailure?: boolean;
+  readonly createFailure?: boolean;
+  readonly storageFailure?: boolean;
   readonly runEvaluationJobId?: string | null;
 }
 
@@ -126,7 +132,9 @@ async function fixture(options: FixtureOptions = {}) {
   const evaluationRepository = new EvaluationRepositoryAdapter(repository, () => NOW);
   const sandbox = new TrackingSandbox();
   sandbox.failDispose = options.disposeFailure ?? false;
+  sandbox.failCreate = options.createFailure ?? false;
   const storage = new MemoryArtifactWriter();
+  storage.failWrite = options.storageFailure ?? false;
   const encryptionKey = randomBytes(32).toString('base64');
   const provider = new ScriptedProvider(options.replies ?? [
     '<!doctype html><html><body><svg><animate attributeName="opacity" values="0;1" dur="1s" repeatCount="indefinite"/></svg></body></html>',
@@ -437,6 +445,30 @@ test('Known provider failures fail the invocation and run instead of occupying t
   assert.equal(usage?.certainty, 'known');
   assert.equal(usage?.chargeability, 'uncertain');
   assert.equal(f.sandbox.disposeCalls, 1);
+});
+
+test('Creation executor reports stable sandbox, collection, and seal failure stages', async () => {
+  const startup = await fixture({ createFailure: true });
+  assert.deepEqual(await startup.executor.execute(startup.execution), {
+    kind: 'failed',
+    failure: { code: 'CREATION_SANDBOX_START_FAILED', retryable: false },
+  });
+  assert.equal(startup.sandbox.disposeCalls, 0);
+  assert.equal(startup.provider.requests.length, 0);
+
+  const collection = await fixture({ replies: ['{"final":"no artifact written"}'] });
+  assert.deepEqual(await collection.executor.execute(collection.execution), {
+    kind: 'failed',
+    failure: { code: 'CREATION_ARTIFACT_COLLECTION_FAILED', retryable: false },
+  });
+  assert.equal(collection.sandbox.disposeCalls, 1);
+
+  const seal = await fixture({ storageFailure: true });
+  assert.deepEqual(await seal.executor.execute(seal.execution), {
+    kind: 'failed',
+    failure: { code: 'CREATION_ARTIFACT_SEAL_FAILED', retryable: false },
+  });
+  assert.equal(seal.sandbox.disposeCalls, 1);
 });
 
 test('Creation executor disposes the sandbox after output failure and cancellation', async () => {

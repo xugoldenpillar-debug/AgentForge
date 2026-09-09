@@ -107,7 +107,26 @@ function classifyProviderError(error: unknown): never {
       ERROR_CODES.PROVIDER_RESPONSE_INVALID,
     );
   }
-  if (errors.some(isKnownHttpFailure)) {
+
+  const statuses = errors.flatMap((candidate) => {
+    const status = providerHttpStatus(candidate);
+    return status === null ? [] : [status];
+  });
+  if (statuses.some((status) => status === 401 || status === 403)) {
+    throw new AppError(
+      'The provider rejected the configured credential.',
+      502,
+      ERROR_CODES.PROVIDER_AUTHENTICATION_FAILED,
+    );
+  }
+  if (statuses.some(isProviderRequestInvalidStatus)) {
+    throw new AppError(
+      'The provider rejected the request shape, endpoint, or model.',
+      502,
+      ERROR_CODES.PROVIDER_REQUEST_INVALID,
+    );
+  }
+  if (statuses.length > 0) {
     throw new AppError(
       'The provider request failed.',
       502,
@@ -117,10 +136,19 @@ function classifyProviderError(error: unknown): never {
   throw new ProviderResultUnknownError();
 }
 
-function isKnownHttpFailure(error: unknown): boolean {
-  return APICallError.isInstance(error)
-    && Number.isInteger(error.statusCode)
-    && (error.statusCode! < 200 || error.statusCode! >= 300);
+function providerHttpStatus(error: unknown): number | null {
+  if (!APICallError.isInstance(error) || !Number.isInteger(error.statusCode)) return null;
+  const status = error.statusCode!;
+  return status < 200 || status >= 300 ? status : null;
+}
+
+function isProviderRequestInvalidStatus(status: number): boolean {
+  return status === 400
+    || status === 404
+    || status === 405
+    || status === 409
+    || status === 415
+    || status === 422;
 }
 
 function isKnownResponseError(error: unknown): boolean {

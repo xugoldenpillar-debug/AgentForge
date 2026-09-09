@@ -24,6 +24,8 @@ export const ERROR_MESSAGE_KEYS: Record<ErrorCode, MessageKey> = {
   [ERROR_CODES.PROVIDER_NOT_CONFIGURED]: 'errors.providerNotConfigured',
   [ERROR_CODES.PROVIDER_NOT_FOUND]: 'errors.providerNotFound',
   [ERROR_CODES.PROVIDER_NETWORK_REJECTED]: 'errors.providerNetworkRejected',
+  [ERROR_CODES.PROVIDER_AUTHENTICATION_FAILED]: 'errors.providerAuthenticationFailed',
+  [ERROR_CODES.PROVIDER_REQUEST_INVALID]: 'errors.providerRequestInvalid',
   [ERROR_CODES.PROVIDER_REQUEST_FAILED]: 'errors.providerRequestFailed',
   [ERROR_CODES.PROVIDER_RESPONSE_INVALID]: 'errors.providerResponseInvalid',
   [ERROR_CODES.PROVIDER_CONSENT_REQUIRED]: 'errors.providerConsent',

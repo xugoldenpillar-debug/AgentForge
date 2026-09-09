@@ -12,7 +12,7 @@ import { ProviderProtocolFields, ProviderProtocolBadge } from './provider-protoc
 import { BuilderPage } from '@/features/builder/builder-page';
 import { useLocale } from '@/lib/i18n';
 import { localizeSystemContent, systemLabel } from '@/shared/i18n/system-content';
-import { PROVIDER_FIELD_LIMITS } from '@/shared/provider-protocol';
+import { normalizeProviderBaseUrl, PROVIDER_FIELD_LIMITS, parseProviderProtocol, validateProviderFormValues } from '@/shared/provider-protocol';
 import type { CatalogDetail, CatalogExample, CatalogParameter } from '@/shared/catalog-details';
 const WorkflowPreview=dynamic(()=>import('@/features/builder/canvas').then(m=>m.WorkflowPreview),{ssr:false,loading:()=> <Loading/>});
 function Header(){
@@ -362,9 +362,23 @@ function Providers() {
     event.preventDefault();
     const form = event.currentTarget;
     const values = new FormData(form);
+    const protocol = parseProviderProtocol(values.get('protocol'));
+    const providerValues = {
+      name: String(values.get('name') ?? ''),
+      baseUrl: normalizeProviderBaseUrl(protocol, String(values.get('baseUrl') ?? '')),
+      modelId: String(values.get('modelId') ?? ''),
+      apiKey: String(values.get('apiKey') ?? ''),
+    };
+    const issue = validateProviderFormValues(providerValues, t);
+    if (issue) {
+      const input = form.elements.namedItem(issue.field);
+      if (input instanceof HTMLElement) input.focus();
+      toast(issue.message, true);
+      return;
+    }
     setSaving(true);
     try {
-      await post('providers', { protocol: values.get('protocol'), name: values.get('name'), baseUrl: values.get('baseUrl'), apiKey: values.get('apiKey'), modelId: values.get('modelId'), inputPrice: values.get('inputPrice') ? Number(values.get('inputPrice')) : null, outputPrice: values.get('outputPrice') ? Number(values.get('outputPrice')) : null });
+      await post('providers', { protocol, ...providerValues, inputPrice: values.get('inputPrice') ? Number(values.get('inputPrice')) : null, outputPrice: values.get('outputPrice') ? Number(values.get('outputPrice')) : null });
       form.reset();
       toast(t('providers.saved'));
       reload();

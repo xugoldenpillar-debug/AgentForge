@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { AppError, ERROR_CODES } from '../src/shared/errors.ts';
-import type { AIProvider, AIRequest, AIResult } from '../src/lib/ai/types.ts';
+import { ProviderResultUnknownError, type AIProvider, type AIRequest, type AIResult } from '../src/lib/ai/types.ts';
 import { runCreationWithPi } from '../src/server/creation/runner.ts';
 import { InMemorySandboxProvider, type FrozenEnvironment } from '../src/server/sandbox/index.ts';
 import { loadPiCoreModule } from '../src/server/runtime/pi/load.ts';
+import type { PiAgentOptionsLike } from '../src/server/runtime/pi/package.ts';
 
 const environment: FrozenEnvironment = {
   environmentId: 'artifact-animation-sandbox-v1',
@@ -187,4 +188,61 @@ test('Creation Pi observes cancellation and never sends an API key into model pr
     assert.doesNotMatch(String(error), new RegExp(secret));
     return error instanceof AppError && error.code === ERROR_CODES.RUN_CANCELLED;
   });
+});
+
+
+test('Creation Pi preserves an unknown provider result over an earlier sandbox policy failure', async () => {
+  const sandbox = new InMemorySandboxProvider();
+  const handle = await sandbox.create(environment, fence);
+  await sandbox.invoke(handle, {
+    toolId: 'artifact.write',
+    versionId: 'artifact-write-v1',
+    capability: 'write',
+  }, {
+    path: 'index.html',
+    content: '<!doctype html><html><body><svg/></body></html>',
+  }, 'seed-write');
+
+  const provider: AIProvider = {
+    id: 'unknown-after-tool-failure',
+    pricing: { inputPrice: null, outputPrice: null },
+    async execute() {
+      throw new ProviderResultUnknownError('UPSTREAM_RESULT_UNKNOWN');
+    },
+  };
+  const createAgent = (agentOptions: PiAgentOptionsLike) => ({
+    subscribe: () => () => undefined,
+    abort: () => undefined,
+    async prompt() {
+      const write = agentOptions.initialState?.tools?.find((tool) => tool.name === 'artifact.write');
+      assert.ok(write);
+      await assert.rejects(
+        () => write.execute('duplicate-write', {
+          path: 'index.html',
+          content: '<!doctype html><html><body>duplicate</body></html>',
+        }),
+        (error: unknown) => error instanceof AppError && error.code === ERROR_CODES.RUNTIME_POLICY_DENIED,
+      );
+      const streamFn = agentOptions.streamFn as (
+        model: unknown,
+        context: unknown,
+        options?: { signal?: AbortSignal },
+      ) => Promise<unknown>;
+      await streamFn({}, [], {});
+    },
+    waitForIdle: async () => undefined,
+  });
+
+  await assert.rejects(() => runCreationWithPi({
+    createAgent,
+    provider,
+    modelId: 'user-model',
+    sandbox,
+    sandboxHandle: handle,
+    instructions: 'Create an accessible animation.',
+    brief: 'Create an inline SVG animation.',
+    signal: new AbortController().signal,
+    assertAuthorized: async () => undefined,
+  }), (error: unknown) => error instanceof ProviderResultUnknownError
+    && error.code === 'UPSTREAM_RESULT_UNKNOWN');
 });

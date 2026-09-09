@@ -199,15 +199,22 @@ describe('DeepSeek BYOK SDK adapter (offline)', { concurrency: false }, () => {
     assert.equal(calls.length, 1);
   });
 
-  for (const status of [400, 401, 403, 404, 429, 500]) {
-    test(`sanitizes known upstream HTTP ${status} without retrying`, async () => {
+  for (const [status, code] of [
+    [400, ERROR_CODES.PROVIDER_REQUEST_INVALID],
+    [401, ERROR_CODES.PROVIDER_AUTHENTICATION_FAILED],
+    [403, ERROR_CODES.PROVIDER_AUTHENTICATION_FAILED],
+    [404, ERROR_CODES.PROVIDER_REQUEST_INVALID],
+    [429, ERROR_CODES.PROVIDER_REQUEST_FAILED],
+    [500, ERROR_CODES.PROVIDER_REQUEST_FAILED],
+  ] as const) {
+    test(`classifies and sanitizes known upstream HTTP ${status} without retrying`, async () => {
       const sensitive = `upstream-private-details ${dummyKey}`;
       respond = () => Response.json({ error: { message: sensitive, type: 'api_error' } }, { status });
       await assert.rejects(
         byokProvider(credential('https://api.deepseek.com/v1'), dummyKey).execute(request()),
         (error: unknown) => {
           assert.ok(error instanceof AppError);
-          assert.equal(error.code, ERROR_CODES.PROVIDER_REQUEST_FAILED);
+          assert.equal(error.code, code);
           assert.equal(error.status, 502);
           assert.doesNotMatch(
             `${error.message}\n${error.stack}\n${JSON.stringify(error)}`,

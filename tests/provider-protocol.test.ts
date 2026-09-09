@@ -1,12 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { PROVIDER_FIELD_LIMITS, PROVIDER_PROTOCOLS, parseProviderProtocol } from '../src/shared/provider-protocol.ts';
+import {
+  normalizeProviderBaseUrl,
+  PROVIDER_FIELD_LIMITS,
+  PROVIDER_PROTOCOLS,
+  parseProviderProtocol,
+  validateProviderFormValues,
+} from '../src/shared/provider-protocol.ts';
 import { MemoryRepository } from './helpers/memory-repository.ts';
 import { ArenaService } from '../src/server/service.ts';
 import { decryptCredential } from '../src/lib/crypto/credentials.ts';
 import { publicCredential } from '../src/server/serializers.ts';
 import { validateBody } from '../src/server/validation.ts';
+import type { MessageKey } from '../src/shared/i18n/types.ts';
 
 const key = 'offline-protocol-key-not-valid';
 const body = { name: 'Test', baseUrl: 'https://gateway.example.com/v1', apiKey: key, modelId: 'custom' };
@@ -21,6 +28,49 @@ async function fixture() {
   const service = new ArenaService(repo, { demoMode: false, encryptionKey, allowedHosts: ['gateway.example.com'] });
   return { repo, encryptionKey, service };
 }
+
+
+test('provider form validation identifies the first concrete invalid field', () => {
+  const t = (message: MessageKey) => message;
+  const valid = {
+    name: 'My gateway',
+    baseUrl: 'https://gateway.example.com/v1',
+    modelId: 'model-1',
+    apiKey: 'opaque-key',
+  };
+
+  assert.deepEqual(validateProviderFormValues({ ...valid, name: ' ' }, t), {
+    field: 'name',
+    message: 'artifactArena.providerValidation.nameRequired',
+  });
+  for (const baseUrl of [
+    'http://gateway.example.com/v1',
+    'https://gateway.example.com/v1?token=secret',
+    'https://user:pass@gateway.example.com/v1',
+  ]) {
+    assert.deepEqual(validateProviderFormValues({ ...valid, baseUrl }, t), {
+      field: 'baseUrl',
+      message: 'artifactArena.providerValidation.baseUrlInvalid',
+    });
+  }
+  assert.deepEqual(validateProviderFormValues({ ...valid, modelId: '' }, t), {
+    field: 'modelId',
+    message: 'artifactArena.providerValidation.modelRequired',
+  });
+  assert.deepEqual(validateProviderFormValues({ ...valid, apiKey: '' }, t), {
+    field: 'apiKey',
+    message: 'artifactArena.providerValidation.apiKeyRequired',
+  });
+  assert.equal(validateProviderFormValues(valid, t), null);
+});
+
+test('common complete provider endpoints normalize to SDK base URLs', () => {
+  assert.equal(normalizeProviderBaseUrl('openai-chat', ' https://gateway.example.com/v1/chat/completions '), 'https://gateway.example.com/v1');
+  assert.equal(normalizeProviderBaseUrl('openai-responses', 'https://gateway.example.com/v1/responses/'), 'https://gateway.example.com/v1');
+  assert.equal(normalizeProviderBaseUrl('anthropic-messages', 'https://gateway.example.com/v1/messages'), 'https://gateway.example.com/v1');
+  assert.equal(normalizeProviderBaseUrl('google-generative-ai', 'https://gateway.example.com/v1beta/models'), 'https://gateway.example.com/v1beta/models');
+  assert.equal(normalizeProviderBaseUrl('openai-chat', 'https://gateway.example.com/v1'), 'https://gateway.example.com/v1');
+});
 
 test('protocols are explicit; omitted legacy protocol preserves Chat Completions', () => {
   assert.equal(parseProviderProtocol(undefined), 'openai-chat');
