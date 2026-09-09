@@ -98,6 +98,12 @@ test('production topology keeps runsc off the web container and mounts artifacts
   assert.match(dockerfile, /COPY package\.json pnpm-lock\.yaml/);
   assert.match(dockerfile, /pnpm install --frozen-lockfile/);
   assert.doesNotMatch(dockerfile, /--no-frozen-lockfile/);
+  assert.match(dockerfile, /--mount=type=cache,id=agentforge-pnpm-store/);
+
+  const appDeploy = readFileSync(new URL('../scripts/deploy/app.sh', import.meta.url), 'utf8');
+  assert.match(appDeploy, /code-release/);
+  assert.match(appDeploy, /worker\.sh" restart/);
+  assert.match(appDeploy, /WorkingDirectory/);
 
   const compose = readFileSync(new URL('../deploy/compose.production.yml', import.meta.url), 'utf8');
   assert.doesNotMatch(compose, /docker\.sock|privileged:\s*true|SANDBOX_RUNSC_PATH|SANDBOX_ROOTFS/);

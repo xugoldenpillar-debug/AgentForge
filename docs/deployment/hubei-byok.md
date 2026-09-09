@@ -153,10 +153,11 @@ cd "/opt/agentforge/releases/$release_sha"
 corepack pnpm install --frozen-lockfile
 corepack pnpm test
 corepack pnpm typecheck
-corepack pnpm build
 ```
 
-Keep `node_modules` in the host release because the Worker runs the TypeScript entrypoint through Node 22 native type stripping. The web image is built by `scripts/deploy/app.sh` from the same checkout.
+Do not run a second host `pnpm build`: `app.sh` performs the single deployment-candidate build inside the immutable image. For an explicitly requested MVP code-only hotfix, replace the full test sequence above with the affected targeted test(s) plus `pnpm typecheck`; `app.sh` still performs that single deployment-candidate Docker build. Do not use the code-only path when migrations, schema, seed behavior or stored-data compatibility changed.
+
+Keep `node_modules` in the host release because the Worker runs the TypeScript entrypoint through Node 22 native type stripping. The web image is built by `scripts/deploy/app.sh` from the same checkout. Docker BuildKit keeps a persistent pnpm store cache, so an invalidated dependency layer normally reuses downloaded package blobs instead of fetching the entire dependency set again.
 
 ## 7. Preflight and install the trusted Worker
 
@@ -184,9 +185,9 @@ agentforge-artifacts system group at the configured GID
 
 It normalizes only the dedicated artifact tree to directory mode `2750` and file mode `0640`, reloads systemd, and enables—but does not start—the Worker. The script verifies the pinned Node executable, frozen host dependencies, runsc, read-only rootfs, OCI template, metadata digest, shared group and paths.
 
-## 8. Release the web app, migrate, and start the Worker
+## 8. Release and align the web app with the Worker
 
-Confirm the dedicated data services are healthy and record the pre-migration backup path first. From the staged release:
+For a schema/data release, confirm the dedicated data services are healthy and record the pre-migration backup path first. From the staged release:
 
 ```sh
 sudo scripts/deploy/app.sh check \
@@ -196,14 +197,21 @@ sudo scripts/deploy/app.sh check \
 sudo scripts/deploy/app.sh release \
   /etc/agentforge/production.env \
   "agentforge:$release_sha" \
-  --backup-confirmed
-
-sudo scripts/deploy/worker.sh restart \
-  /etc/agentforge/production.env \
-  "/opt/agentforge/releases/$release_sha"
+  --backup-confirmed \
+  --restart-worker
 ```
 
-`worker.sh restart` refreshes the systemd unit from the supplied immutable release directory before restarting it; verify `systemctl show agentforge-evaluation-worker.service -p WorkingDirectory` after every cutover. The app release order is immutable image build → one-off additive migration/seed → container health wait. It joins only `agentforge-production-backend` and binds HTTP only to `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. Immediately create and restore-check a post-migration backup using Section 5. The Worker is an independent systemd service, so a web rollback does not silently leave a mismatched Worker; install/restart the matching prior Worker release explicitly.
+For a code-only release with no migration, schema, seed or stored-data compatibility change, use the faster path:
+
+```sh
+sudo AGENTFORGE_WORKER_NODE=/opt/agentforge/node-v22.19.0-linux-x64/bin/node \
+  scripts/deploy/app.sh code-release \
+  /etc/agentforge/production.env \
+  "agentforge:$release_sha" \
+  --restart-worker
+```
+
+`code-release` still performs production environment preflight, an immutable Docker build and the container health wait, but skips the PostgreSQL backup gate and `pnpm db`. With `--restart-worker`, the image tag suffix must exactly match the current immutable release directory name. The same command then refreshes the systemd unit from that release, restarts it and verifies its `WorkingDirectory`; this prevents a successful web cutover from being mistaken for a complete release while the Worker still runs old code. The full `release` path remains immutable image build → one-off additive migration/seed → container health wait → matching Worker restart. It joins only `agentforge-production-backend` and binds HTTP only to `127.0.0.1:${AGENTFORGE_HTTP_PORT:-53180}`. After a schema/data release, immediately create and restore-check a post-migration backup using Section 5. Rollback still requires explicitly selecting the matching prior Worker release directory.
 
 Useful checks:
 

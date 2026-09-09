@@ -77,6 +77,26 @@ test('deployment release orders build, migration and health wait without restart
   } finally { rmSync(f.dir, { recursive: true }); }
 });
 
+test('code-only deployment builds and waits for health without backup or migration', () => {
+  const f = fixture();
+  try {
+    assert.equal(f.invoke('code-release').status, 0);
+    const calls = f.readCalls();
+    assert.match(calls, /build app/);
+    assert.match(calls, /up -d --no-build --wait/);
+    assert.doesNotMatch(calls, /pnpm db|prune|down/);
+  } finally { rmSync(f.dir, { recursive: true }); }
+});
+
+test('code-only deployment rejects schema backup flags before Docker operations', () => {
+  const f = fixture();
+  try {
+    const result = f.invoke('code-release', '--backup-confirmed');
+    assert.notEqual(result.status, 0);
+    assert.equal(f.readCalls(), '');
+  } finally { rmSync(f.dir, { recursive: true }); }
+});
+
 test('deployment rollback reuses an existing immutable image and does not run migration', () => {
   const f = fixture();
   try {
