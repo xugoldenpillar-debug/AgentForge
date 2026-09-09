@@ -134,7 +134,7 @@ function sortedJson(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
-function digest(value: unknown): string {
+export function digestCommunityDefinition(value: unknown): string {
   return `sha256:${createHash('sha256').update(sortedJson(value)).digest('hex')}`;
 }
 
@@ -308,7 +308,7 @@ export class CommunityService {
       }
       ensure(component.draftRevision === input.expectedRevision, 'The component draft changed before it could be frozen.', 409, ERROR_CODES.CONCURRENT_SAVE);
       const definition = parseCommunityDefinition(component.draftDefinition);
-      const definitionDigest = digest(definition);
+      const definitionDigest = digestCommunityDefinition(definition);
       const rows = await tx.update('components', {
         id: component.id,
         ownerId: actorId,

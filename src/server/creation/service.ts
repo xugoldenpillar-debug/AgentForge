@@ -1,3 +1,4 @@
+import { digestAgentBuildDefinition } from '../../lib/agent-build/digest.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { AppError, ERROR_CODES, ensure } from '../../shared/errors.ts';
 import {
@@ -177,6 +178,10 @@ export class CreationRunService {
       requireOutputContract: true,
       requireRuntime: true,
     });
+    ensure(buildVersion.definitionDigest === digestAgentBuildDefinition(definition),
+      'Build definition digest mismatch.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
+    ensure(definition.requestedCapabilities.length === 0 && definition.profileRef === null,
+      'Custom execution capabilities are not enabled.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
     ensure(buildVersion.definitionDigest && definition.environmentRef?.id === CREATION_ENVIRONMENT_TEMPLATE.templateId
       && definition.environmentRef.versionId === CREATION_ENVIRONMENT_TEMPLATE.versionId
       && definition.environmentRef.contentDigest === CREATION_ENVIRONMENT_DIGEST,
@@ -193,7 +198,7 @@ export class CreationRunService {
     const challengeRecord = (await this.#repository.read('animationChallenges', { id: challenge.challengeId, status: 'published' }))[0];
     ensure(challengeRecord, 'Creation challenge is not published.', 409, ERROR_CODES.RUNTIME_POLICY_DENIED);
 
-    const skills = await resolveCreationSkills(this.#repository, definition.skillRefs);
+    const skills = await resolveCreationSkills(this.#repository, ownerId, definition.skillRefs);
     const credential = (await this.#repository.read('credentials', { id: credentialId, userId: ownerId }))[0];
     ensure(credential, 'A selected provider was deleted or is not yours.', 404, ERROR_CODES.PROVIDER_NOT_FOUND);
 
@@ -271,9 +276,9 @@ export class CreationRunService {
     }
 
     const snapshot = createSnapshot(run, credential, run.createdAt, skills.map((skill) => ({
-      componentId: skill.componentId,
-      versionId: skill.versionId,
-      contentDigest: skill.contentDigest,
+      componentId: skill.ref.componentId,
+      versionId: skill.ref.versionId,
+      contentDigest: skill.ref.contentDigest,
       name: skill.name,
       description: skill.description,
     })));

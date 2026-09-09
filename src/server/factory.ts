@@ -16,10 +16,10 @@ import { ShowcaseVotingService } from './voting/service.ts';
 import { WorkLikeService } from './showcase/likes.ts';
 import { FileSystemArtifactStorageAdapter } from './artifacts/filesystem.ts';
 import { CreationRunService } from './creation/service.ts';
-import { creationAgentBuildResolver } from './creation/build-resolver.ts';
+import { createCreationAgentBuildResolver } from './creation/build-resolver.ts';
 import { ChallengeApplicationService } from './creation/challenge-applications.ts';
 import { CreationLeaderboardService } from './creation/leaderboard.ts';
-
+import { safeProviderFetch } from '../lib/ai/safe-fetch.ts';
 let service: ArenaService | undefined;
 let communityService: CommunityService | undefined;
 let artifactArenaServices: ArtifactArenaHttpServices | undefined;
@@ -56,12 +56,13 @@ export function getService(): ArenaService {
     githubEnabled: !!(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
     platform,
     createRealProvider: byokProvider,
+    createProviderFetch: safeProviderFetch,
     createPlatformProvider: platform ? () => gatewayProvider(process.env.AI_GATEWAY_API_KEY!, platform) : undefined,
     maxRunCost: Number(process.env.RUN_MAX_TOTAL_COST || 2.5),
     maxCases: Number(process.env.RUN_MAX_CASES || 50),
     competitiveRunScheduler,
     env: process.env,
-    agentBuildResolver: creationAgentBuildResolver,
+    agentBuildResolver: createCreationAgentBuildResolver(repository),
   });
 }
 

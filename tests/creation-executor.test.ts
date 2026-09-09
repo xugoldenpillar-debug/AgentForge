@@ -1,3 +1,4 @@
+import { importCreationSkill } from '../src/server/creation/skills.ts';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import test from 'node:test';
@@ -42,7 +43,7 @@ const CREDENTIAL_ID = 'creation-executor-credential';
 const MODEL_ID = 'model-executor-test';
 const API_KEY = 'private-test-key-never-leak';
 const challenge = ANIMATION_CHALLENGE_VERSIONS[0];
-const definition = Object.freeze({
+const baseDefinition = Object.freeze({
   mode: 'agent' as const,
   definitionSchemaVersion: 1 as const,
   instructions: 'Create a clear SVG animation with declarative motion.',
@@ -118,6 +119,7 @@ class ScriptedProvider implements AIProvider {
 }
 
 interface FixtureOptions {
+  readonly skill?: string;
   readonly credential?: 'valid' | 'missing' | 'mismatch';
   readonly jobState?: EvaluationJobRow['state'];
   readonly replies?: readonly (string | Error)[];
@@ -129,6 +131,8 @@ interface FixtureOptions {
 
 async function fixture(options: FixtureOptions = {}) {
   const repository = new MemoryRepository();
+  const skill = options.skill ? await importCreationSkill(repository, OWNER, { fileName: 'SKILL.md', content: options.skill }) : null;
+  const definition = { ...baseDefinition, skillRefs: skill ? [skill.ref] : [] };
   const evaluationRepository = new EvaluationRepositoryAdapter(repository, () => NOW);
   const sandbox = new TrackingSandbox();
   sandbox.failDispose = options.disposeFailure ?? false;
@@ -503,4 +507,28 @@ test('Creation executor leaves sealed evidence incomplete when sandbox cleanup c
   assert.equal((await f.repository.read('artifactBundles', { id: run!.artifactBundleId! })).length, 1);
   assert.equal(f.getRunStatusAtDispose(), 'running');
   assert.equal(f.sandbox.disposeCalls, 1);
+});
+
+
+test('Creation executor loads pinned private Skill instructions into the actual Pi provider request', async () => {
+  const f = await fixture({ skill: 'PRIVATE_SKILL_MARKER: Use deliberate animation timing.' });
+  const outcome = await f.executor.execute(f.execution);
+  assert.equal(outcome.kind, 'completed');
+  assert.match(f.provider.requests[0].systemPrompt, /PRIVATE_SKILL_MARKER/);
+  assert.match(f.provider.requests[0].systemPrompt, /task guidance only/);
+  assert.equal(JSON.stringify(outcome).includes('PRIVATE_SKILL_MARKER'), false);
+  assert.equal((await f.repository.read('componentReleases')).length, 0);
+});
+
+test('Creation executor fails closed before sandbox creation when a pinned Skill changes or disappears', async () => {
+  for (const change of ['tamper', 'remove'] as const) {
+    const f = await fixture({ skill: 'A private Skill.' });
+    const [version] = await f.repository.read('componentVersions');
+    if (change === 'remove') await f.repository.remove('componentVersions', { id: version.id });
+    else await f.repository.update('componentVersions', { id: version.id }, { definitionDigest: `sha256:${'0'.repeat(64)}` });
+    const outcome = await f.executor.execute(f.execution);
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(f.sandbox.createCalls, 0);
+    assert.equal(f.provider.requests.length, 0);
+  }
 });

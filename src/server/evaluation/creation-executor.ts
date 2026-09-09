@@ -11,7 +11,7 @@ import { sealArtifactBundle } from '../artifacts/seal.ts';
 import type { ArtifactStorageWriter } from '../artifacts/access.ts';
 import { loadPiCoreModule } from '../runtime/pi/load.ts';
 import { runCreationWithPi } from '../creation/runner.ts';
-import { resolveCreationSkills } from '../creation/skills.ts';
+import { resolveCreationSkills, type ResolvedCreationSkill } from '../creation/skills.ts';
 import { CREATION_ENVIRONMENT_DIGEST, CREATION_ENVIRONMENT_TEMPLATE } from '../creation/catalog.ts';
 import type { SandboxHandle, SandboxProvider } from '../sandbox/types.ts';
 import type { EvaluationAttemptExecutor, EvaluationExecutionContext, EvaluationExecutionOutcome } from './queue/ports.ts';
@@ -147,7 +147,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       const credential = (await this.#options.repository.read('credentials', { id: credentialId, userId: run.ownerId }))[0];
       ensure(credential && credential.modelId === context.job.snapshot.modelOfferingId,
         'Provider authorization is missing or changed.', 409, ERROR_CODES.PROVIDER_NOT_FOUND);
-      const skills = await resolveCreationSkills(this.#options.repository, definition.skillRefs);
+      const skills = await resolveCreationSkills(this.#options.repository, run.ownerId, definition.skillRefs);
       const brief = parseCreationBriefVersion({
         schemaVersion: 1,
         briefId: briefRow.briefId,
@@ -165,9 +165,9 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         run,
         definition.instructions,
         brief.instructions,
-        skills.map((skill) => skill.instruction),
         provider,
         credential.modelId,
+        skills,
       );
     } catch (error) {
       await this.#markRun(run.id, run.ownerId, 'failed');
@@ -182,17 +182,18 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     run: CreationRun & { id: string; ownerId: string },
     instructions: string,
     brief: string,
-    skillInstructions: readonly string[],
     provider: AIProvider,
     modelId: string,
+    skills: readonly ResolvedCreationSkill[],
   ): Promise<EvaluationExecutionOutcome> {
     const abort = new AbortController();
     let sandboxHandle: SandboxHandle | undefined;
     let timer: NodeJS.Timeout | undefined;
+    let authorizationFailure: unknown;
     let sealedBundleId: string | undefined;
     let outcome: EvaluationExecutionOutcome;
     let stage: CreationExecutionStage = 'state-update';
-    const assertAuthorized = async (): Promise<void> => {
+    const assertLeaseAndCredential = async (): Promise<void> => {
       const job = await this.#options.repository.read('evaluationJobs', { id: String(context.job.id), userId: String(context.job.userId) });
       const state = job[0]?.state;
       if (state === 'cancelling' || state === 'cancelled') {
@@ -200,6 +201,27 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         throw new AppError('Run cancelled.', 499, ERROR_CODES.RUN_CANCELLED);
       }
       if (state !== 'running') throw new CreationExecutionAuthorizationLostError();
+      const [credential] = await this.#options.repository.read('credentials', {
+        id: context.job.snapshot.credentialAuthorizationId!,
+        userId: run.ownerId,
+      });
+      ensure(credential && credential.modelId === modelId,
+        'Provider authorization was revoked.', 409, ERROR_CODES.PROVIDER_NOT_FOUND);
+    };
+    const assertAuthorized = async (): Promise<void> => {
+      await assertLeaseAndCredential();
+      await resolveCreationSkills(this.#options.repository, run.ownerId, skills.map((skill) => skill.ref));
+    };
+    const pollAuthorization = async (): Promise<void> => {
+      try {
+        await assertLeaseAndCredential();
+        if (!abort.signal.aborted) {
+          timer = setTimeout(() => { void pollAuthorization(); }, this.#options.pollCancellationMs ?? 500);
+        }
+      } catch (error) {
+        authorizationFailure = error;
+        abort.abort();
+      }
     };
     let invocationIndex = 0;
     const recordingProvider = new InvocationRecordingProvider(
@@ -212,7 +234,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     );
     try {
       await this.#markRun(run.id, run.ownerId, 'running', this.#now());
-      timer = setInterval(() => { void assertAuthorized().catch(() => abort.abort()); }, this.#options.pollCancellationMs ?? 500);
+      timer = setTimeout(() => { void pollAuthorization(); }, this.#options.pollCancellationMs ?? 500);
       stage = 'pi-load';
       const module = await loadPiCoreModule({ env: { ...process.env, PI_RUNTIME_ENABLED: 'true' } });
       stage = 'sandbox-start';
@@ -246,7 +268,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         sandbox: this.#options.sandbox,
         sandboxHandle,
         instructions,
-        skillInstructions,
+        skillInstructions: skills.map((skill) => skill.instruction),
         brief,
         signal: abort.signal,
         assertAuthorized,
@@ -305,7 +327,9 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         },
       };
     } catch (error) {
-      if (isCancelled(error, abort.signal)) {
+      if (authorizationFailure instanceof AppError && authorizationFailure.code !== ERROR_CODES.RUN_CANCELLED) {
+        outcome = failure(creationFailureCode(authorizationFailure, stage));
+      } else if (isCancelled(error, abort.signal)) {
         outcome = { kind: 'cancelled' };
       } else if (error instanceof UnknownProviderResultError) {
         outcome = { kind: 'unknown', code: error.code };

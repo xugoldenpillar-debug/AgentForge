@@ -1,5 +1,8 @@
 'use client';
 
+import type { ProviderDiscoveryInput, ProviderModelsResult } from '../shared/provider-models.ts';
+import type { CreationSkillView } from '../shared/creation-skill.ts';
+import type { AgentBuildSkillRef } from '../shared/agent-build-contract.ts';
 import type { RunEvent } from '../shared/types.ts';
 
 const MAX_ERROR_MESSAGE_LENGTH = 4000;
@@ -354,6 +357,7 @@ export interface ProviderCredentialView {
 }
 
 export interface ProviderCatalogView {
+  ownerId: string;
   credentials: ProviderCredentialView[];
   demo: boolean;
   platform: { id: string; name: string; modelId: string; inputPrice: number | null; outputPrice: number | null } | null;
@@ -422,7 +426,7 @@ export interface AgentBuildDefinitionView {
   definitionSchemaVersion: 1;
   instructions: string;
   modelSelection: AgentBuildPinnedRefView;
-  skillRefs: [];
+  skillRefs: readonly AgentBuildSkillRef[];
   requestedCapabilities: [];
   outputContractRef: AgentBuildPinnedRefView;
   profileRef: null;
@@ -764,3 +768,11 @@ export const getShowcaseLeaderboard = (
   params: { roundId: string; comparatorKey: string; policyVersion: string },
   signal?: AbortSignal,
 ) => api<ShowcaseLeaderboardView>(`showcase/leaderboard?${new URLSearchParams(params).toString()}`, { signal });
+
+export const discoverProviderModels = (body: ProviderDiscoveryInput, signal?: AbortSignal) =>
+  api<ProviderModelsResult>('providers/models', { method: 'POST', body: JSON.stringify(body), signal });
+export const listSavedProviderModels = (id: string, signal?: AbortSignal) =>
+  api<ProviderModelsResult>(`providers/${encodeURIComponent(id)}/models`, { signal });
+export const listCreationSkills = (signal?: AbortSignal) => api<CreationSkillView[]>('agent-skills', { signal });
+export const uploadCreationSkill = (fileName: string, content: string, signal?: AbortSignal) =>
+  api<CreationSkillView>('agent-skills', { method: 'POST', body: JSON.stringify({ fileName, content }), signal });

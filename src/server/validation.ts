@@ -49,6 +49,8 @@ const showcaseBallot = z.object({ roundId: short, comparatorKey: short, policyVe
 const showcaseVote = z.object({ ballotId: id.optional(), choice: z.enum(['a', 'b', 'tie', 'skip']), idempotencyKey }).strict();
 
 const schemas: Record<string, z.ZodType> = {
+  'providers/models': z.object({ protocol: z.enum(PROVIDER_PROTOCOLS), baseUrl: z.string().min(1).max(300), apiKey: z.string().min(16).max(512) }).strict(),
+  'agent-skills': z.object({ fileName: z.string().min(1).max(180), content: z.string().min(1).max(65536) }).strict(),
 
   providers: z.object({ protocol: z.enum(PROVIDER_PROTOCOLS).optional(), name: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.name), baseUrl: z.url().max(PROVIDER_FIELD_LIMITS.baseUrl), modelId: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.modelId), apiKey: z.string().trim().min(1).max(PROVIDER_FIELD_LIMITS.apiKey), inputPrice: z.number().min(0).max(10000).nullable().optional(), outputPrice: z.number().min(0).max(10000).nullable().optional() }).strict(),
   runs: z.object({ buildId: id, kind: z.enum(['public', 'hidden']), consent: z.boolean().optional(), mode: z.literal('legacy-stream').optional() }).strict(),

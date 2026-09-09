@@ -103,3 +103,8 @@ MIGRATION_TEST_DATABASE_URL='<disposable-local-test-connection>' pnpm test:migra
 Use an isolated disposable PostgreSQL service for this command. Do not substitute `DATABASE_URL`, a shared database, or a production database. See [evaluation worker operations](evaluation-worker-operations.md) for shutdown, restart/backoff, lease/heartbeat, queue retention, local profile and deployment checklist details.
 
 This is configuration and validation tooling, not evidence of a live production deployment or real managed Redis/provider acceptance.
+
+
+## Agent Builder completion regression entrypoints
+
+`tests/agent-builder-completion.test.ts` covers provider protocols/pagination/bounds, ownership, Skill file parsing/integrity and safe session projection. `tests/creation-executor.test.ts` now also asserts that selected private Skill text reaches the real installed Pi loop with a scripted provider, and that missing/tampered versions fail before sandbox creation. `scripts/agent-builder-browser.mjs` tests the actual Next.js UI and PostgreSQL save/import paths with explicitly mocked model discovery and run availability; it never invokes generation. See `docs/AGENT-BUILDER-COMPLETION.md` for limits and environment requirements.

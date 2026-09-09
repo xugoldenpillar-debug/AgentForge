@@ -113,7 +113,8 @@ export function versionMetadata(version: BuildVersion) {
   return {
     id: version.id, buildId: version.buildId, revision: version.revision,
     title: version.title, visibility: version.visibility, createdAt: version.createdAt,
-    mode: version.mode ?? 'workflow'
+    mode: version.mode ?? 'workflow',
+    animationChallengeVersionId: version.animationChallengeVersionId ?? null,
   };
 }
 
