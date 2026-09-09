@@ -17,6 +17,8 @@ import { WorkLikeService } from './showcase/likes.ts';
 import { FileSystemArtifactStorageAdapter } from './artifacts/filesystem.ts';
 import { CreationRunService } from './creation/service.ts';
 import { creationAgentBuildResolver } from './creation/build-resolver.ts';
+import { ChallengeApplicationService } from './creation/challenge-applications.ts';
+import { CreationLeaderboardService } from './creation/leaderboard.ts';
 
 let service: ArenaService | undefined;
 let communityService: CommunityService | undefined;
@@ -24,6 +26,8 @@ let artifactArenaServices: ArtifactArenaHttpServices | undefined;
 let artifactArenaStorageAdapter: ArtifactStorageAdapter | undefined;
 let defaultArtifactStorageAdapter: FileSystemArtifactStorageAdapter | undefined;
 let defaultArtifactStorageRoot: string | undefined;
+let challengeApplications: ChallengeApplicationService | undefined;
+let creationLeaderboard: CreationLeaderboardService | undefined;
 
 function price(value: string | undefined): number | null {
   if (!value?.trim()) return null;
@@ -41,8 +45,6 @@ export function getService(): ArenaService {
       }
     : undefined;
   const repository = new DrizzleRepository();
-  // Durable scheduling is opt-in so a web process cannot silently accept jobs
-  // without an outbox publisher and independent worker being configured.
   const competitiveRunScheduler = process.env.EVALUATION_SCHEDULER_MODE === 'outbox'
     ? createDurableOutboxCompetitiveRunScheduler(repository)
     : undefined;
@@ -69,8 +71,20 @@ export function getCommunityService(): CommunityService {
   });
 }
 
+export function getChallengeApplicationService(): ChallengeApplicationService {
+  return challengeApplications ??= new ChallengeApplicationService(new DrizzleRepository(), {
+    resolveRoles: resolveCommunityRoles,
+  });
+}
+
+export function getCreationLeaderboardService(): CreationLeaderboardService | undefined {
+  if (creationLeaderboard) return creationLeaderboard;
+  const arena = getArtifactArenaServices();
+  if (!arena?.voting) return undefined;
+  return creationLeaderboard = new CreationLeaderboardService(new DrizzleRepository(), arena.voting);
+}
+
 export interface ArtifactArenaServiceDependencies {
-  /** A real immutable object-storage adapter. No host path or URL adapter is accepted here. */
   readonly storageAdapter?: ArtifactStorageAdapter;
 }
 
@@ -84,13 +98,6 @@ const showcaseComparatorPolicy = Object.freeze({
   maxValidVotesPerHour: 30,
 });
 
-/**
- * Build the durable Artifact Arena HTTP services when the operator enables the
- * launch and configures immutable storage. Tests may inject an adapter; the
- * production route resolves the private filesystem store from
- * ARTIFACT_STORAGE_ROOT. Mutation routes still apply the dynamic availability
- * and kill-switch gates, while authorized historical reads remain available.
- */
 export function getArtifactArenaServices(
   dependencies: ArtifactArenaServiceDependencies = {},
 ): ArtifactArenaHttpServices | undefined {

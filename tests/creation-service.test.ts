@@ -11,7 +11,7 @@ import type {
 import { digestAgentBuildDefinition } from '../src/lib/agent-build/digest.ts';
 import { CREATION_AGENT_BUILD_CONTRACT } from '../src/server/creation/catalog.ts';
 import { CreationRunService, type CreationJobScheduler } from '../src/server/creation/service.ts';
-import { ANIMATION_CHALLENGE_VERSIONS } from '../src/server/animation-challenges.ts';
+import { ANIMATION_CHALLENGES, ANIMATION_CHALLENGE_VERSIONS } from '../src/server/animation-challenges.ts';
 import { createDurableOutboxCompetitiveRunScheduler } from '../src/server/evaluation/runtime.ts';
 import type { Credential, User } from '../src/shared/types.ts';
 import { MemoryRepository } from './helpers/memory-repository.ts';
@@ -177,6 +177,8 @@ async function harness(schedulerFactory?: (repository: MemoryRepository) => Crea
   const repository = new MemoryRepository();
   const scheduler = schedulerFactory?.(repository) ?? new FakeScheduler();
   await repository.insert('users', [user(OWNER), user(OTHER)]);
+  await repository.insert('animationChallenges', [{ ...ANIMATION_CHALLENGES[0] }]);
+  await repository.insert('animationChallengeVersions', [{ ...challengeVersion }]);
   await repository.insert('builds', [{
     id: BUILD_ID,
     problemId: null,

@@ -11,6 +11,7 @@ import { sealArtifactBundle } from '../artifacts/seal.ts';
 import type { ArtifactStorageWriter } from '../artifacts/access.ts';
 import { loadPiCoreModule } from '../runtime/pi/load.ts';
 import { runCreationWithPi } from '../creation/runner.ts';
+import { resolveCreationSkills } from '../creation/skills.ts';
 import { CREATION_ENVIRONMENT_DIGEST, CREATION_ENVIRONMENT_TEMPLATE } from '../creation/catalog.ts';
 import type { SandboxHandle, SandboxProvider } from '../sandbox/types.ts';
 import type { EvaluationAttemptExecutor, EvaluationExecutionContext, EvaluationExecutionOutcome } from './queue/ports.ts';
@@ -146,6 +147,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       const credential = (await this.#options.repository.read('credentials', { id: credentialId, userId: run.ownerId }))[0];
       ensure(credential && credential.modelId === context.job.snapshot.modelOfferingId,
         'Provider authorization is missing or changed.', 409, ERROR_CODES.PROVIDER_NOT_FOUND);
+      const skills = await resolveCreationSkills(this.#options.repository, definition.skillRefs);
       const brief = parseCreationBriefVersion({
         schemaVersion: 1,
         briefId: briefRow.briefId,
@@ -158,7 +160,15 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
       });
       const apiKey = decryptCredential(credential.ciphertext, this.#options.encryptionKey, run.ownerId, credential.id);
       const provider = this.#options.createProvider(credential, apiKey);
-      return await this.#executeAuthorized(context, run, definition.instructions, brief.instructions, provider, credential.modelId);
+      return await this.#executeAuthorized(
+        context,
+        run,
+        definition.instructions,
+        brief.instructions,
+        skills.map((skill) => skill.instruction),
+        provider,
+        credential.modelId,
+      );
     } catch (error) {
       await this.#markRun(run.id, run.ownerId, 'failed');
       if (error instanceof AppError && error.code === ERROR_CODES.PROVIDER_NOT_FOUND) return failure('PROVIDER_AUTHORIZATION_REVOKED');
@@ -172,6 +182,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
     run: CreationRun & { id: string; ownerId: string },
     instructions: string,
     brief: string,
+    skillInstructions: readonly string[],
     provider: AIProvider,
     modelId: string,
   ): Promise<EvaluationExecutionOutcome> {
@@ -235,6 +246,7 @@ export class CreationEvaluationExecutor implements EvaluationAttemptExecutor {
         sandbox: this.#options.sandbox,
         sandboxHandle,
         instructions,
+        skillInstructions,
         brief,
         signal: abort.signal,
         assertAuthorized,
