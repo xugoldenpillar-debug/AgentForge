@@ -277,3 +277,35 @@ test('stale attempt lease cannot write after a new lease fences the old worker',
   });
   assert.equal(staleWrite, null);
 });
+
+test('a stale unknown job releases the account slot without replaying provider work', async () => {
+  const base = new MemoryRepository();
+  const firstRepository = new EvaluationRepositoryAdapter(base, () => now);
+  await firstRepository.createIfAbsent(jobRecord(), acceptedEvent());
+  await base.update('evaluationJobs', { id: ids.job }, {
+    state: 'unknown',
+    stateVersion: 1,
+    updatedAt: now,
+    completedAt: null,
+    executionToken: null,
+    failure: { code: 'UPSTREAM_RESULT_UNKNOWN', retryable: false },
+  });
+
+  const later = '2026-09-06T00:16:00.000Z';
+  const repository = new EvaluationRepositoryAdapter(base, () => later);
+  const nextJob = {
+    ...jobRecord('sha256:request-2'),
+    id: asOpaqueId<'evaluation-job'>('job-2'),
+    association: { kind: 'competitive-run' as const, runId: asOpaqueId<'run'>('run-2'), visibility: 'hidden' as const },
+    idempotency: { scope: 'evaluation-job-create' as const, key: 'request-2', requestDigest: 'sha256:request-2' },
+    acceptedAt: later,
+    createdAt: later,
+    updatedAt: later,
+  };
+  const created = await repository.createIfAbsent(nextJob, acceptedEvent(nextJob.id, 'sha256:request-2'));
+
+  assert.equal(created.created, true);
+  assert.equal((await base.read('evaluationJobs', { id: ids.job }))[0]?.state, 'incomplete');
+  assert.equal((await base.read('evaluationJobs', { id: ids.job }))[0]?.failure && ((await base.read('evaluationJobs', { id: ids.job }))[0]?.failure as { code: string }).code, 'UPSTREAM_RESULT_UNKNOWN_SLOT_RELEASED');
+  assert.equal((await base.read('evaluationOutbox')).length, 2, 'the old unknown job must not be replayed');
+});

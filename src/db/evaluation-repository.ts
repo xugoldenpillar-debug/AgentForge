@@ -176,6 +176,7 @@ export interface EvaluationRepository extends EvaluationJobStore {
 const ACTIVE_JOB_STATES: readonly EvaluationJobState[] = [
   'accepted', 'queued', 'running', 'cancelling', 'unknown', 'reconciling',
 ];
+const UNKNOWN_JOB_SLOT_GRACE_MS = 15 * 60 * 1000;
 const ACTIVE_ATTEMPT_STATES: readonly EvaluationAttemptState[] = [
   'claimed', 'running', 'cancelling', 'reconciling',
 ];
@@ -215,6 +216,37 @@ export class EvaluationRepositoryAdapter implements EvaluationRepository {
           if (!existing[0]) throw new EvaluationPersistenceError('not-found', 'The idempotency record points to a missing evaluation job.');
           await associateCreationRun(tx, record, existing[0].id);
           return { created: false, record: toJobRecord(existing[0]) };
+        }
+
+        const now = this.clock();
+        const jobs = await tx.read('evaluationJobs', { userId: record.userId });
+        for (const job of jobs) {
+          if (job.state !== 'unknown') continue;
+          const ageMs = Date.parse(now) - Date.parse(job.updatedAt);
+          if (!Number.isFinite(ageMs) || ageMs < UNKNOWN_JOB_SLOT_GRACE_MS) continue;
+          const released = await tx.update('evaluationJobs', {
+            id: job.id,
+            state: 'unknown',
+            stateVersion: job.stateVersion,
+          }, {
+            state: 'incomplete',
+            stateVersion: job.stateVersion + 1,
+            executionToken: null,
+            completedAt: now,
+            updatedAt: now,
+            completion: {
+              evidence: 'partial',
+              summary: { upstreamResult: 'unknown', activeSlotReleasedAfterGracePeriod: true },
+            },
+            failure: { code: 'UPSTREAM_RESULT_UNKNOWN_SLOT_RELEASED', retryable: false },
+          });
+          if (released[0] && job.purpose === 'creation') {
+            await tx.update('creationRuns', { id: job.businessRecordId }, {
+              status: 'incomplete',
+              completedAt: now,
+              updatedAt: now,
+            });
+          }
         }
 
         const activeJobs = (await tx.read('evaluationJobs', { userId: record.userId }))

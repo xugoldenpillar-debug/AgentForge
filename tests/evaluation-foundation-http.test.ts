@@ -57,7 +57,7 @@ async function fixture() {
 
   const dispatch = new DispatchSink();
   let sequence = 0;
-  const scheduler = new EvaluationService(new EvaluationRepositoryAdapter(repo), dispatch, {
+  const scheduler = new EvaluationService(new EvaluationRepositoryAdapter(repo, () => '2026-09-06T00:00:00.000Z'), dispatch, {
     createId: () => `http-job-${++sequence}`,
     now: () => '2026-09-06T00:00:00.000Z',
   });
